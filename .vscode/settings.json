@@ -1,0 +1,27 @@
+{
+    "terminal.integrated.defaultProfile.windows": "AutoVenv WSL",
+    "terminal.integrated.profiles.windows": {
+        "AutoVenv WSL": {
+            "path": "wsl.exe",
+            "args": [
+                "-e", "bash", "--login", "-c",
+                "bash /mnt/c/Users/MarkEdwards/Documents/Code/Python/c-compiler/.vscode/launch_venv.sh"
+            ]
+        }
+    },
+    "ruff.importStrategy": "useBundled",
+    "isort.importStrategy": "useBundled",
+    "workbench.colorCustomizations": {
+        "activityBar.background": "#610606",
+        "titleBar.activeBackground": "#880909",
+        "titleBar.activeForeground": "#FFFBFB",
+        "titleBar.inactiveBackground": "#610606",
+        "titleBar.inactiveForeground": "#FFFBFB",
+        "statusBar.background": "#610606",
+        "statusBar.foreground": "#FFFBFB",
+        "statusBar.debuggingBackground": "#610606",
+        "statusBar.debuggingForeground": "#FFFBFB",
+        "statusBar.noFolderBackground": "#610606",
+        "statusBar.noFolderForeground": "#FFFBFB"
+    }
+}

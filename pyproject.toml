@@ -1,0 +1,64 @@
+[project]
+name = "c-compiler"
+version = "0.1.0"
+description = "A minimal C compiler written in Python"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[project.scripts]
+test = "compiler.compiler:test"
+
+[dependency-groups]
+dev = [
+    "pyrefly>=0.62.0",
+    "pytest>=9.0.3",
+    "pytest-sugar>=1.1.1",
+    "ruff>=0.15.11",
+]
+
+[tool]
+
+[tool.pyrefly]
+project-includes = [
+    "compiler",
+    "**/*.py*",
+    "**/*.ipynb",
+]
+project-excludes = [
+    "**/__pycache__",
+    "**/*venv/**",
+    "**/.[!/.]*/**",
+    "test",
+]
+search-path = ["compiler"]
+site-package-path = [".venv/Lib/site-packages"]
+use-ignore-files = true
+
+[tool.ruff]
+lint.select = ["ANN", "E", "F", "W", "C", "I"]
+lint.extend-select = ["ANN"]
+lint.ignore = []
+
+# Allow ruff to auto fix any fixable issues
+lint.fixable = ["ALL"]
+lint.unfixable = []
+line-length = 120
+
+[tool.ruff.lint.isort]
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "compiler"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "test",
+]
+norecursedirs = ["compiler", ".venv", "**/__pycache__"]
+addopts = "--ignore=compiler"
