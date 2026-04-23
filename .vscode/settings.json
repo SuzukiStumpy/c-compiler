@@ -1,4 +1,10 @@
 {
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.venv/**": true
+    },
+    "remote.WSL.fileWatcher.polling": true,
     "terminal.integrated.defaultProfile.windows": "AutoVenv WSL",
     "terminal.integrated.profiles.windows": {
         "AutoVenv WSL": {
@@ -9,8 +15,25 @@
             ]
         }
     },
+    "terminal.integrated.defaultProfile.linux": "AutoVenv",
+    "terminal.integrated.profiles.linux": {
+        "AutoVenv": {
+            "path": "bash",
+            "args": ["/mnt/c/Users/MarkEdwards/Documents/Code/Python/c-compiler/.vscode/launch_venv.sh"]
+        }
+    },
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.analysis.extraPaths": ["${workspaceFolder}/.venv/lib/python3.13/site-packages"],
+    "python.terminal.activateEnvironment": false,
     "ruff.importStrategy": "useBundled",
     "isort.importStrategy": "useBundled",
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
     "workbench.colorCustomizations": {
         "activityBar.background": "#610606",
         "titleBar.activeBackground": "#880909",
