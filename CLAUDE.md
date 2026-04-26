@@ -42,6 +42,7 @@ uv run test
 - Ruff enforces: `ANN` (type annotations), `E/F/W` (pycodestyle/pyflakes), `C` (convention), `I` (isort)
 - Line length: 120
 - All functions must have type annotations (ANN rules are enabled)
+- All modules, types and functions should have docstrings attached explaining their usage.  In addition, functions should have parameters, return values and exceptions explained in the docstring.  Use Google-style formatting.
 
 ## Architecture
 
