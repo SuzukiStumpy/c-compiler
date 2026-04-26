@@ -1,3 +1,5 @@
+"""Utility decorators used across the compiler package."""
+
 import functools
 from collections.abc import Callable
 from typing import ParamSpec, TypeVar
