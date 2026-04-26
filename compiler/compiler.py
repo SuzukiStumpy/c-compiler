@@ -1,5 +1,6 @@
 """Main entry point and CLI for the compiler pipeline."""
 
+import sys
 from pathlib import Path
 
 import click
@@ -57,21 +58,22 @@ def compiler(
     lex: bool,
     parse: bool,
     codegen: bool,
-) -> int:
+) -> None:
     """CLI entry point: compile a C source file to an executable.
 
     Runs the full compilation pipeline from C source file to native executable.
     If a stage flag is provided (``--lex``, ``--parse``, ``--codegen``), the
     pipeline stops after that stage. With no flags, all stages run.
 
+    Exits with code 0 on success and code 1 on any compilation failure.
+    Note: Click's standalone mode ignores return values — ``sys.exit()`` is
+    used directly to ensure the process exits with the correct code.
+
     Args:
         source: Path to the C source file to compile.
         lex: Stop the pipeline after lexing.
         parse: Stop the pipeline after parsing.
         codegen: Stop the pipeline after code generation (equivalent to no flags).
-
-    Returns:
-        0 on success, 1 if compilation fails for any reason.
     """
     if codegen:
         stages = Stage.ALL
@@ -85,13 +87,13 @@ def compiler(
     try:
         pre_processed = preprocess(Path(source))
         assembly = compile(pre_processed, stages)
-        executable = assemble_and_link(assembly)
 
-        print(f"Compilation complete.  Output file is: {executable}")
-        return 0
+        if Stage.CODEGEN in stages:
+            executable = assemble_and_link(assembly)
+            print(f"Compilation complete.  Output file is: {executable}")
     except LexerError as ex:
         click.echo(format_for_terminal(ex), err=True)
-        return 1
+        sys.exit(1)
     except Exception as ex:
         print(f"Compiler failed with exception {ex}")
-        return 1
+        sys.exit(1)
