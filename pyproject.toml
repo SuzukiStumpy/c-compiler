@@ -40,7 +40,10 @@ project-excludes = [
     "test",
 ]
 search-path = ["compiler"]
-site-package-path = [".venv/Lib/site-packages"]
+site-package-path = [
+    ".venv/lib64/python3.13/site-packages",
+    ".venv/lib/python3.13/site-packages",
+]
 use-ignore-files = true
 
 [tool.ruff]

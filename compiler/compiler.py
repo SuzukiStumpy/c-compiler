@@ -1,7 +1,9 @@
 """Main entry point and CLI for the compiler pipeline."""
 
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -12,6 +14,53 @@ from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.types.stages import Stage
 from compiler.utils.diagnostics import format_for_terminal
 from compiler.utils.exceptions import LexerError
+
+
+class MutuallyExclusiveOption(click.Option):
+    """A Click option that rejects simultaneous use of any named peers.
+
+    Specify peer parameter names (without leading dashes, using Click's
+    underscore-normalised form) via ``mutually_exclusive`` at decoration time.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Initialise the option, extracting the ``mutually_exclusive`` peer list.
+
+        Args:
+            *args: Positional arguments forwarded to ``click.Option``.
+            **kwargs: Keyword arguments forwarded to ``click.Option``.
+                ``mutually_exclusive`` (list[str]) names the parameter names
+                that conflict with this option.
+        """
+        self.mutually_exclusive: list[str] = kwargs.pop("mutually_exclusive", [])
+        super().__init__(*args, **kwargs)
+
+    def handle_parse_result(
+        self,
+        ctx: click.Context,
+        opts: Mapping[str, Any],
+        args: list[str],
+    ) -> tuple[Any, list[str]]:
+        """Raise UsageError if this option and any peer are both set.
+
+        Args:
+            ctx: The active Click context.
+            opts: Parsed option values accumulated so far.
+            args: Remaining unparsed command-line arguments.
+
+        Returns:
+            The parsed value and remaining args from the parent handler.
+
+        Raises:
+            click.UsageError: If this option is truthy and any peer in
+                ``mutually_exclusive`` is also truthy.
+        """
+        name = self.name
+        if name is not None and opts.get(name):
+            for peer in self.mutually_exclusive:
+                if opts.get(peer):
+                    raise click.UsageError(f"--{name} and --{peer} are mutually exclusive.")
+        return super().handle_parse_result(ctx, opts, args)
 
 
 def compile(source: Path, stages: Stage = Stage.ALL) -> Path:
@@ -26,8 +75,7 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> Path:
         stages: Bitmask of stages to execute. Defaults to ``Stage.ALL``.
 
     Returns:
-        Path to the assembly ``.s`` file that the code generation stage would
-        produce (the file may not yet exist while generation is stubbed).
+        Path to the assembly ``.s`` file produced by code generation.
 
     Raises:
         LexerError: If the lexer stage is active and encounters an invalid
@@ -48,10 +96,34 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> Path:
     return source.parent / f"{source.stem}.s"
 
 
-@click.command()
-@click.option("--lex", is_flag=True)
-@click.option("--parse", is_flag=True)
-@click.option("--codegen", is_flag=True)
+@click.command(
+    help=(
+        "Compile SOURCE from C to a native executable.\n\n"
+        "Pass a stage flag to stop the pipeline early and inspect intermediate output. "
+        "Without a flag the full pipeline runs and an executable is produced."
+    )
+)
+@click.option(
+    "--lex",
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["parse", "codegen"],
+    help="Stop after lexing.",
+)
+@click.option(
+    "--parse",
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["lex", "codegen"],
+    help="Stop after parsing.",
+)
+@click.option(
+    "--codegen",
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["lex", "parse"],
+    help="Stop after code generation; emit assembly but do not link.",
+)
 @click.argument("source", type=click.Path(), required=True, nargs=1)
 def compiler(
     source: str,
@@ -59,24 +131,16 @@ def compiler(
     parse: bool,
     codegen: bool,
 ) -> None:
-    """CLI entry point: compile a C source file to an executable.
-
-    Runs the full compilation pipeline from C source file to native executable.
-    If a stage flag is provided (``--lex``, ``--parse``, ``--codegen``), the
-    pipeline stops after that stage. With no flags, all stages run.
-
-    Exits with code 0 on success and code 1 on any compilation failure.
-    Note: Click's standalone mode ignores return values — ``sys.exit()`` is
-    used directly to ensure the process exits with the correct code.
+    """Invoke the compiler pipeline for a single C source file.
 
     Args:
         source: Path to the C source file to compile.
         lex: Stop the pipeline after lexing.
         parse: Stop the pipeline after parsing.
-        codegen: Stop the pipeline after code generation (equivalent to no flags).
+        codegen: Stop after code generation; emit assembly but do not link.
     """
     if codegen:
-        stages = Stage.ALL
+        stages = Stage.LEX | Stage.PARSE | Stage.CODEGEN
     elif parse:
         stages = Stage.LEX | Stage.PARSE
     elif lex:
@@ -88,7 +152,7 @@ def compiler(
         pre_processed = preprocess(Path(source))
         assembly = compile(pre_processed, stages)
 
-        if Stage.CODEGEN in stages:
+        if not (lex or parse or codegen):
             executable = assemble_and_link(assembly)
             print(f"Compilation complete.  Output file is: {executable}")
     except LexerError as ex:
