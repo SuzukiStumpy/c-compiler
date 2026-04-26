@@ -137,7 +137,7 @@ def test_multi_character_token_produces_correct_number_of_tildes() -> None:
     # 4-character token: "^~~~" (1 caret + 3 tildes)
     err = _make_error(1, 1, "$$$$", ["$$$$"])
     underline = _underline_line(str(err))
-    caret_section = underline[underline.index("^"):]
+    caret_section = underline[underline.index("^") :]
     assert caret_section == "^~~~"
 
 

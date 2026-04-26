@@ -1,0 +1,35 @@
+repos:
+  - repo: local
+    hooks:
+      # --- pre-commit stage: fast checks on staged Python files ---
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+        stages: [pre-commit]
+
+      - id: ruff-check
+        name: ruff lint
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        stages: [pre-commit]
+
+      # --- pre-push stage: comprehensive checks on the full project ---
+
+      - id: pyrefly
+        name: pyrefly type check
+        entry: uv run pyrefly check
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

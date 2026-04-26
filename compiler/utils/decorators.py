@@ -45,6 +45,7 @@ def run_or_raise(
             ...
         RuntimeError: exited with code 1
     """
+
     def decorator(func: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:

@@ -76,9 +76,9 @@ def test_column_numbers_advance_correctly_across_first_line(preprocess_c_file: P
     #  1   5   910  14 16
     tokens = lexer(preprocess_c_file("valid/minimal.c"))
     line1 = [t for t in tokens if t.line == 1]
-    assert line1[0].col == 1   # int
-    assert line1[1].col == 5   # main
-    assert line1[2].col == 9   # (
+    assert line1[0].col == 1  # int
+    assert line1[1].col == 5  # main
+    assert line1[2].col == 9  # (
     assert line1[3].col == 10  # void
     assert line1[4].col == 14  # )
     assert line1[5].col == 16  # {
@@ -98,7 +98,7 @@ def test_column_numbers_on_second_line(preprocess_c_file: Preprocessor) -> None:
     #      5      12 13
     tokens = lexer(preprocess_c_file("valid/minimal.c"))
     line2 = [t for t in tokens if t.line == 2]
-    assert line2[0].col == 5   # return
+    assert line2[0].col == 5  # return
     assert line2[1].col == 12  # 2
     assert line2[2].col == 13  # ;
 
