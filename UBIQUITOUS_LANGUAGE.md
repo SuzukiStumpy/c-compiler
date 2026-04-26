@@ -53,11 +53,37 @@
 | **Terminal formatting** | Error output rendered with ANSI colour codes via `click`, used when writing to a terminal | Colour formatting, coloured output |
 | **Diagnostic** | Any structured error or warning emitted by the compiler to describe a problem in the source | Error output, message |
 
+## Abstract Syntax Tree
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Abstract Syntax Tree** | The tree structure produced by the parser from a token stream, representing the grammatical structure of the C source | Parse tree, syntax tree |
+| **AST node** | A single element in the abstract syntax tree, representing one syntactic construct | Node, tree node |
+| **Translation unit** | A complete C source file; the concept modelled by the `Program` AST node | Module, compilation unit |
+| **Program** | The root AST node representing a translation unit; holds one or more function definitions | Root node |
+| **Function definition** | An AST node representing a complete C function, including its return type, name, parameter list, and body | Function, function declaration |
+| **Parameter** | An AST node representing a single named, typed argument in a function's signature | Argument, arg |
+| **Function body** | The ordered sequence of statements that make up a function definition | Block, function block |
+| **Statement** | An executable instruction appearing in a function body | Instruction, command |
+| **Return statement** | The statement form `return <exp>;` that transfers control back to the caller with a value | Return, return expression |
+| **Expression** | A syntactic construct that evaluates to a value | Value, rvalue |
+| **Integer constant expression** | The expression form consisting of a single integer literal | Literal expression, number expression |
+| **Type** | A C type annotation used in declarations (e.g. as a return type or parameter type) | Type annotation, data type |
+| **Sum type** | An AST node category with multiple named variants (e.g. `Statement`, `Exp`, `Type`); represented as an abstract base class | Variant type, union type |
+| **Product type** | An AST node with a fixed, named set of fields and exactly one form (e.g. `Parameter`, `Function`, `Program`); represented as a frozen dataclass | Record type, struct |
+| **ASDL** | Zephyr Abstract Syntax Description Language; the notation used in this project to formally specify the grammar of AST nodes | — |
+
 ## Relationships
 
 - A **C source file** is transformed by **preprocessing** into a **preprocessed file**.
 - A **preprocessed file** is transformed by **lexing** into a **token stream**.
+- A **token stream** is transformed by **parsing** into an **abstract syntax tree**.
 - A **token stream** contains zero or more **tokens**, each carrying a **token type**, a **token value**, and a **source position**.
+- An **abstract syntax tree** is rooted at a **Program** node, which holds one or more **function definitions**.
+- A **function definition** has a **type** (return type), a name, zero or more **parameters**, and a **function body**.
+- A **parameter** has a **type** and a name.
+- A **function body** is an ordered sequence of **statements**.
+- A **return statement** holds an **expression**; in the current grammar, an **expression** is always an **integer constant expression**.
 - A **source position** references the original **C source file**, not the **preprocessed file**, via **linemarkers**.
 - A **keyword** is a **token** whose **token type** has a distinct enum member (e.g. `RETURN`) — it is never classified as an **identifier**.
 - A **lexer error** carries a **source position** and an **error context** drawn from the original **C source file**.
