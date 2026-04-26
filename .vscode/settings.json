@@ -11,7 +11,7 @@
             "path": "wsl.exe",
             "args": [
                 "-e", "bash", "--login", "-c",
-                "bash /mnt/c/Users/MarkEdwards/Documents/Code/Python/c-compiler/.vscode/launch_venv.sh"
+                "WORKSPACE_DIR='${workspaceFolder}' bash '${workspaceFolder}/.vscode/launch_venv.sh'"
             ]
         }
     },
@@ -19,7 +19,7 @@
     "terminal.integrated.profiles.linux": {
         "AutoVenv": {
             "path": "bash",
-            "args": ["/mnt/c/Users/MarkEdwards/Documents/Code/Python/c-compiler/.vscode/launch_venv.sh"]
+            "args": ["--login", "-c", "WORKSPACE_DIR='${workspaceFolder}' bash '${workspaceFolder}/.vscode/launch_venv.sh'"]
         }
     },
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",

@@ -1,5 +1,5 @@
 #!/bin/bash
-cd /mnt/c/Users/MarkEdwards/Documents/Code/Python/c-compiler
+cd "${WORKSPACE_DIR:-.}"
 if [ -f ".venv/bin/activate" ]; then
     source .venv/bin/activate
 fi
