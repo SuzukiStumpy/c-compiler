@@ -11,6 +11,7 @@ import compiler.asm as asm
 import compiler.ast as ast
 from compiler.ast import pretty_print
 from compiler.code_generator import generate
+from compiler.emitter import emit_program
 from compiler.lexer import lexer
 from compiler.parser import parse
 from compiler.subprocesses import assemble_and_link, preprocess
@@ -109,7 +110,7 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     if Stage.LINK in stages:
         assert asm_program is not None
         assembly = source.parent / f"{source.stem}.s"
-        # TODO: emit assembly AST to file once the emitter is implemented
+        emit_program(asm_program, assembly)
         executable = assemble_and_link(assembly)
         click.echo(f"Compilation complete.  Output file is: {executable}")
 

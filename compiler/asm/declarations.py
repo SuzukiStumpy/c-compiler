@@ -27,6 +27,25 @@ class Function:
     name: str
     instructions: tuple[Instruction, ...]
 
+    def emit(self) -> str:
+        """Return the assembly text for this function definition.
+
+        Produces a ``.globl`` directive, a label, and the emitted text of
+        each instruction, all joined by newlines.
+
+        Returns:
+            A multi-line string of the form::
+
+                  .globl <name>
+                <name>:
+                  <instruction 1>
+                  <instruction 2>
+                  ...
+        """
+        lines = [f"  .globl {self.name}", f"{self.name}:"]
+        lines.extend(instr.emit() for instr in self.instructions)
+        return "\n".join(lines)
+
 
 @dataclass(frozen=True, slots=True)
 class Program:
@@ -40,3 +59,15 @@ class Program:
     """
 
     function: Function
+
+    def emit(self) -> str:
+        """Return the assembly text for the full translation unit.
+
+        Delegates to the single contained function definition.  Platform-
+        specific additions (name mangling, section directives) are applied
+        by the emitter before calling this method.
+
+        Returns:
+            The assembly text of the contained function.
+        """
+        return self.function.emit()
