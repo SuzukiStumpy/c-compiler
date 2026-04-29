@@ -7,13 +7,14 @@ from typing import Any
 
 import click
 
+from compiler.ast import Program, pretty_print
 from compiler.code_generator import generate
 from compiler.lexer import lexer
 from compiler.parser import parse
 from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.types.stages import Stage
 from compiler.utils.diagnostics import format_for_terminal
-from compiler.utils.exceptions import LexerError
+from compiler.utils.exceptions import LexerError, ParseError
 
 
 class MutuallyExclusiveOption(click.Option):
@@ -63,7 +64,7 @@ class MutuallyExclusiveOption(click.Option):
         return super().handle_parse_result(ctx, opts, args)
 
 
-def compile(source: Path, stages: Stage = Stage.ALL) -> Path:
+def compile(source: Path, stages: Stage = Stage.ALL) -> tuple[Program | None, Path]:
     """Run the selected compilation stages on a preprocessed source file.
 
     Executes each requested stage in pipeline order: lexing, parsing, and
@@ -75,25 +76,29 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> Path:
         stages: Bitmask of stages to execute. Defaults to ``Stage.ALL``.
 
     Returns:
-        Path to the assembly ``.s`` file produced by code generation.
+        A tuple of the parsed ``Program`` (or ``None`` if parsing did not run)
+        and the path to the assembly ``.s`` file.
 
     Raises:
         LexerError: If the lexer stage is active and encounters an invalid
             character in the source.
+        ParseError: If the parse stage is active and the token stream does not
+            conform to the grammar.
     """
     token_stream = []
+    program: Program | None = None
 
     if Stage.LEX in stages:
         token_stream = lexer(source)
 
     if Stage.PARSE in stages:
-        parse(token_stream)
+        program = parse(token_stream)
 
     if Stage.CODEGEN in stages:
         generate()
 
     # Path.unlink(source)
-    return source.parent / f"{source.stem}.s"
+    return program, source.parent / f"{source.stem}.s"
 
 
 @click.command(
@@ -150,13 +155,18 @@ def compiler(
 
     try:
         pre_processed = preprocess(Path(source))
-        assembly = compile(pre_processed, stages)
+        program, assembly = compile(pre_processed, stages)
 
-        if not (lex or parse or codegen):
+        if parse and program is not None:
+            click.echo(pretty_print(program))
+        elif not (lex or parse or codegen):
             executable = assemble_and_link(assembly)
             print(f"Compilation complete.  Output file is: {executable}")
     except LexerError as ex:
         click.echo(format_for_terminal(ex), err=True)
+        sys.exit(1)
+    except ParseError as ex:
+        click.echo(str(ex), err=True)
         sys.exit(1)
     except Exception as ex:
         print(f"Compiler failed with exception {ex}")

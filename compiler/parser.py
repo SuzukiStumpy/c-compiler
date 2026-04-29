@@ -1,12 +1,371 @@
-"""Parsing stage: converts a token stream into an abstract syntax tree."""
+"""Parsing stage: converts a token stream into an abstract syntax tree.
 
-from compiler.types.tokens import Token
+The parser is a recursive descent parser whose grammar mirrors the ASDL
+specification in ``compiler.ast``:
+
+    program             = Program(function_definition+)
+    function_definition = Function(type return_type, identifier name,
+                                   parameter* params, statement+ body)
+    parameter           = Parameter(type param_type, identifier name)
+    statement           = Return(exp)
+    exp                 = Constant(int)
+    type                = IntType
+
+Each grammar rule maps directly to a private ``_parse_*`` method on
+``Parser``. The public ``parse()`` function is the only entry point
+intended for use by other pipeline stages.
+"""
+
+from pathlib import Path
+
+from compiler.ast import Constant, Exp, Function, IntType, Parameter, Program, Return, Statement, Type
+from compiler.types.tokens import Token, TokenType
+from compiler.utils.exceptions import ParseError
 
 
-def parse(token_stream: list[Token]) -> None:
+class Parser:
+    """Recursive descent parser for the supported subset of C.
+
+    Consumes a token stream produced by the lexer and constructs an immutable
+    AST rooted at a ``Program`` node. Raises ``ParseError`` on any token that
+    does not conform to the grammar.
+
+    Attributes:
+        _tokens: The complete token stream to parse.
+        _pos: Index of the next token to be consumed.
+        _last: The most recently consumed token, used to anchor EOF errors.
+    """
+
+    def __init__(self, tokens: list[Token]) -> None:
+        """Initialise the parser with a token stream.
+
+        Args:
+            tokens: Ordered list of tokens produced by the lexer.
+        """
+        self._tokens = tokens
+        self._pos = 0
+        self._last: Token | None = None
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _peek(self) -> Token | None:
+        """Return the next token without consuming it, or ``None`` at EOF.
+
+        Returns:
+            The token at the current position, or ``None`` if the stream is
+            exhausted.
+        """
+        if self._pos < len(self._tokens):
+            return self._tokens[self._pos]
+        return None
+
+    def _consume(self) -> Token:
+        """Consume and return the next token.
+
+        Returns:
+            The token at the current position.
+
+        Raises:
+            ParseError: If the stream is already exhausted.
+        """
+        token = self._peek()
+        if token is None:
+            raise self._eof_error("unexpected end of input")
+        self._last = token
+        self._pos += 1
+        return token
+
+    def _expect(self, token_type: TokenType) -> Token:
+        """Consume the next token, raising ``ParseError`` if its type does not match.
+
+        Args:
+            token_type: The required token type.
+
+        Returns:
+            The consumed token.
+
+        Raises:
+            ParseError: If the next token has a different type, or if the stream
+                is exhausted.
+        """
+        token = self._peek()
+        if token is None:
+            raise self._eof_error(f"expected {token_type.name}, got end of input")
+        if token.type != token_type:
+            raise self._token_error(
+                f"expected {token_type.name}, got {token.type.name} '{token.value}'",
+                token,
+            )
+        return self._consume()
+
+    def _at_end(self) -> bool:
+        """Return ``True`` if all tokens have been consumed.
+
+        Returns:
+            ``True`` when the stream is exhausted, ``False`` otherwise.
+        """
+        return self._pos >= len(self._tokens)
+
+    def _source_lines(self, filename: str) -> list[str]:
+        """Read and return the lines of a source file, or ``[]`` on failure.
+
+        Args:
+            filename: Path to the original C source file.
+
+        Returns:
+            The file's lines as a list of strings, or an empty list if the
+            file cannot be read (e.g. in tests where the path is synthetic).
+        """
+        try:
+            return Path(filename).read_text().splitlines()
+        except OSError:
+            return []
+
+    def _token_error(self, message: str, token: Token) -> ParseError:
+        """Build a ``ParseError`` anchored to a specific token's position.
+
+        Args:
+            message: Human-readable description of what went wrong.
+            token: The offending token supplying position and source text.
+
+        Returns:
+            A ``ParseError`` with position and source context from ``token``.
+        """
+        lines = self._source_lines(token.filename)
+        return ParseError(message, token.filename, token.line, token.col, token.value, lines)
+
+    def _eof_error(self, message: str) -> ParseError:
+        """Build a ``ParseError`` anchored to the last seen token position.
+
+        Used when EOF is encountered unexpectedly and no current token exists
+        to provide location information.  ``token_value`` is set to ``''`` so
+        the underline renders as a single ``^`` with no trailing tildes.
+
+        Args:
+            message: Human-readable description of the unexpected EOF.
+
+        Returns:
+            A ``ParseError`` with position taken from the last consumed token,
+            or zeroed fields if no token was ever consumed.
+        """
+        if self._last is not None:
+            lines = self._source_lines(self._last.filename)
+            return ParseError(message, self._last.filename, self._last.line, self._last.col, "", lines)
+        return ParseError(message, "<unknown>", 0, 0, "", [])
+
+    # ------------------------------------------------------------------
+    # Grammar rules
+    # ------------------------------------------------------------------
+
+    def parse_program(self) -> Program:
+        """Parse the full token stream as a translation unit.
+
+        Expects one or more function definitions followed by end of input.
+
+        Returns:
+            A ``Program`` node containing all parsed function definitions.
+
+        Raises:
+            ParseError: If no function definitions are found, or if any
+                function definition is malformed.
+        """
+        functions: list[Function] = []
+        while not self._at_end():
+            functions.append(self._parse_function())
+        if not functions:
+            raise self._eof_error("expected a function definition, got empty input")
+        return Program(functions=tuple(functions))
+
+    def _parse_function(self) -> Function:
+        """Parse a single function definition.
+
+        Grammar::
+
+            function_definition = Function(type return_type, identifier name,
+                                           parameter* params, statement+ body)
+
+        Returns:
+            A ``Function`` node.
+
+        Raises:
+            ParseError: If any part of the function definition is malformed.
+        """
+        return_type = self._parse_type()
+        name_token = self._expect(TokenType.IDENTIFIER)
+        self._expect(TokenType.LPAREN)
+        params = self._parse_params()
+        self._expect(TokenType.RPAREN)
+        self._expect(TokenType.LBRACE)
+        body = self._parse_body()
+        self._expect(TokenType.RBRACE)
+        return Function(
+            return_type=return_type,
+            name=name_token.value,
+            params=params,
+            body=body,
+        )
+
+    def _parse_params(self) -> tuple[Parameter, ...]:
+        """Parse the parameter list between the parentheses of a function definition.
+
+        Handles three forms:
+
+        * ``()`` — empty parameter list.
+        * ``(void)`` — explicit "no parameters" marker; treated as empty.
+        * ``(type identifier)`` — a single typed parameter.
+
+        Multiple parameters are not currently supported (no ``COMMA`` token
+        exists in the grammar). If more than one parameter appears, the
+        ``_expect(RPAREN)`` call in ``_parse_function`` will raise a
+        ``ParseError``.
+
+        Returns:
+            A tuple of zero or one ``Parameter`` nodes.
+
+        Raises:
+            ParseError: If the parameter type is unrecognised.
+        """
+        token = self._peek()
+        if token is None or token.type == TokenType.RPAREN:
+            return ()
+        if token.type == TokenType.VOID:
+            self._consume()
+            return ()
+        param = self._parse_param()
+        return (param,)
+
+    def _parse_param(self) -> Parameter:
+        """Parse a single ``type identifier`` parameter declaration.
+
+        Returns:
+            A ``Parameter`` node.
+
+        Raises:
+            ParseError: If the type or identifier is missing or malformed.
+        """
+        param_type = self._parse_type()
+        name_token = self._expect(TokenType.IDENTIFIER)
+        return Parameter(param_type=param_type, name=name_token.value)
+
+    def _parse_body(self) -> tuple[Statement, ...]:
+        """Parse the statement sequence forming a function body.
+
+        Consumes statements until a ``RBRACE`` is reached. At least one
+        statement is required by the grammar.
+
+        Returns:
+            A non-empty tuple of ``Statement`` nodes.
+
+        Raises:
+            ParseError: If the body contains no statements, or if any
+                statement is malformed.
+        """
+        statements: list[Statement] = []
+        while True:
+            token = self._peek()
+            if token is None:
+                raise self._eof_error("expected '}', got end of input")
+            if token.type == TokenType.RBRACE:
+                break
+            statements.append(self._parse_statement())
+        if not statements:
+            token = self._peek()
+            assert token is not None
+            raise self._token_error("function body must contain at least one statement", token)
+        return tuple(statements)
+
+    def _parse_statement(self) -> Statement:
+        """Parse a single statement.
+
+        Currently only ``return`` statements are supported.
+
+        Returns:
+            A ``Statement`` node.
+
+        Raises:
+            ParseError: If the token does not begin a recognised statement.
+        """
+        token = self._peek()
+        if token is None:
+            raise self._eof_error("expected a statement, got end of input")
+        if token.type == TokenType.RETURN:
+            return self._parse_return()
+        raise self._token_error(f"expected a statement, got {token.type.name} '{token.value}'", token)
+
+    def _parse_return(self) -> Return:
+        """Parse a ``return <exp>;`` statement.
+
+        Returns:
+            A ``Return`` node wrapping the parsed expression.
+
+        Raises:
+            ParseError: If the expression or trailing semicolon is missing.
+        """
+        self._expect(TokenType.RETURN)
+        exp = self._parse_exp()
+        self._expect(TokenType.SEMICOLON)
+        return Return(exp=exp)
+
+    def _parse_exp(self) -> Exp:
+        """Parse an expression.
+
+        Currently only integer constant expressions are supported.
+
+        Returns:
+            An ``Exp`` node.
+
+        Raises:
+            ParseError: If the token does not begin a recognised expression.
+        """
+        return self._parse_constant()
+
+    def _parse_constant(self) -> Constant:
+        """Parse an integer constant expression.
+
+        Returns:
+            A ``Constant`` node with the parsed integer value.
+
+        Raises:
+            ParseError: If the next token is not a ``NUMBER``.
+        """
+        token = self._expect(TokenType.NUMBER)
+        return Constant(value=int(token.value))
+
+    def _parse_type(self) -> Type:
+        """Parse a C type annotation.
+
+        Currently only ``int`` is supported as a type.
+
+        Returns:
+            A ``Type`` node.
+
+        Raises:
+            ParseError: If the next token is not a recognised type keyword.
+        """
+        token = self._peek()
+        if token is None:
+            raise self._eof_error("expected a type, got end of input")
+        if token.type == TokenType.INT:
+            self._consume()
+            return IntType()
+        raise self._token_error(f"expected a type, got {token.type.name} '{token.value}'", token)
+
+
+def parse(token_stream: list[Token]) -> Program:
     """Convert a token stream into an abstract syntax tree.
 
-    Not yet implemented. Will accept the token stream produced by the lexer
-    and construct an AST representing the program structure.
+    Constructs a ``Parser`` and drives it to completion, returning the
+    ``Program`` node at the root of the AST.
+
+    Args:
+        token_stream: Ordered list of tokens produced by the lexer.
+
+    Returns:
+        The ``Program`` node representing the full translation unit.
+
+    Raises:
+        ParseError: If the token stream does not conform to the grammar.
     """
-    pass
+    return Parser(token_stream).parse_program()

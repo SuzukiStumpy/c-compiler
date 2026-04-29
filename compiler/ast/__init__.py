@@ -31,6 +31,7 @@ nodes are immutable — once constructed an AST node cannot be modified.
 
 from compiler.ast.declarations import Function, Parameter, Program
 from compiler.ast.expressions import Constant, Exp
+from compiler.ast.pretty_print import pretty_print
 from compiler.ast.statements import Return, Statement
 from compiler.ast.types import IntType, Type
 
@@ -44,4 +45,5 @@ __all__ = [
     "Parameter",
     "Function",
     "Program",
+    "pretty_print",
 ]
