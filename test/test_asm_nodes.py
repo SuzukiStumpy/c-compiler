@@ -8,7 +8,7 @@ import dataclasses
 
 import pytest
 
-from compiler.syntax.asm import Function, Imm, Instruction, Mov, Operand, Program, Register, Ret
+from compiler.syntax.asm import Function, Imm, Instruction, Mov, Operand, Program, Register, Registers, Ret
 
 # ---------------------------------------------------------------------------
 # Operand nodes
@@ -46,19 +46,19 @@ class TestRegister:
 
     def test_construction(self) -> None:
         """``Register`` can be constructed with no arguments."""
-        Register()
+        Register(Registers.AX)
 
     def test_is_operand(self) -> None:
         """``Register`` is a subclass of ``Operand``."""
-        assert isinstance(Register(), Operand)
+        assert isinstance(Register(Registers.AX), Operand)
 
     def test_equality(self) -> None:
         """Two ``Register`` instances are equal."""
-        assert Register() == Register()
+        assert Register(Registers.AX) == Register(Registers.AX)
 
     def test_not_equal_to_imm(self) -> None:
         """``Register`` is not equal to an ``Imm`` node."""
-        assert Register() != Imm(value=0)
+        assert Register(Registers.AX) != Imm(value=0)
 
 
 # ---------------------------------------------------------------------------
@@ -71,25 +71,25 @@ class TestMov:
 
     def test_construction(self) -> None:
         """``Mov`` stores its source and destination operands."""
-        mov = Mov(src=Imm(value=3), dst=Register())
+        mov = Mov(src=Imm(value=3), dst=Register(Registers.AX))
         assert mov.src == Imm(value=3)
-        assert mov.dst == Register()
+        assert mov.dst == Register(Registers.AX)
 
     def test_is_instruction(self) -> None:
         """``Mov`` is a subclass of ``Instruction``."""
-        assert isinstance(Mov(src=Imm(value=0), dst=Register()), Instruction)
+        assert isinstance(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Instruction)
 
     def test_equality(self) -> None:
         """Two ``Mov`` nodes with identical operands are equal."""
-        assert Mov(src=Imm(value=1), dst=Register()) == Mov(src=Imm(value=1), dst=Register())
+        assert Mov(src=Imm(value=1), dst=Register(Registers.AX)) == Mov(src=Imm(value=1), dst=Register(Registers.AX))
 
     def test_inequality_different_src(self) -> None:
         """``Mov`` nodes with different source operands are not equal."""
-        assert Mov(src=Imm(value=1), dst=Register()) != Mov(src=Imm(value=2), dst=Register())
+        assert Mov(src=Imm(value=1), dst=Register(Registers.AX)) != Mov(src=Imm(value=2), dst=Register(Registers.AX))
 
     def test_immutable(self) -> None:
         """``Mov`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
-        mov = Mov(src=Imm(value=0), dst=Register())
+        mov = Mov(src=Imm(value=0), dst=Register(Registers.AX))
         with pytest.raises(dataclasses.FrozenInstanceError):
             mov.src = Imm(value=99)  # type: ignore[misc]
 
@@ -111,7 +111,7 @@ class TestRet:
 
     def test_not_equal_to_mov(self) -> None:
         """``Ret`` is not equal to a ``Mov`` node."""
-        assert Ret() != Mov(src=Imm(value=0), dst=Register())
+        assert Ret() != Mov(src=Imm(value=0), dst=Register(Registers.AX))
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ class TestFunction:
 
     def test_construction(self) -> None:
         """``Function`` stores its name and instruction tuple."""
-        fn = Function(name="main", instructions=(Mov(src=Imm(value=0), dst=Register()), Ret()))
+        fn = Function(name="main", instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
         assert fn.name == "main"
         assert len(fn.instructions) == 2
 

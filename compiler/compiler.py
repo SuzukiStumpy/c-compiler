@@ -9,12 +9,14 @@ import click
 
 import compiler.syntax.asm as asm
 import compiler.syntax.ast as ast
+import compiler.syntax.tac as tac
 from compiler.code_generator import generate
 from compiler.emitter import emit_program
 from compiler.lexer import lexer
 from compiler.parser import parse
 from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.syntax.ast import pretty_print
+from compiler.tac_generator import generate as tac_generate
 from compiler.types.stages import Stage
 from compiler.utils.diagnostics import format_for_terminal
 from compiler.utils.exceptions import CodeGenerationError, LexerError, ParseError
@@ -70,27 +72,29 @@ class MutuallyExclusiveOption(click.Option):
 def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     """Run the selected compilation stages on a preprocessed source file.
 
-    Executes each requested stage in pipeline order: lexing, parsing, code
-    generation, and assembly/linking. The ``stages`` bitmask controls which
-    stages run; omitting a flag causes the pipeline to stop before that stage.
+    Executes each requested stage in pipeline order: lexing, parsing, TAC
+    generation, assembly code generation, and assembly/linking.  The ``stages``
+    bitmask controls which stages run; omitting a flag causes the pipeline to
+    stop before that stage.
 
-    When the pipeline stops after ``PARSE``, the main AST is printed to
-    stdout. When it stops after ``CODEGEN``, the assembly AST is printed.
-    When ``LINK`` is included, the executable is produced and a completion
-    message is printed.
+    When the pipeline stops after ``PARSE``, the main AST is printed to stdout.
+    When it stops after ``TACKY``, the TAC AST is printed.  When it stops after
+    ``CODEGEN``, the assembly AST is printed.  When ``LINK`` is included, the
+    executable is produced and a completion message is printed.
 
     Args:
         source: Path to the preprocessed ``.i`` file to compile.
-        stages: Bitmask of stages to execute. Defaults to ``Stage.ALL``.
+        stages: Bitmask of stages to execute.  Defaults to ``Stage.ALL``.
 
     Raises:
         LexerError: If the lexer stage encounters an invalid character.
         ParseError: If the token stream does not conform to the grammar.
-        CodeGenerationError: If the AST contains a construct that cannot be
-            translated.
+        CodeGenerationError: If the AST or TAC contains a construct that cannot
+            be translated.
     """
     token_stream = []
     program: ast.Program | None = None
+    tac_program: tac.Program | None = None
     asm_program: asm.Program | None = None
 
     if Stage.LEX in stages:
@@ -98,12 +102,18 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
 
     if Stage.PARSE in stages:
         program = parse(token_stream)
-        if Stage.CODEGEN not in stages:
+        if Stage.TACKY not in stages:
             click.echo(pretty_print(program))
 
-    if Stage.CODEGEN in stages:
+    if Stage.TACKY in stages:
         assert program is not None
-        asm_program = generate(program)
+        tac_program = tac_generate(program)
+        if Stage.CODEGEN not in stages:
+            click.echo(pretty_print(tac_program))
+
+    if Stage.CODEGEN in stages:
+        assert tac_program is not None
+        asm_program = generate(tac_program)
         if Stage.LINK not in stages:
             click.echo(pretty_print(asm_program))
 
@@ -129,21 +139,28 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     "--lex",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["parse", "codegen"],
+    mutually_exclusive=["parse", "tacky", "codegen"],
     help="Stop after lexing.",
 )
 @click.option(
     "--parse",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["lex", "codegen"],
-    help="Stop after parsing.",
+    mutually_exclusive=["lex", "tacky", "codegen"],
+    help="Stop after parsing; print the AST.",
+)
+@click.option(
+    "--tacky",
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["lex", "parse", "codegen"],
+    help="Stop after TAC generation; print the TAC AST.",
 )
 @click.option(
     "--codegen",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["lex", "parse"],
+    mutually_exclusive=["lex", "parse", "tacky"],
     help="Stop after code generation; emit assembly but do not link.",
 )
 @click.argument("source", type=click.Path(), required=True, nargs=1)
@@ -151,6 +168,7 @@ def compiler(
     source: str,
     lex: bool,
     parse: bool,
+    tacky: bool,
     codegen: bool,
 ) -> None:
     """Invoke the compiler pipeline for a single C source file.
@@ -158,11 +176,14 @@ def compiler(
     Args:
         source: Path to the C source file to compile.
         lex: Stop the pipeline after lexing.
-        parse: Stop the pipeline after parsing.
+        parse: Stop the pipeline after parsing; print the AST.
+        tacky: Stop the pipeline after TAC generation; print the TAC AST.
         codegen: Stop after code generation; emit assembly but do not link.
     """
     if codegen:
-        stages = Stage.LEX | Stage.PARSE | Stage.CODEGEN
+        stages = Stage.LEX | Stage.PARSE | Stage.TACKY | Stage.CODEGEN
+    elif tacky:
+        stages = Stage.LEX | Stage.PARSE | Stage.TACKY
     elif parse:
         stages = Stage.LEX | Stage.PARSE
     elif lex:

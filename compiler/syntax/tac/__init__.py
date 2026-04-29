@@ -28,17 +28,20 @@ nodes are immutable - once constructed a tac AST node cannot be modified.
 """
 
 from compiler.syntax.tac.declarations import Function, Program
-from compiler.syntax.tac.instructions import Return, Unary
-from compiler.syntax.tac.operators import Complement, Negate
-from compiler.syntax.tac.values import Constant, Var
+from compiler.syntax.tac.instructions import Instruction, Return, Unary
+from compiler.syntax.tac.operators import Complement, Negate, UnaryOperator
+from compiler.syntax.tac.values import Constant, Val, Var
 
 __all__ = [
     "Program",
     "Function",
+    "Instruction",
     "Return",
     "Unary",
+    "UnaryOperator",
     "Complement",
     "Negate",
+    "Val",
     "Constant",
     "Var",
 ]

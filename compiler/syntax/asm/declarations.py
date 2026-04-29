@@ -33,17 +33,32 @@ class Function:
         Produces a ``.globl`` directive, a label, and the emitted text of
         each instruction, all joined by newlines.
 
+        When the instruction list contains an ``AllocateStack`` instruction,
+        a standard frame-pointer prologue (``pushq %rbp; movq %rsp, %rbp``) is
+        inserted immediately after the label, and a matching epilogue
+        (``movq %rbp, %rsp; popq %rbp``) is inserted before every ``Ret``.
+
         Returns:
             A multi-line string of the form::
 
                   .globl <name>
                 <name>:
+                  [pushq %rbp]
+                  [movq %rsp, %rbp]
                   <instruction 1>
-                  <instruction 2>
                   ...
+                  [movq %rbp, %rsp]
+                  [popq %rbp]
+                  ret
         """
-        lines = [f"  .globl {self.name}", f"{self.name}:"]
-        lines.extend(instr.emit() for instr in self.instructions)
+        lines = [
+            f"  .globl {self.name}",
+            f"{self.name}:",
+            "  pushq %rbp",
+            "  movq %rsp, %rbp",
+        ]
+        for instr in self.instructions:
+            lines.append(instr.emit())
         return "\n".join(lines)
 
 

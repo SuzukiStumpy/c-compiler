@@ -1,44 +1,63 @@
 """Assembly AST node definitions for the C compiler.
 
 This package defines the Abstract Syntax Tree (AST) node types that represent
-an assembly language program, produced by the code generator from the main AST
+an assembly language program, produced by the code generator from the TAC AST
 and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
     program             = Program(function_definition)
     function_definition = Function(identifier name, instruction* instructions)
     instruction         = Mov(operand src, operand dst)
+                        | Unary(unary_operator, operand)
+                        | AllocateStack(int)
                         | Ret
     operand             = Imm(int)
                         | Register
+                        | Pseudo(identifier)
+                        | Stack(int)
+    unary_operator      = Neg | Not
 
 Nodes are organised into submodules by logical role:
 
-    operands      — Operand nodes (Operand, Imm, Register)
-    instructions  — Instruction nodes (Instruction, Mov, Ret)
+    operators     — Unary operator nodes (UnaryOperator, Neg, Not)
+    operands      — Operand nodes (Operand, Imm, Register, Pseudo, Stack)
+    instructions  — Instruction nodes (Instruction, Mov, Ret, Unary, AllocateStack)
     declarations  — Program structure nodes (Function, Program)
 
 All node types are re-exported from this package so callers can import directly
 from ``compiler.syntax.asm`` without knowing which submodule a type lives in::
 
-    from compiler.syntax.asm import Program, Function, Mov, Ret, Imm, Register
+    from compiler.syntax.asm import Program, Function, Mov, Ret, Imm, Register, ...
 
-Sum types (``Operand``, ``Instruction``) are abstract base classes; each
-variant is a concrete frozen dataclass subclassing the appropriate base. All
-nodes are immutable — once constructed an assembly AST node cannot be modified.
+Sum types (``Operand``, ``Instruction``, ``UnaryOperator``) are abstract base
+classes; each variant is a concrete frozen dataclass subclassing the appropriate
+base.  All nodes are immutable — once constructed an assembly AST node cannot be
+modified.
+
+``Pseudo`` operands are an intermediate form used during code generation and must
+be replaced by ``Stack`` operands before the assembly is emitted.
 """
 
 from compiler.syntax.asm.declarations import Function, Program
-from compiler.syntax.asm.instructions import Instruction, Mov, Ret
-from compiler.syntax.asm.operands import Imm, Operand, Register
+from compiler.syntax.asm.instructions import AllocateStack, Instruction, Mov, Ret, Unary
+from compiler.syntax.asm.operands import Imm, Operand, Pseudo, Register, Registers, Stack
+from compiler.syntax.asm.operators import Neg, Not, UnaryOperator
 
 __all__ = [
+    "UnaryOperator",
+    "Neg",
+    "Not",
     "Operand",
     "Imm",
     "Register",
+    "Registers",
+    "Pseudo",
+    "Stack",
     "Instruction",
     "Mov",
     "Ret",
+    "Unary",
+    "AllocateStack",
     "Function",
     "Program",
 ]

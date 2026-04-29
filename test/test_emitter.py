@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from compiler.emitter import emit_program
-from compiler.syntax.asm import Function, Imm, Mov, Program, Register, Ret
+from compiler.syntax.asm import Function, Imm, Mov, Program, Register, Registers, Ret
 
 # ---------------------------------------------------------------------------
 # Operand emit()
@@ -27,8 +27,8 @@ def test_imm_emit_zero() -> None:
 
 
 def test_register_emit() -> None:
-    """``Register().emit()`` produces ``%eax``."""
-    assert Register().emit() == "%eax"
+    """``Register(Registers.AX).emit()`` produces ``%eax``."""
+    assert Register(Registers.AX).emit() == "%eax"
 
 
 # ---------------------------------------------------------------------------
@@ -38,12 +38,12 @@ def test_register_emit() -> None:
 
 def test_mov_emit() -> None:
     """``Mov`` emits ``  movl <src>, <dst>``."""
-    assert Mov(src=Imm(value=2), dst=Register()).emit() == "  movl $2, %eax"
+    assert Mov(src=Imm(value=2), dst=Register(Registers.AX)).emit() == "  movl $2, %eax"
 
 
 def test_ret_emit() -> None:
     """``Ret`` emits ``  ret``."""
-    assert Ret().emit() == "  ret"
+    assert Ret().emit() == "  movq  %rbp, %rsp\n  popq  %rbp\n  ret"
 
 
 # ---------------------------------------------------------------------------
@@ -65,17 +65,28 @@ def test_function_emit_label() -> None:
 
 
 def test_function_emit_instructions() -> None:
-    """Instruction lines follow the label in order."""
-    fn = Function(name="main", instructions=(Mov(src=Imm(value=2), dst=Register()), Ret()))
+    """Instruction lines follow the prologue in order."""
+    fn = Function(name="main", instructions=(Mov(src=Imm(value=2), dst=Register(Registers.AX)), Ret()))
     lines = fn.emit().splitlines()
-    assert lines[2] == "  movl $2, %eax"
-    assert lines[3] == "  ret"
+    # lines[0] = .globl, [1] = label, [2] = pushq, [3] = movq (prologue)
+    assert lines[4] == "  movl $2, %eax"
+    assert lines[7] == "  ret"
 
 
 def test_function_emit_full() -> None:
     """Full function emission matches the expected template exactly."""
-    fn = Function(name="main", instructions=(Mov(src=Imm(value=0), dst=Register()), Ret()))
-    assert fn.emit() == "  .globl main\nmain:\n  movl $0, %eax\n  ret"
+    fn = Function(name="main", instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+    expected = (
+        "  .globl main\n"
+        "main:\n"
+        "  pushq %rbp\n"
+        "  movq %rsp, %rbp\n"
+        "  movl $0, %eax\n"
+        "  movq  %rbp, %rsp\n"
+        "  popq  %rbp\n"
+        "  ret"
+    )
+    assert fn.emit() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +96,8 @@ def test_function_emit_full() -> None:
 
 def test_emit_program_linux_content(tmp_path: Path) -> None:
     """On Linux the file contains the expected instructions."""
-    program = Program(function=Function(name="main", instructions=(Mov(src=Imm(value=3), dst=Register()), Ret())))
+    mov = Mov(src=Imm(value=3), dst=Register(Registers.AX))
+    program = Program(function=Function(name="main", instructions=(mov, Ret())))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()

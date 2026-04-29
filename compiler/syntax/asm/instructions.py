@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from compiler.syntax.asm.operands import Operand
+from compiler.syntax.asm.operators import UnaryOperator
 
 
 class Instruction(ABC):
@@ -61,6 +62,58 @@ class Ret(Instruction):
         """Return the ``ret`` mnemonic.
 
         Returns:
-            The string ``  ret``.
+            The string ``
+                movq  %rbp, %rsp
+                popq  %rbp, %rsp
+                ret
+            ``.
         """
-        return "  ret"
+        return "  movq  %rbp, %rsp\n  popq  %rbp\n  ret"
+
+
+@dataclass(frozen=True, slots=True)
+class Unary(Instruction):
+    """A unary instruction that reads and modifies a single operand in place.
+
+    Covers ``negl`` (arithmetic negation) and ``notl`` (bitwise complement).
+
+    Attributes:
+        operator: The specific unary operation to perform.
+        operand: The operand to read and modify in place.
+    """
+
+    operator: UnaryOperator
+    operand: Operand
+
+    def emit(self) -> str:
+        """Return a unary instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``  <mnemonic> <operand>``,
+            e.g. ``  negl %eax``.
+        """
+        return f"  {self.operator.emit()} {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class AllocateStack(Instruction):
+    """A ``subq`` instruction that reserves space on the stack for local variables.
+
+    This instruction is prepended to function bodies by the pseudo-register
+    replacement pass whenever temporaries must be spilled to the stack.  The
+    ``size`` is always a positive multiple of 16 to maintain ABI alignment.
+
+    Attributes:
+        size: Number of bytes to subtract from ``%rsp``.
+    """
+
+    size: int
+
+    def emit(self) -> str:
+        """Return a ``subq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``  subq $<size>, %rsp``,
+            e.g. ``  subq $16, %rsp``.
+        """
+        return f"  subq ${self.size}, %rsp"

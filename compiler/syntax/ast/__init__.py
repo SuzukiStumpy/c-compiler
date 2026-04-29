@@ -32,8 +32,8 @@ nodes are immutable — once constructed an AST node cannot be modified.
 """
 
 from compiler.syntax.ast.declarations import Function, Parameter, Program
-from compiler.syntax.ast.expressions import Constant, Exp
-from compiler.syntax.ast.operators import Complement, Negate
+from compiler.syntax.ast.expressions import Constant, Exp, Unary
+from compiler.syntax.ast.operators import Complement, Negate, UnaryOperator
 from compiler.syntax.ast.pretty_print import pretty_print
 from compiler.syntax.ast.statements import Return, Statement
 from compiler.syntax.ast.types import IntType, Type
@@ -43,6 +43,8 @@ __all__ = [
     "IntType",
     "Exp",
     "Constant",
+    "Unary",
+    "UnaryOperator",
     "Statement",
     "Return",
     "Parameter",
