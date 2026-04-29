@@ -20,6 +20,11 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LBRACE", r"\{"),
     ("RBRACE", r"\}"),
     ("SEMICOLON", r";"),
+    # Boolan Operations
+    ("BITWISE_NOT", r"\~"),
+    # Unary Operators
+    ("NEGATION", r"\-"),
+    ("DECREMENT", r"--"),
 ]
 
 _TOKEN_REGEX = re.compile(

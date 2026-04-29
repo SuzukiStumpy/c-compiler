@@ -26,6 +26,11 @@ class TokenType(Enum):
     LBRACE = auto()
     RBRACE = auto()
     SEMICOLON = auto()
+    # Boolean Operators
+    BITWISE_NOT = auto()
+    # Unary Operators
+    NEGATION = auto()
+    DECREMENT = auto()
 
 
 @dataclass(frozen=True, slots=True)
