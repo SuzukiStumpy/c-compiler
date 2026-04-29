@@ -21,9 +21,9 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("RBRACE", r"\}"),
     ("SEMICOLON", r";"),
     # Boolan Operations
-    ("BITWISE_NOT", r"\~"),
+    ("BITWISE_NOT", r"~"),
     # Unary Operators
-    ("NEGATION", r"\-"),
+    ("NEGATION", r"-"),
     ("DECREMENT", r"--"),
 ]
 
