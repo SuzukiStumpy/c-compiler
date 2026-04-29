@@ -2,30 +2,59 @@
 
 import click
 
-from compiler.utils.exceptions import LexerError
+from compiler.utils.exceptions import CodeGenerationError, LexerError, ParseError
 
 
-def format_for_terminal(error: LexerError) -> str:
-    """Format a ``LexerError`` for display in a colour-capable terminal.
+def format_for_terminal(error: LexerError | ParseError | CodeGenerationError) -> str:
+    """Format a compiler diagnostic for display in a colour-capable terminal.
 
-    Produces the same structure as ``LexerError.__str__`` but with ANSI colour
-    codes applied via ``click.style``: the error label and offending token are
-    rendered in bold red, the source location in bold white, and gutter line
-    numbers in bold. ``click`` automatically strips colour codes when the output
-    is not a TTY.
+    Applies ANSI colour codes via ``click.style``: the error label and
+    offending token are rendered in bold red, the source location in bold
+    white, and gutter line numbers in bold. ``click`` automatically strips
+    colour codes when the output is not a TTY.
+
+    ``LexerError`` and ``ParseError`` produce a multi-line output with a
+    location header, ±2 lines of source context in a numbered gutter, and a
+    ``^~~~~`` underline beneath the offending token.  When source lines are
+    unavailable the output degrades to the header line only.
+
+    ``CodeGenerationError`` has no source position, so only the bold-red
+    label and message are emitted.
 
     Args:
-        error: The lexer error to format.
+        error: The diagnostic to format.
 
     Returns:
-        A multi-line string with ANSI colour codes suitable for passing to
-        ``click.echo``. Structure matches the plain-text format from
-        ``LexerError.__str__``.
+        A string with ANSI colour codes suitable for passing to ``click.echo``.
     """
+    if isinstance(error, CodeGenerationError):
+        label = click.style("CodeGenerationError", fg="red", bold=True)
+        return f"{label}: {click.style(error.message, bold=True)}"
+
+    return _format_source_diagnostic(error)
+
+
+def _format_source_diagnostic(error: LexerError | ParseError) -> str:
+    """Format a source-positioned diagnostic with gutter and underline.
+
+    Used for both ``LexerError`` and ``ParseError``, which share identical
+    fields (``filename``, ``line``, ``col``, ``token_value``, ``source_lines``,
+    ``message``).
+
+    Args:
+        error: A ``LexerError`` or ``ParseError`` to format.
+
+    Returns:
+        A multi-line string with ANSI colour codes, or a single header line
+        if ``error.source_lines`` is empty.
+    """
+    label = click.style(type(error).__name__, fg="red", bold=True)
     location = click.style(f"{error.filename}:{error.line}:{error.col}", bold=True)
-    label = click.style("LexerError", fg="red", bold=True)
     message = click.style(error.message, bold=True)
     header = f"{label} at {location}: {message}"
+
+    if not error.source_lines:
+        return header
 
     error_idx = max(0, error.line - 1)
     start = max(0, error_idx - 2)

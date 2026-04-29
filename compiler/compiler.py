@@ -7,14 +7,16 @@ from typing import Any
 
 import click
 
-from compiler.ast import Program, pretty_print
+import compiler.asm as asm
+import compiler.ast as ast
+from compiler.ast import pretty_print
 from compiler.code_generator import generate
 from compiler.lexer import lexer
 from compiler.parser import parse
 from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.types.stages import Stage
 from compiler.utils.diagnostics import format_for_terminal
-from compiler.utils.exceptions import LexerError, ParseError
+from compiler.utils.exceptions import CodeGenerationError, LexerError, ParseError
 
 
 class MutuallyExclusiveOption(click.Option):
@@ -64,43 +66,57 @@ class MutuallyExclusiveOption(click.Option):
         return super().handle_parse_result(ctx, opts, args)
 
 
-def compile(source: Path, stages: Stage = Stage.ALL) -> tuple[Program | None, Path]:
+def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     """Run the selected compilation stages on a preprocessed source file.
 
-    Executes each requested stage in pipeline order: lexing, parsing, and
-    code generation. The ``stages`` bitmask controls which stages run; omitting
-    a flag causes the pipeline to stop before that stage.
+    Executes each requested stage in pipeline order: lexing, parsing, code
+    generation, and assembly/linking. The ``stages`` bitmask controls which
+    stages run; omitting a flag causes the pipeline to stop before that stage.
+
+    When the pipeline stops after ``PARSE``, the main AST is printed to
+    stdout. When it stops after ``CODEGEN``, the assembly AST is printed.
+    When ``LINK`` is included, the executable is produced and a completion
+    message is printed.
 
     Args:
         source: Path to the preprocessed ``.i`` file to compile.
         stages: Bitmask of stages to execute. Defaults to ``Stage.ALL``.
 
-    Returns:
-        A tuple of the parsed ``Program`` (or ``None`` if parsing did not run)
-        and the path to the assembly ``.s`` file.
-
     Raises:
-        LexerError: If the lexer stage is active and encounters an invalid
-            character in the source.
-        ParseError: If the parse stage is active and the token stream does not
-            conform to the grammar.
+        LexerError: If the lexer stage encounters an invalid character.
+        ParseError: If the token stream does not conform to the grammar.
+        CodeGenerationError: If the AST contains a construct that cannot be
+            translated.
     """
     token_stream = []
-    program: Program | None = None
+    program: ast.Program | None = None
+    asm_program: asm.Program | None = None
 
     if Stage.LEX in stages:
         token_stream = lexer(source)
 
     if Stage.PARSE in stages:
         program = parse(token_stream)
+        if Stage.CODEGEN not in stages:
+            click.echo(pretty_print(program))
 
     if Stage.CODEGEN in stages:
-        generate()
+        assert program is not None
+        asm_program = generate(program)
+        if Stage.LINK not in stages:
+            click.echo(pretty_print(asm_program))
 
-    # Path.unlink(source)
-    return program, source.parent / f"{source.stem}.s"
+    if Stage.LINK in stages:
+        assert asm_program is not None
+        assembly = source.parent / f"{source.stem}.s"
+        # TODO: emit assembly AST to file once the emitter is implemented
+        executable = assemble_and_link(assembly)
+        click.echo(f"Compilation complete.  Output file is: {executable}")
 
 
+# ==============================================================================
+# == Main Program Entry Point
+# ==============================================================================
 @click.command(
     help=(
         "Compile SOURCE from C to a native executable.\n\n"
@@ -155,19 +171,10 @@ def compiler(
 
     try:
         pre_processed = preprocess(Path(source))
-        program, assembly = compile(pre_processed, stages)
-
-        if parse and program is not None:
-            click.echo(pretty_print(program))
-        elif not (lex or parse or codegen):
-            executable = assemble_and_link(assembly)
-            print(f"Compilation complete.  Output file is: {executable}")
-    except LexerError as ex:
+        compile(pre_processed, stages)
+    except (LexerError, ParseError, CodeGenerationError) as ex:
         click.echo(format_for_terminal(ex), err=True)
         sys.exit(1)
-    except ParseError as ex:
-        click.echo(str(ex), err=True)
-        sys.exit(1)
     except Exception as ex:
-        print(f"Compiler failed with exception {ex}")
+        click.echo(f"Compiler failed with exception {ex}", err=True)
         sys.exit(1)

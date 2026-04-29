@@ -98,6 +98,27 @@ class LexerError(Exception):
         return header + "\n\n" + "\n".join(context)
 
 
+class CodeGenerationError(Exception):
+    """Raised when the code generator encounters an AST construct it cannot translate.
+
+    This should not occur for any AST produced by the parser from a valid
+    grammar, but guards against future grammar extensions that outpace the
+    code generator.
+
+    Attributes:
+        message: Human-readable description of what went wrong.
+    """
+
+    def __init__(self, message: str) -> None:
+        """Initialise a CodeGenerationError with a descriptive message.
+
+        Args:
+            message: Human-readable description of the unsupported construct.
+        """
+        self.message = message
+        super().__init__(message)
+
+
 class ParseError(Exception):
     """Raised when the parser encounters an unexpected token or end of input.
 
