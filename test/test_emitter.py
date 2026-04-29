@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from compiler.asm import Function, Imm, Mov, Program, Register, Ret
 from compiler.emitter import emit_program
+from compiler.syntax.asm import Function, Imm, Mov, Program, Register, Ret
 
 # ---------------------------------------------------------------------------
 # Operand emit()

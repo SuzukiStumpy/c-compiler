@@ -4,7 +4,7 @@ Verifies that ``pretty_print`` produces correctly indented, human-readable
 output for the full range of AST node shapes.
 """
 
-from compiler.ast import Constant, Function, IntType, Parameter, Program, Return, pretty_print
+from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return, pretty_print
 
 
 def test_leaf_node_rendered_inline() -> None:

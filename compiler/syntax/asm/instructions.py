@@ -8,7 +8,7 @@ subclass of ``Instruction``.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from compiler.asm.operands import Operand
+from compiler.syntax.asm.operands import Operand
 
 
 class Instruction(ABC):

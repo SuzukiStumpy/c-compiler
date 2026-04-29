@@ -22,21 +22,21 @@ Nodes are organised into submodules by logical role:
     operators    - Operators which act upon expressions (Complement, Negate)
 
 All node types are re-exported from this package so callers can import directly
-from ``compiler.ast`` without knowing which submodule a type lives in::
+from ``compiler.syntax.ast`` without knowing which submodule a type lives in::
 
-    from compiler.ast import Program, Function, Return, Constant, IntType
+    from compiler.syntax.ast import Program, Function, Return, Constant, IntType
 
 Sum types (``Type``, ``Exp``, ``Statement``) are abstract base classes; each
 variant is a concrete frozen dataclass subclassing the appropriate base. All
 nodes are immutable — once constructed an AST node cannot be modified.
 """
 
-from compiler.ast.declarations import Function, Parameter, Program
-from compiler.ast.expressions import Constant, Exp
-from compiler.ast.operators import Complement, Negate
-from compiler.ast.pretty_print import pretty_print
-from compiler.ast.statements import Return, Statement
-from compiler.ast.types import IntType, Type
+from compiler.syntax.ast.declarations import Function, Parameter, Program
+from compiler.syntax.ast.expressions import Constant, Exp
+from compiler.syntax.ast.operators import Complement, Negate
+from compiler.syntax.ast.pretty_print import pretty_print
+from compiler.syntax.ast.statements import Return, Statement
+from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
     "Type",

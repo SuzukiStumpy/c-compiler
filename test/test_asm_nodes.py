@@ -1,14 +1,14 @@
 """Tests for the assembly AST node definitions.
 
 Verifies construction, equality, immutability, and type hierarchy for all
-node types in the ``compiler.asm`` package.
+node types in the ``compiler.syntax.asm`` package.
 """
 
 import dataclasses
 
 import pytest
 
-from compiler.asm import Function, Imm, Instruction, Mov, Operand, Program, Register, Ret
+from compiler.syntax.asm import Function, Imm, Instruction, Mov, Operand, Program, Register, Ret
 
 # ---------------------------------------------------------------------------
 # Operand nodes

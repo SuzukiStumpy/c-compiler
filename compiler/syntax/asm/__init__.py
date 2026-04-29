@@ -19,18 +19,18 @@ Nodes are organised into submodules by logical role:
     declarations  — Program structure nodes (Function, Program)
 
 All node types are re-exported from this package so callers can import directly
-from ``compiler.asm`` without knowing which submodule a type lives in::
+from ``compiler.syntax.asm`` without knowing which submodule a type lives in::
 
-    from compiler.asm import Program, Function, Mov, Ret, Imm, Register
+    from compiler.syntax.asm import Program, Function, Mov, Ret, Imm, Register
 
 Sum types (``Operand``, ``Instruction``) are abstract base classes; each
 variant is a concrete frozen dataclass subclassing the appropriate base. All
 nodes are immutable — once constructed an assembly AST node cannot be modified.
 """
 
-from compiler.asm.declarations import Function, Program
-from compiler.asm.instructions import Instruction, Mov, Ret
-from compiler.asm.operands import Imm, Operand, Register
+from compiler.syntax.asm.declarations import Function, Program
+from compiler.syntax.asm.instructions import Instruction, Mov, Ret
+from compiler.syntax.asm.operands import Imm, Operand, Register
 
 __all__ = [
     "Operand",

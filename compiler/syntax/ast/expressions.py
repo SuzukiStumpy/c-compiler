@@ -9,7 +9,7 @@ added here as language support is extended.
 from abc import ABC
 from dataclasses import dataclass
 
-from compiler.ast.operators import UnaryOperator
+from compiler.syntax.ast.operators import UnaryOperator
 
 
 class Exp(ABC):

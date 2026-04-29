@@ -7,8 +7,8 @@ they have no abstract base because each has exactly one form.
 
 from dataclasses import dataclass
 
-from compiler.ast.statements import Statement
-from compiler.ast.types import Type
+from compiler.syntax.ast.statements import Statement
+from compiler.syntax.ast.types import Type
 
 
 @dataclass(frozen=True, slots=True)

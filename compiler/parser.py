@@ -1,7 +1,7 @@
 """Parsing stage: converts a token stream into an abstract syntax tree.
 
 The parser is a recursive descent parser whose grammar mirrors the ASDL
-specification in ``compiler.ast``:
+specification in ``compiler.syntax.ast``:
 
     program             = Program(function_definition+)
     function_definition = Function(type return_type, identifier name,
@@ -18,9 +18,9 @@ intended for use by other pipeline stages.
 
 from pathlib import Path
 
-from compiler.ast import Constant, Exp, Function, IntType, Parameter, Program, Return, Statement, Type
-from compiler.ast.expressions import Unary
-from compiler.ast.operators import Complement, Negate, UnaryOperator
+from compiler.syntax.ast import Constant, Exp, Function, IntType, Parameter, Program, Return, Statement, Type
+from compiler.syntax.ast.expressions import Unary
+from compiler.syntax.ast.operators import Complement, Negate, UnaryOperator
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 

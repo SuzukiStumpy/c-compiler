@@ -15,8 +15,8 @@ parser behaviour is tested in isolation from lexer behaviour.
 
 import pytest
 
-from compiler.ast import Constant, Function, IntType, Parameter, Program, Return
 from compiler.parser import parse
+from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -218,7 +218,7 @@ class TestParseErrors:
     def test_non_number_expression(self) -> None:
         """``return main;`` — IDENTIFIER is not a valid expression."""
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _ident("main"), _SEMICOLON, _RBRACE]
-        with pytest.raises(ParseError, match="expected NUMBER"):
+        with pytest.raises(ParseError, match="Malformed expression."):
             parse(tokens)
 
     def test_unexpected_eof_in_body(self) -> None:

@@ -7,14 +7,14 @@ from typing import Any
 
 import click
 
-import compiler.asm as asm
-import compiler.ast as ast
-from compiler.ast import pretty_print
+import compiler.syntax.asm as asm
+import compiler.syntax.ast as ast
 from compiler.code_generator import generate
 from compiler.emitter import emit_program
 from compiler.lexer import lexer
 from compiler.parser import parse
 from compiler.subprocesses import assemble_and_link, preprocess
+from compiler.syntax.ast import pretty_print
 from compiler.types.stages import Stage
 from compiler.utils.diagnostics import format_for_terminal
 from compiler.utils.exceptions import CodeGenerationError, LexerError, ParseError

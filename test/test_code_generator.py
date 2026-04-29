@@ -6,8 +6,8 @@ the equivalent assembly-AST nodes.
 
 import pytest
 
-import compiler.asm as asm
-import compiler.ast as ast
+import compiler.syntax.asm as asm
+import compiler.syntax.ast as ast
 from compiler.code_generator import generate
 from compiler.utils.exceptions import CodeGenerationError
 

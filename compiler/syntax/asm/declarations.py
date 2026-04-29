@@ -7,7 +7,7 @@ one form.
 
 from dataclasses import dataclass
 
-from compiler.asm.instructions import Instruction
+from compiler.syntax.asm.instructions import Instruction
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,7 +1,7 @@
 """Code generation stage: translates the main AST into an assembly AST.
 
-Performs a structural translation from ``compiler.ast`` nodes to
-``compiler.asm`` nodes, following the mapping below:
+Performs a structural translation from ``compiler.syntax.ast`` nodes to
+``compiler.syntax.asm`` nodes, following the mapping below:
 
     ast.Program(functions)          → asm.Program(function)
     ast.Function(name, body)        → asm.Function(name, instructions)
@@ -12,8 +12,8 @@ The resulting ``asm.Program`` is a complete assembly AST ready for the
 emission stage.
 """
 
-import compiler.asm as asm
-import compiler.ast as ast
+import compiler.syntax.asm as asm
+import compiler.syntax.ast as ast
 from compiler.utils.exceptions import CodeGenerationError
 
 

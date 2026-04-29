@@ -17,7 +17,7 @@ import dataclasses
 import sys
 from pathlib import Path
 
-import compiler.asm as asm
+import compiler.syntax.asm as asm
 
 _GNU_STACK = '  .section .note.GNU-stack,"",@progbits'
 

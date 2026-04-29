@@ -9,7 +9,7 @@ added here as language support is extended.
 from abc import ABC
 from dataclasses import dataclass
 
-from compiler.ast.expressions import Exp
+from compiler.syntax.ast.expressions import Exp
 
 
 class Statement(ABC):
