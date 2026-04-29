@@ -9,7 +9,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                                    parameter* params, statement+ body)
     parameter           = Parameter(type param_type, identifier name)
     statement           = Return(exp)
-    exp                 = Constant(int)
+    exp                 = Constant(int) | Unary(unary_operator, exp)
+    unary_operator      = Complement | Negate
     type                = IntType
 
 Nodes are organised into submodules by logical role:
@@ -18,6 +19,7 @@ Nodes are organised into submodules by logical role:
     expressions  — Expression nodes (Exp, Constant)
     statements   — Statement nodes (Statement, Return)
     declarations — Program structure nodes (Parameter, Function, Program)
+    operators    - Operators which act upon expressions (Complement, Negate)
 
 All node types are re-exported from this package so callers can import directly
 from ``compiler.ast`` without knowing which submodule a type lives in::
@@ -31,6 +33,7 @@ nodes are immutable — once constructed an AST node cannot be modified.
 
 from compiler.ast.declarations import Function, Parameter, Program
 from compiler.ast.expressions import Constant, Exp
+from compiler.ast.operators import Complement, Negate
 from compiler.ast.pretty_print import pretty_print
 from compiler.ast.statements import Return, Statement
 from compiler.ast.types import IntType, Type
@@ -46,4 +49,6 @@ __all__ = [
     "Function",
     "Program",
     "pretty_print",
+    "Complement",
+    "Negate",
 ]

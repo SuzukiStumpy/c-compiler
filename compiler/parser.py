@@ -19,6 +19,8 @@ intended for use by other pipeline stages.
 from pathlib import Path
 
 from compiler.ast import Constant, Exp, Function, IntType, Parameter, Program, Return, Statement, Type
+from compiler.ast.expressions import Unary
+from compiler.ast.operators import Complement, Negate, UnaryOperator
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -308,10 +310,27 @@ class Parser:
         self._expect(TokenType.SEMICOLON)
         return Return(exp=exp)
 
+    def _parse_unaryop(self) -> UnaryOperator:
+        """Parse a unary operator token and return the correct AST node for it
+
+        Returns:
+            A ``UnaryOperator`` node.
+        """
+        token = self._consume()
+
+        match token.type:
+            case TokenType.BITWISE_NOT:
+                return Complement()
+            case TokenType.NEGATION:
+                return Negate()
+            case _:
+                raise self._token_error("Syntax Error: Expected a unary operator token.", token)
+
     def _parse_exp(self) -> Exp:
         """Parse an expression.
 
-        Currently only integer constant expressions are supported.
+        Currently supports integer constant expressions along with unary complement
+        and unary negation.
 
         Returns:
             An ``Exp`` node.
@@ -319,7 +338,25 @@ class Parser:
         Raises:
             ParseError: If the token does not begin a recognised expression.
         """
-        return self._parse_constant()
+        token = self._peek()
+
+        if token is None:
+            raise self._eof_error("Syntax error: expected expression, got end of input")
+
+        match token.type:
+            case TokenType.NUMBER:
+                return self._parse_constant()
+            case TokenType.BITWISE_NOT | TokenType.NEGATION:
+                operator = self._parse_unaryop()
+                inner_exp = self._parse_exp()
+                return Unary(operator, inner_exp)
+            case TokenType.LPAREN:
+                self._consume()
+                inner_exp = self._parse_exp()
+                self._expect(TokenType.RPAREN)
+                return inner_exp
+            case _:
+                raise self._token_error("Syntax error: Malformed expression.", token)
 
     def _parse_constant(self) -> Constant:
         """Parse an integer constant expression.

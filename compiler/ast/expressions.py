@@ -9,6 +9,8 @@ added here as language support is extended.
 from abc import ABC
 from dataclasses import dataclass
 
+from compiler.ast.operators import UnaryOperator
+
 
 class Exp(ABC):
     """Abstract base for all expression nodes.
@@ -29,3 +31,16 @@ class Constant(Exp):
     """
 
     value: int
+
+
+@dataclass(frozen=True, slots=True)
+class Unary(Exp):
+    """A unary operator expression.
+
+    Attributes:
+        operator: The unary operator which will act upon the subexpression
+        exp:      The subexpression on which the operator acts
+    """
+
+    operator: UnaryOperator
+    exp: Exp
