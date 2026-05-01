@@ -49,3 +49,17 @@ uv run test
 Tests go in `test/` (currently empty). Pytest is configured to look there and ignores the `compiler/` source directory for test discovery (`norecursedirs` + `addopts = "--ignore=compiler"`).
 
 The `compiler` package is installed in editable mode into `.venv` via the `c_compiler.pth` path file, so `import compiler` works without reinstalling after edits.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`SuzukiStumpy/c-compiler`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — `UBIQUITOUS_LANGUAGE.md` (vocabulary) and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
