@@ -89,3 +89,48 @@ class Remainder(BinaryOperator):
     Attributes:
         None
     """
+
+
+@dataclass(frozen=True, slots=True)
+class LeftShift(BinaryOperator):
+    """Bitwise left shift (``<<``): shifts the left operand by the right operand's count.
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class RightShift(BinaryOperator):
+    """Arithmetic bitwise right shift (``>>``): shifts the left operand by the right operand's count.
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class BitwiseAnd(BinaryOperator):
+    """Bitwise AND of two expressions (``&``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class BitwiseXor(BinaryOperator):
+    """Bitwise exclusive OR of two expressions (``^``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class BitwiseOr(BinaryOperator):
+    """Bitwise OR of two expressions (``|``).
+
+    Attributes:
+        None
+    """

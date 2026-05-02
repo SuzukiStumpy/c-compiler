@@ -130,3 +130,51 @@ class Mult(BinaryOperator):
             The string ``"imull"``.
         """
         return "imull"
+
+
+@dataclass(frozen=True, slots=True)
+class And(BinaryOperator):
+    """The ``andl`` instruction: bitwise AND.
+
+    Computes the bitwise AND of two operands, storing the result in the second.
+    """
+
+    def emit(self) -> str:
+        """Return the ``andl`` mnemonic.
+
+        Returns:
+            The string ``"andl"``.
+        """
+        return "andl"
+
+
+@dataclass(frozen=True, slots=True)
+class Or(BinaryOperator):
+    """The ``orl`` instruction: bitwise OR.
+
+    Computes the bitwise OR of two operands, storing the result in the second.
+    """
+
+    def emit(self) -> str:
+        """Return the ``orl`` mnemonic.
+
+        Returns:
+            The string ``"orl"``.
+        """
+        return "orl"
+
+
+@dataclass(frozen=True, slots=True)
+class Xor(BinaryOperator):
+    """The ``xorl`` instruction: bitwise exclusive OR.
+
+    Computes the bitwise XOR of two operands, storing the result in the second.
+    """
+
+    def emit(self) -> str:
+        """Return the ``xorl`` mnemonic.
+
+        Returns:
+            The string ``"xorl"``.
+        """
+        return "xorl"

@@ -14,6 +14,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | Binary(binary_operator, exp, exp)
     unary_operator      = Complement | Negate
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
+                        | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
     type                = IntType
 
 Nodes are organised into submodules by logical role:
@@ -40,11 +41,16 @@ from compiler.syntax.ast.expressions import Binary, Constant, Exp, Unary
 from compiler.syntax.ast.operators import (
     Add,
     BinaryOperator,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     Complement,
     Divide,
+    LeftShift,
     Multiply,
     Negate,
     Remainder,
+    RightShift,
     Subtract,
     UnaryOperator,
 )
@@ -74,4 +80,9 @@ __all__ = [
     "Multiply",
     "Divide",
     "Remainder",
+    "LeftShift",
+    "RightShift",
+    "BitwiseAnd",
+    "BitwiseXor",
+    "BitwiseOr",
 ]

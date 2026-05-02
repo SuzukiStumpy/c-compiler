@@ -394,6 +394,150 @@ def test_no_pseudo_operands_after_binary_code_gen() -> None:
                 assert not isinstance(operand, asm.Pseudo)
 
 
+# ---------------------------------------------------------------------------
+# Bitwise AND / OR / XOR code generation
+# ---------------------------------------------------------------------------
+
+
+class TestBitwiseAndOrXorCodeGen:
+    """``tac.Binary`` with And/Or/Xor operators lowers to ``asm.Binary`` using ``%r11d``."""
+
+    def _instructions(self, op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
+        """Generate instructions for ``return 3 <op> 5;`` with two constants."""
+        return generate(_binary_tac_program(op, tac.Constant(3), tac.Constant(5))).function.instructions
+
+    def test_bitwise_and_uses_and_operator(self) -> None:
+        """``tac.BitwiseAnd`` lowers to an ``asm.Binary`` with ``asm.And``."""
+        instrs = self._instructions(tac.BitwiseAnd())
+        binary = next(i for i in instrs if isinstance(i, asm.Binary))
+        assert isinstance(binary.operator, asm.And)
+
+    def test_bitwise_or_uses_or_operator(self) -> None:
+        """``tac.BitwiseOr`` lowers to an ``asm.Binary`` with ``asm.Or``."""
+        instrs = self._instructions(tac.BitwiseOr())
+        binary = next(i for i in instrs if isinstance(i, asm.Binary))
+        assert isinstance(binary.operator, asm.Or)
+
+    def test_bitwise_xor_uses_xor_operator(self) -> None:
+        """``tac.BitwiseXor`` lowers to an ``asm.Binary`` with ``asm.Xor``."""
+        instrs = self._instructions(tac.BitwiseXor())
+        binary = next(i for i in instrs if isinstance(i, asm.Binary))
+        assert isinstance(binary.operator, asm.Xor)
+
+    def test_bitwise_and_result_via_r11(self) -> None:
+        """The ``asm.Binary`` dst is ``%r11d`` and its result is moved to the TAC destination."""
+        instrs = self._instructions(tac.BitwiseAnd())
+        binary = next(i for i in instrs if isinstance(i, asm.Binary))
+        assert binary.dst == asm.Register(asm.Registers.R11)
+
+    def test_bitwise_and_emit(self) -> None:
+        """``asm.Binary(And, Imm(3), Imm(5), R11)`` emits the correct two-line sequence."""
+        instr = asm.Binary(
+            operator=asm.And(),
+            src1=asm.Imm(3),
+            src2=asm.Imm(5),
+            dst=asm.Register(asm.Registers.R11),
+        )
+        assert instr.emit() == "  movl $3, %r11d\n  andl $5, %r11d"
+
+    def test_bitwise_or_emit(self) -> None:
+        """``asm.Binary(Or, ...)`` emits ``orl``."""
+        instr = asm.Binary(
+            operator=asm.Or(),
+            src1=asm.Imm(4),
+            src2=asm.Imm(2),
+            dst=asm.Register(asm.Registers.R11),
+        )
+        assert instr.emit() == "  movl $4, %r11d\n  orl $2, %r11d"
+
+    def test_bitwise_xor_emit(self) -> None:
+        """``asm.Binary(Xor, ...)`` emits ``xorl``."""
+        instr = asm.Binary(
+            operator=asm.Xor(),
+            src1=asm.Imm(6),
+            src2=asm.Imm(3),
+            dst=asm.Register(asm.Registers.R11),
+        )
+        assert instr.emit() == "  movl $6, %r11d\n  xorl $3, %r11d"
+
+
+# ---------------------------------------------------------------------------
+# Shift code generation
+# ---------------------------------------------------------------------------
+
+
+def _shift_tac_program(op: tac.BinaryOperator, value: int, count: int) -> tac.Program:
+    """Build a ``tac.Program`` that shifts ``value`` by ``count`` using ``op``."""
+    return tac.Program(
+        function=tac.Function(
+            name="main",
+            body=(
+                tac.Binary(
+                    operator=op,
+                    src1=tac.Constant(value),
+                    src2=tac.Constant(count),
+                    dst=tac.Var(value="tmp.0"),
+                ),
+                tac.Return(val=tac.Var(value="tmp.0")),
+            ),
+        )
+    )
+
+
+class TestShiftCodeGen:
+    """``tac.LeftShift`` / ``tac.RightShift`` lower to a 4-instruction sequence via ``%ecx``."""
+
+    def _instructions(self, op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
+        return generate(_shift_tac_program(op, value=8, count=2)).function.instructions
+
+    def test_left_shift_emits_shl_instruction(self) -> None:
+        """``tac.LeftShift`` produces an ``asm.Shl`` instruction."""
+        instrs = self._instructions(tac.LeftShift())
+        assert any(isinstance(i, asm.Shl) for i in instrs)
+
+    def test_right_shift_emits_sar_instruction(self) -> None:
+        """``tac.RightShift`` produces an ``asm.Sar`` instruction."""
+        instrs = self._instructions(tac.RightShift())
+        assert any(isinstance(i, asm.Sar) for i in instrs)
+
+    def test_left_shift_routes_value_through_r11(self) -> None:
+        """For a left shift, the value being shifted ends up in ``%r11d`` before the ``Shl``."""
+        instrs = self._instructions(tac.LeftShift())
+        shl = next(i for i in instrs if isinstance(i, asm.Shl))
+        assert shl.operand == asm.Register(asm.Registers.R11)
+
+    def test_right_shift_routes_value_through_r11(self) -> None:
+        """For a right shift, the value being shifted ends up in ``%r11d`` before the ``Sar``."""
+        instrs = self._instructions(tac.RightShift())
+        sar = next(i for i in instrs if isinstance(i, asm.Sar))
+        assert sar.operand == asm.Register(asm.Registers.R11)
+
+    def test_shift_count_moved_to_cx(self) -> None:
+        """A ``Mov`` to ``%ecx`` (``CX``) appears before ``Shl`` to load the shift count."""
+        instrs = self._instructions(tac.LeftShift())
+        cx_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == asm.Register(asm.Registers.CX)]
+        assert len(cx_movs) == 1
+
+    def test_shl_emit(self) -> None:
+        """``asm.Shl(Register(R11))`` emits ``shll %cl, %r11d``."""
+        assert asm.Shl(operand=asm.Register(asm.Registers.R11)).emit() == "  shll %cl, %r11d"
+
+    def test_sar_emit(self) -> None:
+        """``asm.Sar(Register(R11))`` emits ``sarl %cl, %r11d``."""
+        assert asm.Sar(operand=asm.Register(asm.Registers.R11)).emit() == "  sarl %cl, %r11d"
+
+    def test_shl_emit_stack_operand(self) -> None:
+        """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` — memory operand is valid."""
+        assert asm.Shl(operand=asm.Stack(-4)).emit() == "  shll %cl, -4(%rbp)"
+
+    def test_no_pseudo_operands_after_left_shift_code_gen(self) -> None:
+        """No ``Pseudo`` operands survive pseudo-replacement for a shift instruction."""
+        result = generate(_shift_tac_program(tac.LeftShift(), 4, 1))
+        for instr in result.function.instructions:
+            if isinstance(instr, asm.Shl):
+                assert not isinstance(instr.operand, asm.Pseudo)
+
+
 def test_unsupported_instruction_raises_codegen_error() -> None:
     """An unrecognised TAC instruction subclass raises ``CodeGenerationError``."""
 

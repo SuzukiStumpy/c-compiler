@@ -30,6 +30,12 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("TIMES", r"\*"),
     ("DIVIDE", r"/"),
     ("PERCENT", r"%"),  # Modulo operator
+    # Shift operators must precede any future single < / > relational tokens
+    ("LSHIFT", r"<<"),
+    ("RSHIFT", r">>"),
+    ("AMPERSAND", r"&"),
+    ("CARET", r"\^"),
+    ("PIPE", r"\|"),
 ]
 
 _TOKEN_REGEX = re.compile(

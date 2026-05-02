@@ -236,3 +236,38 @@ class TestTacGeneratorErrors:
         exp = ast.Binary(operator=_FakeBinaryOp(), left=ast.Constant(value=1), right=ast.Constant(value=2))
         with pytest.raises(CodeGenerationError):
             generate(_program_returning(exp))
+
+
+# ---------------------------------------------------------------------------
+# Bitwise and shift operator mapping
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorBitwiseOperatorMapping:
+    """Each bitwise / shift AST binary operator maps to the correct TAC operator."""
+
+    def _binary_op(self, op: ast.BinaryOperator) -> tac.BinaryOperator:
+        """Translate ``return 1 <op> 2;`` and extract the tac operator."""
+        instrs = _body(ast.Binary(operator=op, left=ast.Constant(value=1), right=ast.Constant(value=2)))
+        assert isinstance(instrs[0], tac.Binary)
+        return instrs[0].operator
+
+    def test_left_shift_maps_to_tac_left_shift(self) -> None:
+        """``ast.LeftShift()`` → ``tac.LeftShift()``."""
+        assert self._binary_op(ast.LeftShift()) == tac.LeftShift()
+
+    def test_right_shift_maps_to_tac_right_shift(self) -> None:
+        """``ast.RightShift()`` → ``tac.RightShift()``."""
+        assert self._binary_op(ast.RightShift()) == tac.RightShift()
+
+    def test_bitwise_and_maps_to_tac_bitwise_and(self) -> None:
+        """``ast.BitwiseAnd()`` → ``tac.BitwiseAnd()``."""
+        assert self._binary_op(ast.BitwiseAnd()) == tac.BitwiseAnd()
+
+    def test_bitwise_xor_maps_to_tac_bitwise_xor(self) -> None:
+        """``ast.BitwiseXor()`` → ``tac.BitwiseXor()``."""
+        assert self._binary_op(ast.BitwiseXor()) == tac.BitwiseXor()
+
+    def test_bitwise_or_maps_to_tac_bitwise_or(self) -> None:
+        """``ast.BitwiseOr()`` → ``tac.BitwiseOr()``."""
+        assert self._binary_op(ast.BitwiseOr()) == tac.BitwiseOr()

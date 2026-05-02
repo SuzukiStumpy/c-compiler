@@ -36,6 +36,11 @@ class TokenType(Enum):
     TIMES = auto()
     DIVIDE = auto()
     PERCENT = auto()  # Modulo operator
+    LSHIFT = auto()  # <<
+    RSHIFT = auto()  # >>
+    AMPERSAND = auto()  # &
+    CARET = auto()  # ^
+    PIPE = auto()  # |
 
 
 @dataclass(frozen=True, slots=True)

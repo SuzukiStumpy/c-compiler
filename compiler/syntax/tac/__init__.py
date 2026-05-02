@@ -12,6 +12,7 @@ mirrors the ASDL grammar for the supported assembly subset:
     val                 = Constant(int) | Var(identifier)
     unary_operator      = Complement | Negate
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
+                        | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
 
 Nodes are organised into submodules by logical role:
 
@@ -35,11 +36,16 @@ from compiler.syntax.tac.instructions import Binary, Instruction, Return, Unary
 from compiler.syntax.tac.operators import (
     Add,
     BinaryOperator,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     Complement,
     Divide,
+    LeftShift,
     Multiply,
     Negate,
     Remainder,
+    RightShift,
     Subtract,
     UnaryOperator,
 )
@@ -61,6 +67,11 @@ __all__ = [
     "Multiply",
     "Divide",
     "Remainder",
+    "LeftShift",
+    "RightShift",
+    "BitwiseAnd",
+    "BitwiseXor",
+    "BitwiseOr",
     "Val",
     "Constant",
     "Var",

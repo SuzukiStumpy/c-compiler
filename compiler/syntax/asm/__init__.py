@@ -11,16 +11,18 @@ for the supported assembly subset:
                         | Unary(unary_operator, operand)
                         | Binary(binary_operator, operand src1, operand src2, operand dst)
                         | Idiv(operand)
+                        | Shl(operand)
+                        | Sar(operand)
                         | Cdq
                         | AllocateStack(int)
                         | Ret
     unary_operator      = Neg | Not
-    binary_operator     = Add | Sub | Mult
+    binary_operator     = Add | Sub | Mult | And | Or | Xor
     operand             = Imm(int)
                         | Register(reg)
                         | Pseudo(identifier)
                         | Stack(int)
-    reg                 = AX | DX | R10 | R11
+    reg                 = AX | CX | DX | R10 | R11
 
 Nodes are organised into submodules by logical role:
 
@@ -44,9 +46,9 @@ be replaced by ``Stack`` operands before the assembly is emitted.
 """
 
 from compiler.syntax.asm.declarations import Function, Program
-from compiler.syntax.asm.instructions import AllocateStack, Binary, Cdq, Idiv, Instruction, Mov, Ret, Unary
+from compiler.syntax.asm.instructions import AllocateStack, Binary, Cdq, Idiv, Instruction, Mov, Ret, Sar, Shl, Unary
 from compiler.syntax.asm.operands import Imm, Operand, Pseudo, Register, Registers, Stack
-from compiler.syntax.asm.operators import Add, BinaryOperator, Mult, Neg, Not, Sub, UnaryOperator
+from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Neg, Not, Or, Sub, UnaryOperator, Xor
 
 __all__ = [
     "UnaryOperator",
@@ -56,6 +58,9 @@ __all__ = [
     "Add",
     "Sub",
     "Mult",
+    "And",
+    "Or",
+    "Xor",
     "Operand",
     "Imm",
     "Register",
@@ -69,6 +74,8 @@ __all__ = [
     "Binary",
     "Cdq",
     "Idiv",
+    "Shl",
+    "Sar",
     "AllocateStack",
     "Function",
     "Program",

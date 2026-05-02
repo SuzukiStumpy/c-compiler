@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from compiler.syntax.asm.operands import Operand, Register
-from compiler.syntax.asm.operators import Add, BinaryOperator, Mult, Sub, UnaryOperator
+from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Or, Sub, UnaryOperator, Xor
 from compiler.utils.exceptions import CodeGenerationError
 
 
@@ -153,7 +153,7 @@ class Binary(Instruction):
                 variants (``Add``, ``Sub``, ``Mult``).
         """
         match self.operator:
-            case Add() | Sub() | Mult():
+            case Add() | Sub() | Mult() | And() | Or() | Xor():
                 return "\n".join(
                     [
                         f"  movl {self.src1.emit()}, {self.dst.emit()}",
@@ -203,3 +203,49 @@ class Idiv(Instruction):
             A string of the form ``"  idivl <operand>"``.
         """
         return f"  idivl {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Shl(Instruction):
+    """A ``shll`` instruction that shifts ``operand`` left by the count in ``%cl``.
+
+    The shift count must have been placed in ``%ecx`` by the caller before this
+    instruction is emitted.  ``operand`` is updated in place.
+
+    Attributes:
+        operand: The value to be shifted; a register or memory location.
+    """
+
+    operand: Operand
+
+    def emit(self) -> str:
+        """Return a ``shll`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  shll %cl, <operand>"``.
+        """
+        return f"  shll %cl, {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Sar(Instruction):
+    """A ``sarl`` instruction that arithmetic-shifts ``operand`` right by the count in ``%cl``.
+
+    Arithmetic right shift sign-extends the result, which is the correct
+    behaviour for signed ``int`` values in C.  The shift count must have been
+    placed in ``%ecx`` by the caller before this instruction is emitted.
+    ``operand`` is updated in place.
+
+    Attributes:
+        operand: The value to be shifted; a register or memory location.
+    """
+
+    operand: Operand
+
+    def emit(self) -> str:
+        """Return a ``sarl`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  sarl %cl, <operand>"``.
+        """
+        return f"  sarl %cl, {self.operand.emit()}"

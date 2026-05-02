@@ -9,7 +9,7 @@ which are handled by precedence climbing.  The grammar is:
     exp                 ::= factor | exp binop exp
     factor              ::= int | unop factor | "(" exp ")"
     unop                ::= "-" | "~"
-    binop               ::= "+" | "-" | "*" | "/" | "%"
+    binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
     identifier          ::= ? An identifier token ?
     int                 ::= ? A constant token ?
 
@@ -27,11 +27,16 @@ from compiler.syntax.ast.expressions import Binary, Unary
 from compiler.syntax.ast.operators import (
     Add,
     BinaryOperator,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     Complement,
     Divide,
+    LeftShift,
     Multiply,
     Negate,
     Remainder,
+    RightShift,
     Subtract,
     UnaryOperator,
 )
@@ -42,8 +47,13 @@ from compiler.utils.exceptions import ParseError
 # Higher values bind more tightly.  Operators absent from this table are not
 # binary operators and will terminate the climbing loop.
 _BINARY_PRECEDENCE: dict[TokenType, int] = {
+    TokenType.PIPE: 15,
+    TokenType.CARET: 20,
+    TokenType.AMPERSAND: 25,
     TokenType.PLUS: 45,
     TokenType.MINUS: 45,
+    TokenType.LSHIFT: 40,
+    TokenType.RSHIFT: 40,
     TokenType.TIMES: 50,
     TokenType.DIVIDE: 50,
     TokenType.PERCENT: 50,
@@ -372,6 +382,16 @@ class Parser:
                 return Divide()
             case TokenType.PERCENT:
                 return Remainder()
+            case TokenType.LSHIFT:
+                return LeftShift()
+            case TokenType.RSHIFT:
+                return RightShift()
+            case TokenType.AMPERSAND:
+                return BitwiseAnd()
+            case TokenType.CARET:
+                return BitwiseXor()
+            case TokenType.PIPE:
+                return BitwiseOr()
             case _:
                 raise self._token_error("expected a binary operator", token)
 

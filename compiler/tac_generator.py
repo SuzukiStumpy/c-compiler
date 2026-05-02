@@ -68,6 +68,16 @@ def _translate_binary_op(op: ast.BinaryOperator) -> tac.BinaryOperator:
             return tac.Divide()
         case ast.Remainder():
             return tac.Remainder()
+        case ast.LeftShift():
+            return tac.LeftShift()
+        case ast.RightShift():
+            return tac.RightShift()
+        case ast.BitwiseAnd():
+            return tac.BitwiseAnd()
+        case ast.BitwiseXor():
+            return tac.BitwiseXor()
+        case ast.BitwiseOr():
+            return tac.BitwiseOr()
         case _:
             raise CodeGenerationError(f"unsupported binary operator: {type(op).__name__}")
 

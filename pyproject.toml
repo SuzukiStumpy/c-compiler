@@ -57,6 +57,9 @@ lint.fixable = ["ALL"]
 lint.unfixable = []
 line-length = 120
 
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
 [tool.ruff.lint.isort]
 
 [tool.uv.build-backend]

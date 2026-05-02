@@ -8,7 +8,7 @@ Covers the full range of constructs supported by the current grammar:
     exp                 ::= factor | exp binop exp
     factor              ::= int | unop factor | "(" exp ")"
     unop                ::= "-" | "~"
-    binop               ::= "+" | "-" | "*" | "/" | "%"
+    binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
     identifier          ::= ? An identifier token ?
     int                 ::= ? A constant token ?
 
@@ -21,7 +21,20 @@ import pytest
 from compiler.parser import parse
 from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return
 from compiler.syntax.ast.expressions import Binary, Exp, Unary
-from compiler.syntax.ast.operators import Add, Complement, Divide, Multiply, Negate, Remainder, Subtract
+from compiler.syntax.ast.operators import (
+    Add,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Complement,
+    Divide,
+    LeftShift,
+    Multiply,
+    Negate,
+    Remainder,
+    RightShift,
+    Subtract,
+)
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -66,6 +79,11 @@ _PLUS = _tok(TokenType.PLUS, "+")
 _TIMES = _tok(TokenType.TIMES, "*")
 _DIVIDE = _tok(TokenType.DIVIDE, "/")
 _PERCENT = _tok(TokenType.PERCENT, "%")
+_LSHIFT = _tok(TokenType.LSHIFT, "<<")
+_RSHIFT = _tok(TokenType.RSHIFT, ">>")
+_AMPERSAND = _tok(TokenType.AMPERSAND, "&")
+_CARET = _tok(TokenType.CARET, "^")
+_PIPE = _tok(TokenType.PIPE, "|")
 
 
 def _ident(name: str) -> Token:
@@ -387,4 +405,86 @@ class TestBinaryExpressions:
         """``return 2 + -1;`` → Add(2, Negate(1))."""
         assert self._parsed_exp(_number("2"), _PLUS, _MINUS, _number("1")) == Binary(
             Add(), Constant(2), Unary(Negate(), Constant(1))
+        )
+
+
+class TestBitwiseExpressions:
+    """Parser correctly builds Binary nodes for bitwise and shift operators with correct precedence."""
+
+    def _parsed_exp(self, *exp_tokens: Token) -> Exp:
+        """Parse a minimal function returning the given expression tokens and return the expression."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, *exp_tokens, _SEMICOLON, _RBRACE]
+        result = parse(tokens)
+        stmt = result.functions[0].body[0]
+        assert isinstance(stmt, Return)
+        return stmt.exp
+
+    def test_left_shift(self) -> None:
+        """``return 1 << 2;`` → Binary(LeftShift(), Constant(1), Constant(2))."""
+        assert self._parsed_exp(_number("1"), _LSHIFT, _number("2")) == Binary(LeftShift(), Constant(1), Constant(2))
+
+    def test_right_shift(self) -> None:
+        """``return 8 >> 2;`` → Binary(RightShift(), Constant(8), Constant(2))."""
+        assert self._parsed_exp(_number("8"), _RSHIFT, _number("2")) == Binary(RightShift(), Constant(8), Constant(2))
+
+    def test_bitwise_and(self) -> None:
+        """``return 5 & 3;`` → Binary(BitwiseAnd(), Constant(5), Constant(3))."""
+        assert self._parsed_exp(_number("5"), _AMPERSAND, _number("3")) == Binary(
+            BitwiseAnd(), Constant(5), Constant(3)
+        )
+
+    def test_bitwise_xor(self) -> None:
+        """``return 6 ^ 3;`` → Binary(BitwiseXor(), Constant(6), Constant(3))."""
+        assert self._parsed_exp(_number("6"), _CARET, _number("3")) == Binary(BitwiseXor(), Constant(6), Constant(3))
+
+    def test_bitwise_or(self) -> None:
+        """``return 4 | 2;`` → Binary(BitwiseOr(), Constant(4), Constant(2))."""
+        assert self._parsed_exp(_number("4"), _PIPE, _number("2")) == Binary(BitwiseOr(), Constant(4), Constant(2))
+
+    def test_shift_binds_tighter_than_bitwise_and(self) -> None:
+        """``return 1 & 2 << 3;`` → And(1, LeftShift(2, 3)): shift prec 40 > AND prec 25."""
+        assert self._parsed_exp(_number("1"), _AMPERSAND, _number("2"), _LSHIFT, _number("3")) == Binary(
+            BitwiseAnd(), Constant(1), Binary(LeftShift(), Constant(2), Constant(3))
+        )
+
+    def test_shift_binds_tighter_than_bitwise_or(self) -> None:
+        """``return 1 | 2 << 3;`` → Or(1, LeftShift(2, 3)): shift prec 40 > OR prec 15."""
+        assert self._parsed_exp(_number("1"), _PIPE, _number("2"), _LSHIFT, _number("3")) == Binary(
+            BitwiseOr(), Constant(1), Binary(LeftShift(), Constant(2), Constant(3))
+        )
+
+    def test_add_binds_tighter_than_shift(self) -> None:
+        """``return 1 + 2 << 3;`` → LeftShift(Add(1, 2), 3): additive prec 45 > shift prec 40."""
+        assert self._parsed_exp(_number("1"), _PLUS, _number("2"), _LSHIFT, _number("3")) == Binary(
+            LeftShift(), Binary(Add(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_bitwise_and_binds_tighter_than_xor(self) -> None:
+        """``return 1 ^ 2 & 3;`` → Xor(1, And(2, 3)): AND prec 25 > XOR prec 20."""
+        assert self._parsed_exp(_number("1"), _CARET, _number("2"), _AMPERSAND, _number("3")) == Binary(
+            BitwiseXor(), Constant(1), Binary(BitwiseAnd(), Constant(2), Constant(3))
+        )
+
+    def test_bitwise_xor_binds_tighter_than_or(self) -> None:
+        """``return 1 | 2 ^ 3;`` → Or(1, Xor(2, 3)): XOR prec 20 > OR prec 15."""
+        assert self._parsed_exp(_number("1"), _PIPE, _number("2"), _CARET, _number("3")) == Binary(
+            BitwiseOr(), Constant(1), Binary(BitwiseXor(), Constant(2), Constant(3))
+        )
+
+    def test_shift_is_left_associative(self) -> None:
+        """``return 1 << 2 << 3;`` → LeftShift(LeftShift(1, 2), 3)."""
+        assert self._parsed_exp(_number("1"), _LSHIFT, _number("2"), _LSHIFT, _number("3")) == Binary(
+            LeftShift(), Binary(LeftShift(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_bitwise_or_is_left_associative(self) -> None:
+        """``return 1 | 2 | 3;`` → Or(Or(1, 2), 3)."""
+        assert self._parsed_exp(_number("1"), _PIPE, _number("2"), _PIPE, _number("3")) == Binary(
+            BitwiseOr(), Binary(BitwiseOr(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_parentheses_override_shift_precedence(self) -> None:
+        """``return 1 << (2 + 3);`` → LeftShift(1, Add(2, 3)): grouping overrides normal precedence."""
+        assert self._parsed_exp(_number("1"), _LSHIFT, _LPAREN, _number("2"), _PLUS, _number("3"), _RPAREN) == Binary(
+            LeftShift(), Constant(1), Binary(Add(), Constant(2), Constant(3))
         )

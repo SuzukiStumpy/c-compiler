@@ -20,12 +20,20 @@ TAC → pseudo-asm mapping:
 
     tac.Return(val)                           → Mov(val, Register(AX)), Ret()
     tac.Unary(op, src, dst)                   → Mov(src, dst), Unary(op, dst)
-    tac.Binary(Add|Sub|Mul, src1, src2, dst)  → Binary(op, src1, src2, Register(R11)),
-                                                 Mov(Register(R11), dst)
-    tac.Binary(Divide, src1, src2, dst)       → Mov(src1, Register(AX)), Cdq,
-                                                 Idiv(src2), Mov(Register(AX), dst)
-    tac.Binary(Remainder, src1, src2, dst)    → Mov(src1, Register(AX)), Cdq,
-                                                 Idiv(src2), Mov(Register(DX), dst)
+    tac.Binary(Add|Sub|Mul, src1, src2, dst)         → Binary(op, src1, src2, Register(R11)),
+                                                        Mov(Register(R11), dst)
+    tac.Binary(And|Or|Xor, src1, src2, dst)          → Binary(op, src1, src2, Register(R11)),
+                                                        Mov(Register(R11), dst)
+    tac.Binary(Divide, src1, src2, dst)              → Mov(src1, Register(AX)), Cdq,
+                                                        Idiv(src2), Mov(Register(AX), dst)
+    tac.Binary(Remainder, src1, src2, dst)           → Mov(src1, Register(AX)), Cdq,
+                                                        Idiv(src2), Mov(Register(DX), dst)
+    tac.Binary(LeftShift, src1, src2, dst)           → Mov(src1, Register(R11)),
+                                                        Mov(src2, Register(CX)),
+                                                        Shl(Register(R11)), Mov(Register(R11), dst)
+    tac.Binary(RightShift, src1, src2, dst)          → Mov(src1, Register(R11)),
+                                                        Mov(src2, Register(CX)),
+                                                        Sar(Register(R11)), Mov(Register(R11), dst)
     tac.Constant(v)                           → Imm(v)
     tac.Var(name)                             → Pseudo(name)
 """
@@ -105,7 +113,9 @@ def _translate_instruction(instr: tac.Instruction) -> list[asm.Instruction]:
             src2_asm = _translate_val(src2)
             dst_asm = _translate_val(dst)
             match op:
-                case tac.Add() | tac.Subtract() | tac.Multiply():
+                case (
+                    tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor()
+                ):
                     return [
                         asm.Binary(
                             operator=_translate_binary_op(op),
@@ -113,6 +123,20 @@ def _translate_instruction(instr: tac.Instruction) -> list[asm.Instruction]:
                             src2=src2_asm,
                             dst=asm.Register(asm.Registers.R11),
                         ),
+                        asm.Mov(src=asm.Register(asm.Registers.R11), dst=dst_asm),
+                    ]
+                case tac.LeftShift():
+                    return [
+                        asm.Mov(src=src1_asm, dst=asm.Register(asm.Registers.R11)),
+                        asm.Mov(src=src2_asm, dst=asm.Register(asm.Registers.CX)),
+                        asm.Shl(operand=asm.Register(asm.Registers.R11)),
+                        asm.Mov(src=asm.Register(asm.Registers.R11), dst=dst_asm),
+                    ]
+                case tac.RightShift():
+                    return [
+                        asm.Mov(src=src1_asm, dst=asm.Register(asm.Registers.R11)),
+                        asm.Mov(src=src2_asm, dst=asm.Register(asm.Registers.CX)),
+                        asm.Sar(operand=asm.Register(asm.Registers.R11)),
                         asm.Mov(src=asm.Register(asm.Registers.R11), dst=dst_asm),
                     ]
                 case tac.Divide():
@@ -181,6 +205,12 @@ def _translate_binary_op(op: tac.BinaryOperator) -> asm.BinaryOperator:
             return asm.Sub()
         case tac.Multiply():
             return asm.Mult()
+        case tac.BitwiseAnd():
+            return asm.And()
+        case tac.BitwiseOr():
+            return asm.Or()
+        case tac.BitwiseXor():
+            return asm.Xor()
         case _:
             raise CodeGenerationError(f"unsupported TAC binary operator for asm.Binary: {type(op).__name__}")
 
@@ -251,6 +281,10 @@ def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
                 new_instructions.append(asm.Binary(operator=op, src1=resolve(src1), src2=resolve(src2), dst=dst))
             case asm.Idiv(operand=operand):
                 new_instructions.append(asm.Idiv(operand=resolve(operand)))
+            case asm.Shl(operand=operand):
+                new_instructions.append(asm.Shl(operand=resolve(operand)))
+            case asm.Sar(operand=operand):
+                new_instructions.append(asm.Sar(operand=resolve(operand)))
             case _:
                 new_instructions.append(instr)
 

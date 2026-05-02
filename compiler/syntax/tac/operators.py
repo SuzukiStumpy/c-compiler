@@ -64,3 +64,28 @@ class Divide(BinaryOperator):
 @dataclass(frozen=True, slots=True)
 class Remainder(BinaryOperator):
     """Represents the remainder of the division of two expressions."""
+
+
+@dataclass(frozen=True, slots=True)
+class LeftShift(BinaryOperator):
+    """Represents a bitwise left shift (``<<``) of two expressions."""
+
+
+@dataclass(frozen=True, slots=True)
+class RightShift(BinaryOperator):
+    """Represents an arithmetic bitwise right shift (``>>``) of two expressions."""
+
+
+@dataclass(frozen=True, slots=True)
+class BitwiseAnd(BinaryOperator):
+    """Represents the bitwise AND (``&``) of two expressions."""
+
+
+@dataclass(frozen=True, slots=True)
+class BitwiseXor(BinaryOperator):
+    """Represents the bitwise exclusive OR (``^``) of two expressions."""
+
+
+@dataclass(frozen=True, slots=True)
+class BitwiseOr(BinaryOperator):
+    """Represents the bitwise OR (``|``) of two expressions."""

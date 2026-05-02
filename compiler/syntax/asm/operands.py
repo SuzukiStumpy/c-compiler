@@ -14,6 +14,7 @@ class Registers(StrEnum):
     """Names of the hardware registers used during code generation."""
 
     AX = "eax"
+    CX = "ecx"
     DX = "edx"
     R10 = "r10d"
     R11 = "r11d"
