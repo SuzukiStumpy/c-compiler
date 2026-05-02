@@ -410,13 +410,12 @@ class Parser:
             An ``Exp`` node.
         """
         left: Exp = self._parse_factor()
-        token = self._peek()
-        while token is not None and token.type in _BINARY_PRECEDENCE and _BINARY_PRECEDENCE[token.type] >= min_prec:
-            prec = _BINARY_PRECEDENCE[token.type]
+        prec = _BINARY_PRECEDENCE.get(self._peek().type) if self._peek() is not None else None
+        while prec is not None and prec >= min_prec:
             op = self._parse_binop()
             right = self._parse_exp(prec + 1)
             left = Binary(op, left, right)
-            token = self._peek()
+            prec = _BINARY_PRECEDENCE.get(self._peek().type) if self._peek() is not None else None
         return left
 
     def _parse_factor(self) -> Exp:

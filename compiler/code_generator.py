@@ -281,10 +281,8 @@ def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
                 new_instructions.append(asm.Binary(operator=op, src1=resolve(src1), src2=resolve(src2), dst=dst))
             case asm.Idiv(operand=operand):
                 new_instructions.append(asm.Idiv(operand=resolve(operand)))
-            case asm.Shl(operand=operand):
-                new_instructions.append(asm.Shl(operand=resolve(operand)))
-            case asm.Sar(operand=operand):
-                new_instructions.append(asm.Sar(operand=resolve(operand)))
+            case asm.Shl(operand=operand) | asm.Sar(operand=operand):
+                new_instructions.append(type(instr)(operand=resolve(operand)))
             case _:
                 new_instructions.append(instr)
 
