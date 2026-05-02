@@ -8,7 +8,7 @@ subclass of ``Instruction``.
 from abc import ABC
 from dataclasses import dataclass
 
-from compiler.syntax.tac.operators import UnaryOperator
+from compiler.syntax.tac.operators import BinaryOperator, UnaryOperator
 from compiler.syntax.tac.values import Val
 
 
@@ -44,4 +44,21 @@ class Unary(Instruction):
 
     operator: UnaryOperator
     src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class Binary(Instruction):
+    """Represents a binary expression within the tac
+
+    Attributes:
+        operator: The type of the operation
+        src1: The first source value for the expression
+        src2: The second source value for the expression
+        dst:  The destination for the result of the expression
+    """
+
+    operator: BinaryOperator
+    src1: Val
+    src2: Val
     dst: Val

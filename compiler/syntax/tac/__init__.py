@@ -6,9 +6,12 @@ mirrors the ASDL grammar for the supported assembly subset:
 
     program             = Program(function_definition)
     function_definition = Function(identifier, instruction* body)
-    instruction         = Return(val) | Unary(unary_operator, val src, val dst)
+    instruction         = Return(val)
+                        | Unary(unary_operator, val src, val dst)
+                        | Binary(binary_operator, val src1, val src2, val dst)
     val                 = Constant(int) | Var(identifier)
     unary_operator      = Complement | Negate
+    binary_operator     = Add | Subtract | Multiply | Divide | Remainder
 
 Nodes are organised into submodules by logical role:
 
@@ -28,8 +31,18 @@ nodes are immutable - once constructed a tac AST node cannot be modified.
 """
 
 from compiler.syntax.tac.declarations import Function, Program
-from compiler.syntax.tac.instructions import Instruction, Return, Unary
-from compiler.syntax.tac.operators import Complement, Negate, UnaryOperator
+from compiler.syntax.tac.instructions import Binary, Instruction, Return, Unary
+from compiler.syntax.tac.operators import (
+    Add,
+    BinaryOperator,
+    Complement,
+    Divide,
+    Multiply,
+    Negate,
+    Remainder,
+    Subtract,
+    UnaryOperator,
+)
 from compiler.syntax.tac.values import Constant, Val, Var
 
 __all__ = [
@@ -38,9 +51,16 @@ __all__ = [
     "Instruction",
     "Return",
     "Unary",
+    "Binary",
     "UnaryOperator",
     "Complement",
     "Negate",
+    "BinaryOperator",
+    "Add",
+    "Subtract",
+    "Multiply",
+    "Divide",
+    "Remainder",
     "Val",
     "Constant",
     "Var",
