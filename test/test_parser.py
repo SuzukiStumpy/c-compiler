@@ -2,12 +2,15 @@
 
 Covers the full range of constructs supported by the current grammar:
 
-    program             = Program(function_definition+)
-    function_definition = Function(type, identifier, parameter*, statement+)
-    parameter           = Parameter(type, identifier)
-    statement           = Return(exp)
-    exp                 = Constant(int)
-    type                = IntType
+    program             ::= function
+    function            ::= "int" identifier "(" "void" ")" "{" statement "}"
+    statement           ::= "return" exp ";"
+    exp                 ::= factor | exp binop exp
+    factor              ::= int | unop factor | "(" exp ")"
+    unop                ::= "-" | "~"
+    binop               ::= "+" | "-" | "*" | "/" | "%"
+    identifier          ::= ? An identifier token ?
+    int                 ::= ? A constant token ?
 
 Each test builds a token stream directly (without invoking the lexer) so that
 parser behaviour is tested in isolation from lexer behaviour.
@@ -17,6 +20,8 @@ import pytest
 
 from compiler.parser import parse
 from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return
+from compiler.syntax.ast.expressions import Binary, Exp, Unary
+from compiler.syntax.ast.operators import Add, Complement, Divide, Multiply, Negate, Remainder, Subtract
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -55,6 +60,12 @@ _RPAREN = _tok(TokenType.RPAREN, ")")
 _LBRACE = _tok(TokenType.LBRACE, "{")
 _RBRACE = _tok(TokenType.RBRACE, "}")
 _SEMICOLON = _tok(TokenType.SEMICOLON, ";")
+_BITWISE_NOT = _tok(TokenType.BITWISE_NOT, "~")
+_MINUS = _tok(TokenType.MINUS, "-")
+_PLUS = _tok(TokenType.PLUS, "+")
+_TIMES = _tok(TokenType.TIMES, "*")
+_DIVIDE = _tok(TokenType.DIVIDE, "/")
+_PERCENT = _tok(TokenType.PERCENT, "%")
 
 
 def _ident(name: str) -> Token:
@@ -255,3 +266,125 @@ class TestParseErrors:
             parse(tokens)
         text = str(exc_info.value)
         assert "\n" not in text
+
+
+# ---------------------------------------------------------------------------
+# Unary expressions (_parse_factor)
+# ---------------------------------------------------------------------------
+
+
+class TestUnaryExpressions:
+    """Parser correctly builds Unary nodes for all unary operators."""
+
+    def _parsed_exp(self, *exp_tokens: Token) -> Exp:
+        """Parse a minimal function returning the given expression tokens and return the expression."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, *exp_tokens, _SEMICOLON, _RBRACE]
+        result = parse(tokens)
+        stmt = result.functions[0].body[0]
+        assert isinstance(stmt, Return)
+        return stmt.exp
+
+    def test_negate(self) -> None:
+        """``return -1;`` → Unary(Negate(), Constant(1))."""
+        assert self._parsed_exp(_MINUS, _number("1")) == Unary(Negate(), Constant(1))
+
+    def test_complement(self) -> None:
+        """``return ~1;`` → Unary(Complement(), Constant(1))."""
+        assert self._parsed_exp(_BITWISE_NOT, _number("1")) == Unary(Complement(), Constant(1))
+
+    def test_double_negate(self) -> None:
+        """``return --1;`` — wait, DECREMENT is a separate token; ``- -1`` → Unary(Negate(), Unary(Negate(), Constant(1)))."""  # noqa: E501
+        assert self._parsed_exp(_MINUS, _MINUS, _number("1")) == Unary(Negate(), Unary(Negate(), Constant(1)))
+
+    def test_negate_complement(self) -> None:
+        """``return -~1;`` → Unary(Negate(), Unary(Complement(), Constant(1)))."""
+        assert self._parsed_exp(_MINUS, _BITWISE_NOT, _number("1")) == Unary(Negate(), Unary(Complement(), Constant(1)))
+
+    def test_parenthesised_constant(self) -> None:
+        """``return (42);`` — parentheses around a constant are transparent."""
+        assert self._parsed_exp(_LPAREN, _number("42"), _RPAREN) == Constant(42)
+
+
+# ---------------------------------------------------------------------------
+# Binary expressions (_parse_exp with precedence climbing)
+# ---------------------------------------------------------------------------
+
+
+class TestBinaryExpressions:
+    """Parser correctly builds Binary nodes for all binary operators, respecting precedence and associativity."""
+
+    def _parsed_exp(self, *exp_tokens: Token) -> Exp:
+        """Parse a minimal function returning the given expression tokens and return the expression."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, *exp_tokens, _SEMICOLON, _RBRACE]
+        result = parse(tokens)
+        stmt = result.functions[0].body[0]
+        assert isinstance(stmt, Return)
+        return stmt.exp
+
+    def test_addition(self) -> None:
+        """``return 1 + 2;`` → Binary(Add(), Constant(1), Constant(2))."""
+        assert self._parsed_exp(_number("1"), _PLUS, _number("2")) == Binary(Add(), Constant(1), Constant(2))
+
+    def test_subtraction(self) -> None:
+        """``return 3 - 1;`` → Binary(Subtract(), Constant(3), Constant(1))."""
+        assert self._parsed_exp(_number("3"), _MINUS, _number("1")) == Binary(Subtract(), Constant(3), Constant(1))
+
+    def test_multiplication(self) -> None:
+        """``return 2 * 3;`` → Binary(Multiply(), Constant(2), Constant(3))."""
+        assert self._parsed_exp(_number("2"), _TIMES, _number("3")) == Binary(Multiply(), Constant(2), Constant(3))
+
+    def test_division(self) -> None:
+        """``return 6 / 2;`` → Binary(Divide(), Constant(6), Constant(2))."""
+        assert self._parsed_exp(_number("6"), _DIVIDE, _number("2")) == Binary(Divide(), Constant(6), Constant(2))
+
+    def test_remainder(self) -> None:
+        """``return 7 % 3;`` → Binary(Remainder(), Constant(7), Constant(3))."""
+        assert self._parsed_exp(_number("7"), _PERCENT, _number("3")) == Binary(Remainder(), Constant(7), Constant(3))
+
+    def test_multiply_binds_tighter_than_add(self) -> None:
+        """``return 1 + 2 * 3;`` → Add(1, Multiply(2, 3)) by precedence."""
+        assert self._parsed_exp(_number("1"), _PLUS, _number("2"), _TIMES, _number("3")) == Binary(
+            Add(), Constant(1), Binary(Multiply(), Constant(2), Constant(3))
+        )
+
+    def test_multiply_binds_tighter_than_subtract(self) -> None:
+        """``return 4 - 2 * 3;`` → Subtract(4, Multiply(2, 3)) by precedence."""
+        assert self._parsed_exp(_number("4"), _MINUS, _number("2"), _TIMES, _number("3")) == Binary(
+            Subtract(), Constant(4), Binary(Multiply(), Constant(2), Constant(3))
+        )
+
+    def test_add_is_left_associative(self) -> None:
+        """``return 1 + 2 + 3;`` → Add(Add(1, 2), 3) by left-associativity."""
+        assert self._parsed_exp(_number("1"), _PLUS, _number("2"), _PLUS, _number("3")) == Binary(
+            Add(), Binary(Add(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_subtract_is_left_associative(self) -> None:
+        """``return 5 - 3 - 1;`` → Subtract(Subtract(5, 3), 1) by left-associativity."""
+        assert self._parsed_exp(_number("5"), _MINUS, _number("3"), _MINUS, _number("1")) == Binary(
+            Subtract(), Binary(Subtract(), Constant(5), Constant(3)), Constant(1)
+        )
+
+    def test_divide_is_left_associative(self) -> None:
+        """``return 12 / 4 / 3;`` → Divide(Divide(12, 4), 3) by left-associativity."""
+        assert self._parsed_exp(_number("12"), _DIVIDE, _number("4"), _DIVIDE, _number("3")) == Binary(
+            Divide(), Binary(Divide(), Constant(12), Constant(4)), Constant(3)
+        )
+
+    def test_parentheses_override_precedence(self) -> None:
+        """``return (1 + 2) * 3;`` → Multiply(Add(1, 2), 3) via grouping."""
+        assert self._parsed_exp(_LPAREN, _number("1"), _PLUS, _number("2"), _RPAREN, _TIMES, _number("3")) == Binary(
+            Multiply(), Binary(Add(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_unary_negation_as_left_operand(self) -> None:
+        """``return -1 + 2;`` → Add(Negate(1), 2)."""
+        assert self._parsed_exp(_MINUS, _number("1"), _PLUS, _number("2")) == Binary(
+            Add(), Unary(Negate(), Constant(1)), Constant(2)
+        )
+
+    def test_unary_negation_as_right_operand(self) -> None:
+        """``return 2 + -1;`` → Add(2, Negate(1))."""
+        assert self._parsed_exp(_number("2"), _PLUS, _MINUS, _number("1")) == Binary(
+            Add(), Constant(2), Unary(Negate(), Constant(1))
+        )

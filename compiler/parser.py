@@ -1,28 +1,53 @@
 """Parsing stage: converts a token stream into an abstract syntax tree.
 
-The parser is a recursive descent parser whose grammar mirrors the ASDL
-specification in ``compiler.syntax.ast``:
+The parser uses recursive descent for all constructs except binary expressions,
+which are handled by precedence climbing.  The grammar is:
 
-    program             = Program(function_definition+)
-    function_definition = Function(type return_type, identifier name,
-                                   parameter* params, statement+ body)
-    parameter           = Parameter(type param_type, identifier name)
-    statement           = Return(exp)
-    exp                 = Constant(int)
-    type                = IntType
+    program             ::= function
+    function            ::= "int" identifier "(" "void" ")" "{" statement "}"
+    statement           ::= "return" exp ";"
+    exp                 ::= factor | exp binop exp
+    factor              ::= int | unop factor | "(" exp ")"
+    unop                ::= "-" | "~"
+    binop               ::= "+" | "-" | "*" | "/" | "%"
+    identifier          ::= ? An identifier token ?
+    int                 ::= ? A constant token ?
 
-Each grammar rule maps directly to a private ``_parse_*`` method on
-``Parser``. The public ``parse()`` function is the only entry point
-intended for use by other pipeline stages.
+Each grammar rule (except ``exp``) maps directly to a private ``_parse_*``
+method on ``Parser``.  ``_parse_exp`` implements precedence climbing so that
+operator associativity and precedence are handled without ambiguity.
+The public ``parse()`` function is the only entry point intended for use by
+other pipeline stages.
 """
 
 from pathlib import Path
 
 from compiler.syntax.ast import Constant, Exp, Function, IntType, Parameter, Program, Return, Statement, Type
-from compiler.syntax.ast.expressions import Unary
-from compiler.syntax.ast.operators import Complement, Negate, UnaryOperator
+from compiler.syntax.ast.expressions import Binary, Unary
+from compiler.syntax.ast.operators import (
+    Add,
+    BinaryOperator,
+    Complement,
+    Divide,
+    Multiply,
+    Negate,
+    Remainder,
+    Subtract,
+    UnaryOperator,
+)
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
+
+# Precedence table for binary operators used by the precedence-climbing parser.
+# Higher values bind more tightly.  Operators absent from this table are not
+# binary operators and will terminate the climbing loop.
+_BINARY_PRECEDENCE: dict[TokenType, int] = {
+    TokenType.PLUS: 45,
+    TokenType.MINUS: 45,
+    TokenType.TIMES: 50,
+    TokenType.DIVIDE: 50,
+    TokenType.PERCENT: 50,
+}
 
 
 class Parser:
@@ -326,17 +351,66 @@ class Parser:
             case _:
                 raise self._token_error("Syntax Error: Expected a unary operator token.", token)
 
-    def _parse_exp(self) -> Exp:
-        """Parse an expression.
+    def _parse_binop(self) -> BinaryOperator:
+        """Consume the next token and return the corresponding binary operator node.
 
-        Currently supports integer constant expressions along with unary complement
-        and unary negation.
+        Returns:
+            A ``BinaryOperator`` node.
+
+        Raises:
+            ParseError: If the next token is not a recognised binary operator.
+        """
+        token = self._consume()
+        match token.type:
+            case TokenType.PLUS:
+                return Add()
+            case TokenType.MINUS:
+                return Subtract()
+            case TokenType.TIMES:
+                return Multiply()
+            case TokenType.DIVIDE:
+                return Divide()
+            case TokenType.PERCENT:
+                return Remainder()
+            case _:
+                raise self._token_error("expected a binary operator", token)
+
+    def _parse_exp(self, min_prec: int = 0) -> Exp:
+        """Parse an expression using precedence climbing.
+
+        Parses a left-hand ``factor``, then repeatedly folds in any following
+        binary operator whose precedence is at least ``min_prec``, recursing
+        with ``precedence + 1`` to enforce left-associativity.
+
+        Args:
+            min_prec: Minimum operator precedence to consume at this level.
+                      Callers should omit this argument (defaults to ``0``).
+
+        Returns:
+            An ``Exp`` node.
+        """
+        left: Exp = self._parse_factor()
+        token = self._peek()
+        while token is not None and token.type in _BINARY_PRECEDENCE and _BINARY_PRECEDENCE[token.type] >= min_prec:
+            prec = _BINARY_PRECEDENCE[token.type]
+            op = self._parse_binop()
+            right = self._parse_exp(prec + 1)
+            left = Binary(op, left, right)
+            token = self._peek()
+        return left
+
+    def _parse_factor(self) -> Exp:
+        """Parse a factor: a constant, a unary expression, or a parenthesised expression.
+
+        Grammar::
+
+            factor ::= int | unop factor | "(" exp ")"
 
         Returns:
             An ``Exp`` node.
 
         Raises:
-            ParseError: If the token does not begin a recognised expression.
+            ParseError: If the token does not begin a recognised factor.
         """
         token = self._peek()
 
@@ -348,7 +422,7 @@ class Parser:
                 return self._parse_constant()
             case TokenType.BITWISE_NOT | TokenType.MINUS:
                 operator = self._parse_unaryop()
-                inner_exp = self._parse_exp()
+                inner_exp = self._parse_factor()
                 return Unary(operator, inner_exp)
             case TokenType.LPAREN:
                 self._consume()

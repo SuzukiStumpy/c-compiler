@@ -2,14 +2,14 @@
 
 Defines the ``Exp`` abstract base class and its concrete variants. Each
 expression form supported by the compiler is represented as a subclass of
-``Exp``. New expression types (binary operations, function calls, etc.) are
-added here as language support is extended.
+``Exp``. New expression types (function calls, etc.) are added here as language
+support is extended.
 """
 
 from abc import ABC
 from dataclasses import dataclass
 
-from compiler.syntax.ast.operators import UnaryOperator
+from compiler.syntax.ast.operators import BinaryOperator, UnaryOperator
 
 
 class Exp(ABC):
@@ -44,3 +44,18 @@ class Unary(Exp):
 
     operator: UnaryOperator
     exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class Binary(Exp):
+    """A binary operator expression.
+
+    Attributes:
+        operator: The binary operator which combines the two subexpressions
+        left:     The left-hand operand
+        right:    The right-hand operand
+    """
+
+    operator: BinaryOperator
+    left: Exp
+    right: Exp

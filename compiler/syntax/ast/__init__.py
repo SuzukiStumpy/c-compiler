@@ -9,17 +9,21 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                                    parameter* params, statement+ body)
     parameter           = Parameter(type param_type, identifier name)
     statement           = Return(exp)
-    exp                 = Constant(int) | Unary(unary_operator, exp)
+    exp                 = Constant(int)
+                        | Unary(unary_operator, exp)
+                        | Binary(binary_operator, exp, exp)
     unary_operator      = Complement | Negate
+    binary_operator     = Add | Subtract | Multiply | Divide | Remainder
     type                = IntType
 
 Nodes are organised into submodules by logical role:
 
     types        — C type nodes (Type, IntType)
-    expressions  — Expression nodes (Exp, Constant)
+    expressions  — Expression nodes (Exp, Constant, Unary, Binary)
     statements   — Statement nodes (Statement, Return)
     declarations — Program structure nodes (Parameter, Function, Program)
-    operators    - Operators which act upon expressions (Complement, Negate)
+    operators    — Operators which act upon expressions
+                   (Complement, Negate, Add, Subtract, Multiply, Divide, Remainder)
 
 All node types are re-exported from this package so callers can import directly
 from ``compiler.syntax.ast`` without knowing which submodule a type lives in::
@@ -32,8 +36,18 @@ nodes are immutable — once constructed an AST node cannot be modified.
 """
 
 from compiler.syntax.ast.declarations import Function, Parameter, Program
-from compiler.syntax.ast.expressions import Constant, Exp, Unary
-from compiler.syntax.ast.operators import Complement, Negate, UnaryOperator
+from compiler.syntax.ast.expressions import Binary, Constant, Exp, Unary
+from compiler.syntax.ast.operators import (
+    Add,
+    BinaryOperator,
+    Complement,
+    Divide,
+    Multiply,
+    Negate,
+    Remainder,
+    Subtract,
+    UnaryOperator,
+)
 from compiler.syntax.ast.pretty_print import pretty_print
 from compiler.syntax.ast.statements import Return, Statement
 from compiler.syntax.ast.types import IntType, Type
@@ -44,7 +58,9 @@ __all__ = [
     "Exp",
     "Constant",
     "Unary",
+    "Binary",
     "UnaryOperator",
+    "BinaryOperator",
     "Statement",
     "Return",
     "Parameter",
@@ -53,4 +69,9 @@ __all__ = [
     "pretty_print",
     "Complement",
     "Negate",
+    "Add",
+    "Subtract",
+    "Multiply",
+    "Divide",
+    "Remainder",
 ]
