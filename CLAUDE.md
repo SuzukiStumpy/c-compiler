@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A homegrown C compiler written in Python supporting a subset of the C language. Currently in early development — `compiler/compiler.py` is the main entry point but is largely a skeleton.
+A homegrown C compiler written in Python supporting a subset of the C language. `compiler/compiler.py` is the main entry point.
 
 ## Environment
 
 - Python 3.13, managed with `uv`
-- The `.venv` is auto-activated in VS Code via WSL (`launch_venv.sh`)
+- The `.venv` is auto-activated in VS Code (`launch_venv.sh`)
 - Install deps: `uv sync`
 
 ## Commands
@@ -46,7 +46,7 @@ uv run test
 
 ## Architecture
 
-Tests go in `test/` (currently empty). Pytest is configured to look there and ignores the `compiler/` source directory for test discovery (`norecursedirs` + `addopts = "--ignore=compiler"`).
+Tests go in `test/`. Pytest is configured to look there and ignores the `compiler/` source directory for test discovery (`norecursedirs` + `addopts = "--ignore=compiler"`).
 
 The `compiler` package is installed in editable mode into `.venv` via the `c_compiler.pth` path file, so `import compiler` works without reinstalling after edits.
 
