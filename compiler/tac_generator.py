@@ -13,6 +13,8 @@ The translation follows this mapping:
     ast.Constant(v)            → tac.Constant(v)   (no extra instructions)
     ast.Unary(op, inner)       → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
                                  returns tmp as the result val
+    ast.Binary(op, left, right)   → <emit(left)> + <emit(right)> + [tac.Binary(op, left_val, right_val, tmp)]
+    ... (other constructs to be added in future stages)
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -41,6 +43,33 @@ def generate(program: ast.Program) -> tac.Program:
     if len(program.functions) != 1:
         raise CodeGenerationError(f"expected exactly one function definition, got {len(program.functions)}")
     return tac.Program(function=_TacGenerator().translate_function(program.functions[0]))
+
+
+def _translate_binary_op(op: ast.BinaryOperator) -> tac.BinaryOperator:
+    """Translate an AST binary operator into its TAC equivalent.
+
+    Args:
+        op: The AST binary operator node.
+
+    Returns:
+        The corresponding ``tac.BinaryOperator`` node.
+
+    Raises:
+        CodeGenerationError: If the operator variant is not supported.
+    """
+    match op:
+        case ast.Add():
+            return tac.Add()
+        case ast.Subtract():
+            return tac.Subtract()
+        case ast.Multiply():
+            return tac.Multiply()
+        case ast.Divide():
+            return tac.Divide()
+        case ast.Remainder():
+            return tac.Remainder()
+        case _:
+            raise CodeGenerationError(f"unsupported binary operator: {type(op).__name__}")
 
 
 def _translate_unary_op(op: ast.UnaryOperator) -> tac.UnaryOperator:
@@ -123,8 +152,8 @@ class _TacGenerator:
     def translate_exp(self, exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:
         """Translate an AST expression into a TAC value and any preceding instructions.
 
-        Compound expressions (unary operations) are broken down into a sequence of
-        ``tac.Unary`` instructions that write their result to a fresh temporary
+        Compound expressions (unary and binary operations) are broken down into a
+        sequence of TAC instructions that write their result to a fresh temporary
         variable, which is returned as the result value.  Leaf expressions
         (constants) produce no instructions.
 
@@ -145,5 +174,11 @@ class _TacGenerator:
                 src, inner_instrs = self.translate_exp(inner)
                 dst = self._make_temp()
                 return dst, [*inner_instrs, tac.Unary(operator=_translate_unary_op(op), src=src, dst=dst)]
+            case ast.Binary(operator=op, left=left, right=right):
+                src1, left_instrs = self.translate_exp(left)
+                src2, right_instrs = self.translate_exp(right)
+                dst = self._make_temp()
+                binary = tac.Binary(operator=_translate_binary_op(op), src1=src1, src2=src2, dst=dst)
+                return dst, [*left_instrs, *right_instrs, binary]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")
