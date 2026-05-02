@@ -9,19 +9,24 @@ for the supported assembly subset:
     function_definition = Function(identifier name, instruction* instructions)
     instruction         = Mov(operand src, operand dst)
                         | Unary(unary_operator, operand)
+                        | Binary(binary_operator, operand src1, operand src2, operand dst)
+                        | Idiv(operand)
+                        | Cdq
                         | AllocateStack(int)
                         | Ret
+    unary_operator      = Neg | Not
+    binary_operator     = Add | Sub | Mult
     operand             = Imm(int)
-                        | Register
+                        | Register(reg)
                         | Pseudo(identifier)
                         | Stack(int)
-    unary_operator      = Neg | Not
+    reg                 = AX | DX | R10 | R11
 
 Nodes are organised into submodules by logical role:
 
     operators     — Unary operator nodes (UnaryOperator, Neg, Not)
     operands      — Operand nodes (Operand, Imm, Register, Pseudo, Stack)
-    instructions  — Instruction nodes (Instruction, Mov, Ret, Unary, AllocateStack)
+    instructions  — Instruction nodes (Instruction, Mov, Ret, Unary, Binary, Cdq, Idiv, AllocateStack)
     declarations  — Program structure nodes (Function, Program)
 
 All node types are re-exported from this package so callers can import directly
@@ -39,14 +44,18 @@ be replaced by ``Stack`` operands before the assembly is emitted.
 """
 
 from compiler.syntax.asm.declarations import Function, Program
-from compiler.syntax.asm.instructions import AllocateStack, Instruction, Mov, Ret, Unary
+from compiler.syntax.asm.instructions import AllocateStack, Binary, Cdq, Idiv, Instruction, Mov, Ret, Unary
 from compiler.syntax.asm.operands import Imm, Operand, Pseudo, Register, Registers, Stack
-from compiler.syntax.asm.operators import Neg, Not, UnaryOperator
+from compiler.syntax.asm.operators import Add, BinaryOperator, Mult, Neg, Not, Sub, UnaryOperator
 
 __all__ = [
     "UnaryOperator",
     "Neg",
     "Not",
+    "BinaryOperator",
+    "Add",
+    "Sub",
+    "Mult",
     "Operand",
     "Imm",
     "Register",
@@ -57,6 +66,9 @@ __all__ = [
     "Mov",
     "Ret",
     "Unary",
+    "Binary",
+    "Cdq",
+    "Idiv",
     "AllocateStack",
     "Function",
     "Program",

@@ -8,8 +8,9 @@ subclass of ``Instruction``.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from compiler.syntax.asm.operands import Operand
-from compiler.syntax.asm.operators import UnaryOperator
+from compiler.syntax.asm.operands import Operand, Register
+from compiler.syntax.asm.operators import Add, BinaryOperator, Mult, Sub, UnaryOperator
+from compiler.utils.exceptions import CodeGenerationError
 
 
 class Instruction(ABC):
@@ -117,3 +118,88 @@ class AllocateStack(Instruction):
             e.g. ``  subq $16, %rsp``.
         """
         return f"  subq ${self.size}, %rsp"
+
+
+@dataclass(frozen=True, slots=True)
+class Binary(Instruction):
+    """A binary instruction that reads two operands and writes the result to the second.
+
+    Covers ``addl``, ``subl``, and ``imull``.  Division and remainder are
+    handled by ``Cdq`` and ``Idiv`` instead, since they require a fixed
+    register protocol that does not fit the two-operand model.
+
+    Attributes:
+        operator: The specific binary operation to perform.
+        src1: The left (first) source operand.
+        src2: The right (second) source operand.
+        dst: The destination register (also the accumulator for the operation).
+    """
+
+    operator: BinaryOperator
+    src1: Operand
+    src2: Operand
+    dst: Register
+
+    def emit(self) -> str:
+        """Return a binary instruction sequence in AT&T syntax.
+
+        Moves ``src1`` into ``dst``, then applies the operator with ``src2``.
+
+        Returns:
+            A two-line string: ``movl src1, dst`` followed by ``op src2, dst``.
+
+        Raises:
+            CodeGenerationError: If the operator is not one of the supported
+                variants (``Add``, ``Sub``, ``Mult``).
+        """
+        match self.operator:
+            case Add() | Sub() | Mult():
+                return "\n".join(
+                    [
+                        f"  movl {self.src1.emit()}, {self.dst.emit()}",
+                        f"  {self.operator.emit()} {self.src2.emit()}, {self.dst.emit()}",
+                    ]
+                )
+            case _:
+                raise CodeGenerationError(f"unsupported binary operator in emit: {type(self.operator).__name__}")
+
+
+@dataclass(frozen=True, slots=True)
+class Cdq(Instruction):
+    """A ``cdq`` instruction that sign-extends ``%eax`` into ``%edx:%eax``.
+
+    Must be emitted immediately before ``Idiv`` to prepare the full 64-bit
+    dividend.  Carries no fields.
+    """
+
+    def emit(self) -> str:
+        """Return the ``cdq`` mnemonic.
+
+        Returns:
+            The string ``"  cdq"``.
+        """
+        return "  cdq"
+
+
+@dataclass(frozen=True, slots=True)
+class Idiv(Instruction):
+    """An ``idivl`` instruction that performs signed 32-bit integer division.
+
+    Divides the ``%edx:%eax`` dividend by ``operand``.  The quotient is stored
+    in ``%eax`` and the remainder in ``%edx``.  ``operand`` must not be an
+    immediate value — the instruction fixup pass is responsible for routing
+    any ``Imm`` divisor through ``%r11d`` before emission.
+
+    Attributes:
+        operand: The divisor; a register or memory location (never an immediate).
+    """
+
+    operand: Operand
+
+    def emit(self) -> str:
+        """Return an ``idivl`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  idivl <operand>"``.
+        """
+        return f"  idivl {self.operand.emit()}"

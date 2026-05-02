@@ -224,6 +224,176 @@ def test_chained_temps_produce_no_mem_mem_mov() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _binary_tac_program(op: tac.BinaryOperator, src1: tac.Val, src2: tac.Val) -> tac.Program:
+    """Build a ``tac.Program`` that evaluates ``src1 <op> src2`` and returns the result.
+
+    Args:
+        op: The binary operator to apply.
+        src1: The left operand.
+        src2: The right operand.
+
+    Returns:
+        A ``tac.Program`` whose sole function returns the result of the binary expression.
+    """
+    return tac.Program(
+        function=tac.Function(
+            name="main",
+            body=(
+                tac.Binary(operator=op, src1=src1, src2=src2, dst=tac.Var(value="tmp.0")),
+                tac.Return(val=tac.Var(value="tmp.0")),
+            ),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Binary operations — Add, Sub, Mul
+# ---------------------------------------------------------------------------
+
+
+def test_binary_add_produces_asm_binary_with_r11_scratch() -> None:
+    """``Binary(Add, …)`` uses ``%r11d`` as the scratch accumulator register."""
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    binary = result.function.instructions[1]
+    assert isinstance(binary, asm.Binary)
+    assert binary.dst == asm.Register(asm.Registers.R11)
+
+
+def test_binary_add_operator_is_asm_add() -> None:
+    """``tac.Add()`` maps to ``asm.Add()`` inside the ``Binary`` instruction."""
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    binary = result.function.instructions[1]
+    assert isinstance(binary, asm.Binary)
+    assert binary.operator == asm.Add()
+
+
+def test_binary_subtract_operator_is_asm_sub() -> None:
+    """``tac.Subtract()`` maps to ``asm.Sub()`` inside the ``Binary`` instruction."""
+    result = generate(_binary_tac_program(tac.Subtract(), tac.Constant(5), tac.Constant(3)))
+    binary = result.function.instructions[1]
+    assert isinstance(binary, asm.Binary)
+    assert binary.operator == asm.Sub()
+
+
+def test_binary_multiply_operator_is_asm_mult() -> None:
+    """``tac.Multiply()`` maps to ``asm.Mult()`` inside the ``Binary`` instruction."""
+    result = generate(_binary_tac_program(tac.Multiply(), tac.Constant(4), tac.Constant(3)))
+    binary = result.function.instructions[1]
+    assert isinstance(binary, asm.Binary)
+    assert binary.operator == asm.Mult()
+
+
+def test_binary_add_result_moved_from_r11_to_stack() -> None:
+    """After the ``Binary`` instruction, the result is moved from ``%r11d`` to the stack slot."""
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    # AllocateStack, Binary, Mov(R11, Stack(-4)), Mov(Stack(-4), AX), Ret
+    mov = result.function.instructions[2]
+    assert mov == asm.Mov(src=asm.Register(asm.Registers.R11), dst=asm.Stack(offset=-4))
+
+
+def test_binary_add_instruction_count() -> None:
+    """``Binary(Add, c, c)`` + ``Return`` produces exactly 5 instructions."""
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    assert len(result.function.instructions) == 5
+
+
+# ---------------------------------------------------------------------------
+# Division
+# ---------------------------------------------------------------------------
+
+
+def test_divide_loads_dividend_into_ax() -> None:
+    """``Binary(Divide, …)`` moves the dividend into ``%eax`` as the first instruction."""
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    # AllocateStack, Mov(Imm(10), AX), Cdq, Mov(Imm(2), R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
+    assert result.function.instructions[1] == asm.Mov(src=asm.Imm(value=10), dst=asm.Register(asm.Registers.AX))
+
+
+def test_divide_emits_cdq_after_dividend_load() -> None:
+    """``Cdq`` follows the dividend ``Mov`` to sign-extend ``%eax`` into ``%edx:%eax``."""
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    assert isinstance(result.function.instructions[2], asm.Cdq)
+
+
+def test_divide_result_comes_from_ax() -> None:
+    """The quotient ``Mov`` sources from ``%eax``."""
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    # After fixup: AllocateStack, Mov(10, AX), Cdq, Mov(2, R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
+    quotient_mov = result.function.instructions[5]
+    assert isinstance(quotient_mov, asm.Mov)
+    assert quotient_mov.src == asm.Register(asm.Registers.AX)
+
+
+# ---------------------------------------------------------------------------
+# Remainder
+# ---------------------------------------------------------------------------
+
+
+def test_remainder_result_comes_from_dx() -> None:
+    """The remainder ``Mov`` sources from ``%edx``, not ``%eax``."""
+    result = generate(_binary_tac_program(tac.Remainder(), tac.Constant(10), tac.Constant(3)))
+    # AllocateStack, Mov(10, AX), Cdq, Mov(3, R11), Idiv(R11), Mov(DX, Stack), Mov(Stack, AX), Ret
+    remainder_mov = result.function.instructions[5]
+    assert isinstance(remainder_mov, asm.Mov)
+    assert remainder_mov.src == asm.Register(asm.Registers.DX)
+
+
+def test_remainder_emits_cdq() -> None:
+    """``Cdq`` is emitted for remainder just as for divide."""
+    result = generate(_binary_tac_program(tac.Remainder(), tac.Constant(7), tac.Constant(3)))
+    assert isinstance(result.function.instructions[2], asm.Cdq)
+
+
+# ---------------------------------------------------------------------------
+# Instruction fixup — Idiv with immediate divisor
+# ---------------------------------------------------------------------------
+
+
+def test_idiv_immediate_divisor_routed_through_r11() -> None:
+    """An immediate divisor is moved into ``%r11d`` before ``idivl``."""
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    # AllocateStack, Mov(10, AX), Cdq, Mov(2, R11), Idiv(R11), ...
+    mov_r11 = result.function.instructions[3]
+    idiv = result.function.instructions[4]
+    assert mov_r11 == asm.Mov(src=asm.Imm(value=2), dst=asm.Register(asm.Registers.R11))
+    assert idiv == asm.Idiv(operand=asm.Register(asm.Registers.R11))
+
+
+def test_idiv_memory_divisor_not_routed_through_r11() -> None:
+    """A stack-slot divisor is passed directly to ``idivl`` without an extra ``Mov``."""
+    program = tac.Program(
+        function=tac.Function(
+            name="main",
+            body=(
+                tac.Binary(operator=tac.Divide(), src1=tac.Constant(10), src2=tac.Var("b"), dst=tac.Var("tmp.0")),
+                tac.Return(val=tac.Var("tmp.0")),
+            ),
+        )
+    )
+    result = generate(program)
+    # Find the Idiv instruction and verify its operand is a Stack slot, not a register
+    idiv_instrs = [i for i in result.function.instructions if isinstance(i, asm.Idiv)]
+    assert len(idiv_instrs) == 1
+    assert isinstance(idiv_instrs[0].operand, asm.Stack)
+
+
+# ---------------------------------------------------------------------------
+# Pseudo replacement for binary instructions
+# ---------------------------------------------------------------------------
+
+
+def test_no_pseudo_operands_after_binary_code_gen() -> None:
+    """No ``Pseudo`` operands survive into the final binary instruction output."""
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    for instr in result.function.instructions:
+        match instr:
+            case asm.Binary(src1=src1, src2=src2):
+                assert not isinstance(src1, asm.Pseudo)
+                assert not isinstance(src2, asm.Pseudo)
+            case asm.Idiv(operand=operand):
+                assert not isinstance(operand, asm.Pseudo)
+
+
 def test_unsupported_instruction_raises_codegen_error() -> None:
     """An unrecognised TAC instruction subclass raises ``CodeGenerationError``."""
 

@@ -60,3 +60,73 @@ class Not(UnaryOperator):
             The string ``"notl"``.
         """
         return "notl"
+
+
+class BinaryOperator(ABC):
+    """Abstract base for all assembly binary operator nodes.
+
+    Each operator is represented as a concrete subclass carrying no data fields
+    — its identity is its type alone.  Consumers should use structural pattern
+    matching (``match``/``case``) to dispatch on the concrete variant rather than
+    inspecting the type directly.
+    """
+
+    @abstractmethod
+    def emit(self) -> str:
+        """Return the assembly mnemonic for this operator.
+
+        Returns:
+            The instruction mnemonic string (e.g. ``"addl"``, ``"subl"``, or
+            ``"imull"``).
+        """
+
+
+@dataclass(frozen=True, slots=True)
+class Add(BinaryOperator):
+    """The ``addl`` instruction: addition.
+
+    Adds the first operand to the second operand, storing the result in place
+    in the second operand.
+    """
+
+    def emit(self) -> str:
+        """Return the ``addl`` mnemonic.
+
+        Returns:
+            The string ``"addl"``.
+        """
+        return "addl"
+
+
+@dataclass(frozen=True, slots=True)
+class Sub(BinaryOperator):
+    """The ``subl`` instruction: subtraction.
+
+    Subtracts the first operand from the second operand, storing the result in
+    place in the second operand.
+    """
+
+    def emit(self) -> str:
+        """Return the ``subl`` mnemonic.
+
+        Returns:
+            The string ``"subl"``.
+        """
+        return "subl"
+
+
+@dataclass(frozen=True, slots=True)
+class Mult(BinaryOperator):
+    """The ``imull`` instruction: multiplication.
+
+    Multiplies the first operand by the second operand, storing the result in
+    place in the second operand.
+    """
+
+    def emit(self) -> str:
+        """Return the ``imull`` mnemonic.
+
+        Returns:
+            The string ``"imull"``.
+        """
+        return "imull"
