@@ -23,8 +23,13 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     # Boolan Operations
     ("BITWISE_NOT", r"~"),
     # Unary Operators
-    ("NEGATION", r"-"),
+    ("MINUS", r"-"),  # This is also a binary operator, which we disambiguate in the parser
     ("DECREMENT", r"--"),
+    # Binary Operators
+    ("PLUS", r"\+"),
+    ("TIMES", r"\*"),
+    ("DIVIDE", r"/"),
+    ("PERCENT", r"%"),  # Modulo operator
 ]
 
 _TOKEN_REGEX = re.compile(

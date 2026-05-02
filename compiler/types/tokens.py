@@ -29,8 +29,13 @@ class TokenType(Enum):
     # Boolean Operators
     BITWISE_NOT = auto()
     # Unary Operators
-    NEGATION = auto()
+    MINUS = auto()  # This is also a binary operator, which we disambiguate in the parser
     DECREMENT = auto()
+    # Binary Operators
+    PLUS = auto()
+    TIMES = auto()
+    DIVIDE = auto()
+    PERCENT = auto()  # Modulo operator
 
 
 @dataclass(frozen=True, slots=True)

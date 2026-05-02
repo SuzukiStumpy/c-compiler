@@ -321,7 +321,7 @@ class Parser:
         match token.type:
             case TokenType.BITWISE_NOT:
                 return Complement()
-            case TokenType.NEGATION:
+            case TokenType.MINUS:
                 return Negate()
             case _:
                 raise self._token_error("Syntax Error: Expected a unary operator token.", token)
@@ -346,7 +346,7 @@ class Parser:
         match token.type:
             case TokenType.NUMBER:
                 return self._parse_constant()
-            case TokenType.BITWISE_NOT | TokenType.NEGATION:
+            case TokenType.BITWISE_NOT | TokenType.MINUS:
                 operator = self._parse_unaryop()
                 inner_exp = self._parse_exp()
                 return Unary(operator, inner_exp)
