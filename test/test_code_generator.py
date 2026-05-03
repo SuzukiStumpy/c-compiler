@@ -406,59 +406,34 @@ class TestBitwiseAndOrXorCodeGen:
         """Generate instructions for ``return 3 <op> 5;`` with two constants."""
         return generate(_binary_tac_program(op, tac.Constant(3), tac.Constant(5))).function.instructions
 
-    def test_bitwise_and_uses_and_operator(self) -> None:
-        """``tac.BitwiseAnd`` lowers to an ``asm.Binary`` with ``asm.And``."""
-        instrs = self._instructions(tac.BitwiseAnd())
-        binary = next(i for i in instrs if isinstance(i, asm.Binary))
-        assert isinstance(binary.operator, asm.And)
-
-    def test_bitwise_or_uses_or_operator(self) -> None:
-        """``tac.BitwiseOr`` lowers to an ``asm.Binary`` with ``asm.Or``."""
-        instrs = self._instructions(tac.BitwiseOr())
-        binary = next(i for i in instrs if isinstance(i, asm.Binary))
-        assert isinstance(binary.operator, asm.Or)
-
-    def test_bitwise_xor_uses_xor_operator(self) -> None:
-        """``tac.BitwiseXor`` lowers to an ``asm.Binary`` with ``asm.Xor``."""
-        instrs = self._instructions(tac.BitwiseXor())
-        binary = next(i for i in instrs if isinstance(i, asm.Binary))
-        assert isinstance(binary.operator, asm.Xor)
-
-    def test_bitwise_and_result_via_r11(self) -> None:
-        """The ``asm.Binary`` dst is ``%r11d`` and its result is moved to the TAC destination."""
-        instrs = self._instructions(tac.BitwiseAnd())
-        binary = next(i for i in instrs if isinstance(i, asm.Binary))
+    @pytest.mark.parametrize(
+        ("tac_op", "asm_op_type"),
+        [
+            (tac.BitwiseAnd(), asm.And),
+            (tac.BitwiseOr(), asm.Or),
+            (tac.BitwiseXor(), asm.Xor),
+        ],
+        ids=["and", "or", "xor"],
+    )
+    def test_operator_and_r11_routing(self, tac_op: tac.BinaryOperator, asm_op_type: type) -> None:
+        """Each bitwise TAC op lowers to ``asm.Binary`` with the correct operator and ``%r11d`` as dst."""
+        binary = next(i for i in self._instructions(tac_op) if isinstance(i, asm.Binary))
+        assert isinstance(binary.operator, asm_op_type)
         assert binary.dst == asm.Register(asm.Registers.R11)
 
-    def test_bitwise_and_emit(self) -> None:
-        """``asm.Binary(And, Imm(3), Imm(5), R11)`` emits the correct two-line sequence."""
-        instr = asm.Binary(
-            operator=asm.And(),
-            src1=asm.Imm(3),
-            src2=asm.Imm(5),
-            dst=asm.Register(asm.Registers.R11),
-        )
-        assert instr.emit() == "  movl $3, %r11d\n  andl $5, %r11d"
-
-    def test_bitwise_or_emit(self) -> None:
-        """``asm.Binary(Or, ...)`` emits ``orl``."""
-        instr = asm.Binary(
-            operator=asm.Or(),
-            src1=asm.Imm(4),
-            src2=asm.Imm(2),
-            dst=asm.Register(asm.Registers.R11),
-        )
-        assert instr.emit() == "  movl $4, %r11d\n  orl $2, %r11d"
-
-    def test_bitwise_xor_emit(self) -> None:
-        """``asm.Binary(Xor, ...)`` emits ``xorl``."""
-        instr = asm.Binary(
-            operator=asm.Xor(),
-            src1=asm.Imm(6),
-            src2=asm.Imm(3),
-            dst=asm.Register(asm.Registers.R11),
-        )
-        assert instr.emit() == "  movl $6, %r11d\n  xorl $3, %r11d"
+    @pytest.mark.parametrize(
+        ("op", "src1", "src2", "expected"),
+        [
+            (asm.And(), 3, 5, "  movl $3, %r11d\n  andl $5, %r11d"),
+            (asm.Or(), 4, 2, "  movl $4, %r11d\n  orl $2, %r11d"),
+            (asm.Xor(), 6, 3, "  movl $6, %r11d\n  xorl $3, %r11d"),
+        ],
+        ids=["and", "or", "xor"],
+    )
+    def test_emit(self, op: asm.BinaryOperator, src1: int, src2: int, expected: str) -> None:
+        """``asm.Binary`` with each bitwise operator emits the correct two-line sequence."""
+        instr = asm.Binary(operator=op, src1=asm.Imm(src1), src2=asm.Imm(src2), dst=asm.Register(asm.Registers.R11))
+        assert instr.emit() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -490,41 +465,37 @@ class TestShiftCodeGen:
     def _instructions(self, op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
         return generate(_shift_tac_program(op, value=8, count=2)).function.instructions
 
-    def test_left_shift_emits_shl_instruction(self) -> None:
-        """``tac.LeftShift`` produces an ``asm.Shl`` instruction."""
-        instrs = self._instructions(tac.LeftShift())
-        assert any(isinstance(i, asm.Shl) for i in instrs)
+    @pytest.mark.parametrize(
+        ("tac_op", "instr_type"),
+        [
+            (tac.LeftShift(), asm.Shl),
+            (tac.RightShift(), asm.Sar),
+        ],
+        ids=["left", "right"],
+    )
+    def test_shift_emits_instruction_routed_through_r11(self, tac_op: tac.BinaryOperator, instr_type: type) -> None:
+        """Each shift direction emits the correct instruction type with ``%r11d`` as its operand."""
+        instrs = self._instructions(tac_op)
+        shift = next(i for i in instrs if isinstance(i, instr_type))
+        assert shift.operand == asm.Register(asm.Registers.R11)
 
-    def test_right_shift_emits_sar_instruction(self) -> None:
-        """``tac.RightShift`` produces an ``asm.Sar`` instruction."""
-        instrs = self._instructions(tac.RightShift())
-        assert any(isinstance(i, asm.Sar) for i in instrs)
-
-    def test_left_shift_routes_value_through_r11(self) -> None:
-        """For a left shift, the value being shifted ends up in ``%r11d`` before the ``Shl``."""
-        instrs = self._instructions(tac.LeftShift())
-        shl = next(i for i in instrs if isinstance(i, asm.Shl))
-        assert shl.operand == asm.Register(asm.Registers.R11)
-
-    def test_right_shift_routes_value_through_r11(self) -> None:
-        """For a right shift, the value being shifted ends up in ``%r11d`` before the ``Sar``."""
-        instrs = self._instructions(tac.RightShift())
-        sar = next(i for i in instrs if isinstance(i, asm.Sar))
-        assert sar.operand == asm.Register(asm.Registers.R11)
+    @pytest.mark.parametrize(
+        ("instr", "expected"),
+        [
+            (asm.Shl(operand=asm.Register(asm.Registers.R11)), "  shll %cl, %r11d"),
+            (asm.Sar(operand=asm.Register(asm.Registers.R11)), "  sarl %cl, %r11d"),
+        ],
+        ids=["shl", "sar"],
+    )
+    def test_shift_emit(self, instr: asm.Instruction, expected: str) -> None:
+        """Shift instructions emit the correct mnemonic with the implicit ``%cl`` count."""
+        assert instr.emit() == expected
 
     def test_shift_count_moved_to_cx(self) -> None:
         """A ``Mov`` to ``%ecx`` (``CX``) appears before ``Shl`` to load the shift count."""
         instrs = self._instructions(tac.LeftShift())
         cx_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == asm.Register(asm.Registers.CX)]
         assert len(cx_movs) == 1
-
-    def test_shl_emit(self) -> None:
-        """``asm.Shl(Register(R11))`` emits ``shll %cl, %r11d``."""
-        assert asm.Shl(operand=asm.Register(asm.Registers.R11)).emit() == "  shll %cl, %r11d"
-
-    def test_sar_emit(self) -> None:
-        """``asm.Sar(Register(R11))`` emits ``sarl %cl, %r11d``."""
-        assert asm.Sar(operand=asm.Register(asm.Registers.R11)).emit() == "  sarl %cl, %r11d"
 
     def test_shl_emit_stack_operand(self) -> None:
         """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` — memory operand is valid."""

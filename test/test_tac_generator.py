@@ -81,34 +81,26 @@ class TestTacGeneratorExistingConstructs:
 # ---------------------------------------------------------------------------
 
 
-class TestTacGeneratorBinaryOperatorMapping:
-    """Each ast binary operator maps to the correct tac binary operator."""
-
-    def _binary_op(self, op: ast.BinaryOperator) -> tac.BinaryOperator:
-        """Translate ``return 1 <op> 2;`` and extract the tac operator."""
-        instrs = _body(ast.Binary(operator=op, left=ast.Constant(value=1), right=ast.Constant(value=2)))
-        assert isinstance(instrs[0], tac.Binary)
-        return instrs[0].operator
-
-    def test_add_maps_to_tac_add(self) -> None:
-        """``ast.Add()`` → ``tac.Add()``."""
-        assert self._binary_op(ast.Add()) == tac.Add()
-
-    def test_subtract_maps_to_tac_subtract(self) -> None:
-        """``ast.Subtract()`` → ``tac.Subtract()``."""
-        assert self._binary_op(ast.Subtract()) == tac.Subtract()
-
-    def test_multiply_maps_to_tac_multiply(self) -> None:
-        """``ast.Multiply()`` → ``tac.Multiply()``."""
-        assert self._binary_op(ast.Multiply()) == tac.Multiply()
-
-    def test_divide_maps_to_tac_divide(self) -> None:
-        """``ast.Divide()`` → ``tac.Divide()``."""
-        assert self._binary_op(ast.Divide()) == tac.Divide()
-
-    def test_remainder_maps_to_tac_remainder(self) -> None:
-        """``ast.Remainder()`` → ``tac.Remainder()``."""
-        assert self._binary_op(ast.Remainder()) == tac.Remainder()
+@pytest.mark.parametrize(
+    ("ast_op", "expected"),
+    [
+        (ast.Add(), tac.Add()),
+        (ast.Subtract(), tac.Subtract()),
+        (ast.Multiply(), tac.Multiply()),
+        (ast.Divide(), tac.Divide()),
+        (ast.Remainder(), tac.Remainder()),
+        (ast.LeftShift(), tac.LeftShift()),
+        (ast.RightShift(), tac.RightShift()),
+        (ast.BitwiseAnd(), tac.BitwiseAnd()),
+        (ast.BitwiseXor(), tac.BitwiseXor()),
+        (ast.BitwiseOr(), tac.BitwiseOr()),
+    ],
+)
+def test_binary_operator_maps_to_tac_operator(ast_op: ast.BinaryOperator, expected: tac.BinaryOperator) -> None:
+    """Each AST binary operator maps to its TAC counterpart as the first instruction's operator."""
+    instrs = _body(ast.Binary(operator=ast_op, left=ast.Constant(value=1), right=ast.Constant(value=2)))
+    assert isinstance(instrs[0], tac.Binary)
+    assert instrs[0].operator == expected
 
 
 # ---------------------------------------------------------------------------
@@ -236,38 +228,3 @@ class TestTacGeneratorErrors:
         exp = ast.Binary(operator=_FakeBinaryOp(), left=ast.Constant(value=1), right=ast.Constant(value=2))
         with pytest.raises(CodeGenerationError):
             generate(_program_returning(exp))
-
-
-# ---------------------------------------------------------------------------
-# Bitwise and shift operator mapping
-# ---------------------------------------------------------------------------
-
-
-class TestTacGeneratorBitwiseOperatorMapping:
-    """Each bitwise / shift AST binary operator maps to the correct TAC operator."""
-
-    def _binary_op(self, op: ast.BinaryOperator) -> tac.BinaryOperator:
-        """Translate ``return 1 <op> 2;`` and extract the tac operator."""
-        instrs = _body(ast.Binary(operator=op, left=ast.Constant(value=1), right=ast.Constant(value=2)))
-        assert isinstance(instrs[0], tac.Binary)
-        return instrs[0].operator
-
-    def test_left_shift_maps_to_tac_left_shift(self) -> None:
-        """``ast.LeftShift()`` → ``tac.LeftShift()``."""
-        assert self._binary_op(ast.LeftShift()) == tac.LeftShift()
-
-    def test_right_shift_maps_to_tac_right_shift(self) -> None:
-        """``ast.RightShift()`` → ``tac.RightShift()``."""
-        assert self._binary_op(ast.RightShift()) == tac.RightShift()
-
-    def test_bitwise_and_maps_to_tac_bitwise_and(self) -> None:
-        """``ast.BitwiseAnd()`` → ``tac.BitwiseAnd()``."""
-        assert self._binary_op(ast.BitwiseAnd()) == tac.BitwiseAnd()
-
-    def test_bitwise_xor_maps_to_tac_bitwise_xor(self) -> None:
-        """``ast.BitwiseXor()`` → ``tac.BitwiseXor()``."""
-        assert self._binary_op(ast.BitwiseXor()) == tac.BitwiseXor()
-
-    def test_bitwise_or_maps_to_tac_bitwise_or(self) -> None:
-        """``ast.BitwiseOr()`` → ``tac.BitwiseOr()``."""
-        assert self._binary_op(ast.BitwiseOr()) == tac.BitwiseOr()
