@@ -33,12 +33,12 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     # Shift operators must precede any future single < / > relational tokens
     ("LSHIFT", r"<<"),
     ("RSHIFT", r">>"),
-    ("AMPERSAND", r"&"),
     ("CARET", r"\^"),
-    ("PIPE", r"\|"),
     # Logical operators — multi-character tokens must precede their single-char prefixes
     ("AND", r"&&"),
+    ("AMPERSAND", r"&"),
     ("OR", r"\|\|"),
+    ("PIPE", r"\|"),
     ("EQ", r"=="),
     ("NEQ", r"!="),
     ("LEQ", r"<="),

@@ -37,6 +37,15 @@ class Negate(UnaryOperator):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class Not(UnaryOperator):
+    """Enacts logical negation for an expression.
+
+    Attributes:
+        None
+    """
+
+
 class BinaryOperator(ABC):
     """Abstract base for all binary operator nodes.
 
@@ -130,6 +139,78 @@ class BitwiseXor(BinaryOperator):
 @dataclass(frozen=True, slots=True)
 class BitwiseOr(BinaryOperator):
     """Bitwise OR of two expressions (``|``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class And(BinaryOperator):
+    """Logical AND of two expressions (``&&``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class Or(BinaryOperator):
+    """Logical OR of two expressions (``||``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class Equal(BinaryOperator):
+    """Logical Equivalence of two expressions (``==``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class NotEqual(BinaryOperator):
+    """Logical Inequivalence of two expressions (``!=``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class LessThan(BinaryOperator):
+    """Logical Precursor of Left Expression (``<``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class LessOrEqual(BinaryOperator):
+    """Logical Precursor or Equivalence of Left Expression (``<=``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class GreaterThan(BinaryOperator):
+    """Logical Procession of right Expression (``>``).
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class GreaterOrEqual(BinaryOperator):
+    """Logical Procession or equivalence of Right Expression (``>=``).
 
     Attributes:
         None

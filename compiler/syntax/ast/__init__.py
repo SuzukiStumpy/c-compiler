@@ -12,9 +12,11 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     exp                 = Constant(int)
                         | Unary(unary_operator, exp)
                         | Binary(binary_operator, exp, exp)
-    unary_operator      = Complement | Negate
+    unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
+                        | And | Or | Equal | NotEqual | LessThan | LessOrEqual
+                        | GreaterThan | GreaterOrEqual
     type                = IntType
 
 Nodes are organised into submodules by logical role:

@@ -8,8 +8,9 @@ which are handled by precedence climbing.  The grammar is:
     statement           ::= "return" exp ";"
     exp                 ::= factor | exp binop exp
     factor              ::= int | unop factor | "(" exp ")"
-    unop                ::= "-" | "~"
+    unop                ::= "-" | "~" | "!"
     binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
+                          | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
     identifier          ::= ? An identifier token ?
     int                 ::= ? A constant token ?
 
@@ -26,15 +27,24 @@ from compiler.syntax.ast import Constant, Exp, Function, IntType, Parameter, Pro
 from compiler.syntax.ast.expressions import Binary, Unary
 from compiler.syntax.ast.operators import (
     Add,
+    And,
     BinaryOperator,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
     Complement,
     Divide,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
     LeftShift,
+    LessOrEqual,
+    LessThan,
     Multiply,
     Negate,
+    Not,
+    NotEqual,
+    Or,
     Remainder,
     RightShift,
     Subtract,
@@ -47,9 +57,17 @@ from compiler.utils.exceptions import ParseError
 # Higher values bind more tightly.  Operators absent from this table are not
 # binary operators and will terminate the climbing loop.
 _BINARY_PRECEDENCE: dict[TokenType, int] = {
+    TokenType.OR: 5,
+    TokenType.AND: 10,
     TokenType.PIPE: 15,
     TokenType.CARET: 20,
     TokenType.AMPERSAND: 25,
+    TokenType.EQ: 30,
+    TokenType.NEQ: 30,
+    TokenType.LT: 35,
+    TokenType.LEQ: 35,
+    TokenType.GT: 35,
+    TokenType.GEQ: 35,
     TokenType.PLUS: 45,
     TokenType.MINUS: 45,
     TokenType.LSHIFT: 40,
@@ -358,6 +376,8 @@ class Parser:
                 return Complement()
             case TokenType.MINUS:
                 return Negate()
+            case TokenType.NOT:
+                return Not()
             case _:
                 raise self._token_error("Syntax Error: Expected a unary operator token.", token)
 
@@ -392,6 +412,22 @@ class Parser:
                 return BitwiseXor()
             case TokenType.PIPE:
                 return BitwiseOr()
+            case TokenType.AND:
+                return And()
+            case TokenType.OR:
+                return Or()
+            case TokenType.EQ:
+                return Equal()
+            case TokenType.NEQ:
+                return NotEqual()
+            case TokenType.LT:
+                return LessThan()
+            case TokenType.LEQ:
+                return LessOrEqual()
+            case TokenType.GT:
+                return GreaterThan()
+            case TokenType.GEQ:
+                return GreaterOrEqual()
             case _:
                 raise self._token_error("expected a binary operator", token)
 
@@ -439,7 +475,7 @@ class Parser:
         match token.type:
             case TokenType.NUMBER:
                 return self._parse_constant()
-            case TokenType.BITWISE_NOT | TokenType.MINUS:
+            case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT:
                 operator = self._parse_unaryop()
                 inner_exp = self._parse_factor()
                 return Unary(operator, inner_exp)
