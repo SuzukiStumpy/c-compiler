@@ -41,6 +41,16 @@ class TokenType(Enum):
     AMPERSAND = auto()  # &
     CARET = auto()  # ^
     PIPE = auto()  # |
+    # Logical Operator Tokens
+    NOT = auto()  # !
+    AND = auto()  # &&
+    OR = auto()  # ||
+    EQ = auto()  # ==
+    NEQ = auto()  # !=
+    LT = auto()  # <
+    GT = auto()  # >
+    LEQ = auto()  # <=
+    GEQ = auto()  # >=
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,8 +23,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     # Boolan Operations
     ("BITWISE_NOT", r"~"),
     # Unary Operators
-    ("MINUS", r"-"),  # This is also a binary operator, which we disambiguate in the parser
     ("DECREMENT", r"--"),
+    ("MINUS", r"-"),  # This is also a binary operator, which we disambiguate in the parser
     # Binary Operators
     ("PLUS", r"\+"),
     ("TIMES", r"\*"),
@@ -36,6 +36,16 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("AMPERSAND", r"&"),
     ("CARET", r"\^"),
     ("PIPE", r"\|"),
+    # Logical operators — multi-character tokens must precede their single-char prefixes
+    ("AND", r"&&"),
+    ("OR", r"\|\|"),
+    ("EQ", r"=="),
+    ("NEQ", r"!="),
+    ("LEQ", r"<="),
+    ("GEQ", r">="),
+    ("NOT", r"!"),
+    ("LT", r"<"),
+    ("GT", r">"),
 ]
 
 _TOKEN_REGEX = re.compile(
