@@ -26,7 +26,10 @@ Nodes are organised into submodules by logical role:
     statements   — Statement nodes (Statement, Return)
     declarations — Program structure nodes (Parameter, Function, Program)
     operators    — Operators which act upon expressions
-                   (Complement, Negate, Add, Subtract, Multiply, Divide, Remainder)
+                   (Complement, Negate, Not, Add, Subtract, Multiply, Divide, Remainder,
+                   LeftShift, RightShift, BitwiseAnd, BitwiseXor, BitwiseOr,
+                   And, Or, Equal, NotEqual, LessThan, LessOrEqual,
+                   GreaterThan, GreaterOrEqual)
 
 All node types are re-exported from this package so callers can import directly
 from ``compiler.syntax.ast`` without knowing which submodule a type lives in::
@@ -42,15 +45,24 @@ from compiler.syntax.ast.declarations import Function, Parameter, Program
 from compiler.syntax.ast.expressions import Binary, Constant, Exp, Unary
 from compiler.syntax.ast.operators import (
     Add,
+    And,
     BinaryOperator,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
     Complement,
     Divide,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
     LeftShift,
+    LessOrEqual,
+    LessThan,
     Multiply,
     Negate,
+    Not,
+    NotEqual,
+    Or,
     Remainder,
     RightShift,
     Subtract,
@@ -77,6 +89,7 @@ __all__ = [
     "pretty_print",
     "Complement",
     "Negate",
+    "Not",
     "Add",
     "Subtract",
     "Multiply",
@@ -87,4 +100,12 @@ __all__ = [
     "BitwiseAnd",
     "BitwiseXor",
     "BitwiseOr",
+    "And",
+    "Or",
+    "Equal",
+    "NotEqual",
+    "LessThan",
+    "LessOrEqual",
+    "GreaterThan",
+    "GreaterOrEqual",
 ]

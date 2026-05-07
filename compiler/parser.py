@@ -23,20 +23,23 @@ other pipeline stages.
 
 from pathlib import Path
 
-from compiler.syntax.ast import Constant, Exp, Function, IntType, Parameter, Program, Return, Statement, Type
-from compiler.syntax.ast.expressions import Binary, Unary
-from compiler.syntax.ast.operators import (
+from compiler.syntax.ast import (
     Add,
     And,
+    Binary,
     BinaryOperator,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
     Complement,
+    Constant,
     Divide,
     Equal,
+    Exp,
+    Function,
     GreaterOrEqual,
     GreaterThan,
+    IntType,
     LeftShift,
     LessOrEqual,
     LessThan,
@@ -45,9 +48,15 @@ from compiler.syntax.ast.operators import (
     Not,
     NotEqual,
     Or,
+    Parameter,
+    Program,
     Remainder,
+    Return,
     RightShift,
+    Statement,
     Subtract,
+    Type,
+    Unary,
     UnaryOperator,
 )
 from compiler.types.tokens import Token, TokenType
