@@ -36,7 +36,7 @@ def _program_returning(exp: ast.Exp) -> ast.Program:
                 return_type=ast.IntType(),
                 name="main",
                 params=(),
-                body=(ast.Return(exp=exp),),
+                body=(ast.S(statement=ast.Return(exp=exp)),),
             ),
         )
     )

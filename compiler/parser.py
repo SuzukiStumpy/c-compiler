@@ -178,6 +178,35 @@ class Parser:
             )
         return self._consume()
 
+    def _match(self, token_type: TokenType) -> bool:
+        """Return ``True`` if the next token's type matches ``token_type``.
+
+        Does not consume the token. Returns ``False`` at end of stream.
+
+        Args:
+            token_type: The token type to test against.
+
+        Returns:
+            ``True`` when the next token has the given type, ``False`` otherwise.
+        """
+        token = self._peek()
+        return token is not None and token.type == token_type
+
+    def _get_precedence(self) -> int | None:
+        """Return the binary-operator precedence of the next token, or ``None``.
+
+        Looks up the next token's type in ``_BINARY_PRECEDENCE``. Returns
+        ``None`` if the stream is exhausted or the token is not a binary
+        operator.
+
+        Returns:
+            An integer precedence level, or ``None``.
+        """
+        token = self._peek()
+        if token is None:
+            return None
+        return _BINARY_PRECEDENCE.get(token.type)
+
     def _at_end(self) -> bool:
         """Return ``True`` if all tokens have been consumed.
 
@@ -385,7 +414,7 @@ class Parser:
         self._expect(TokenType.INT)
         name_token = self._expect(TokenType.IDENTIFIER)
         init: Exp | None = None
-        if self._peek() is not None and self._peek().type == TokenType.ASSIGNMENT:  # type: ignore[union-attr]
+        if self._match(TokenType.ASSIGNMENT):
             self._consume()
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
@@ -518,9 +547,9 @@ class Parser:
             An ``Exp`` node.
         """
         left: Exp = self._parse_factor()
-        prec = _BINARY_PRECEDENCE.get(self._peek().type) if self._peek() is not None else None
+        prec = self._get_precedence()
         while prec is not None and prec >= min_prec:
-            if self._peek() is not None and self._peek().type == TokenType.ASSIGNMENT:  # type: ignore[union-attr]
+            if self._match(TokenType.ASSIGNMENT):
                 self._consume()
                 right = self._parse_exp(prec)  # right-associative
                 left = Assignment(left, right)
@@ -528,7 +557,7 @@ class Parser:
                 op = self._parse_binop()
                 right = self._parse_exp(prec + 1)  # left-associative
                 left = Binary(op, left, right)
-            prec = _BINARY_PRECEDENCE.get(self._peek().type) if self._peek() is not None else None
+            prec = self._get_precedence()
         return left
 
     def _parse_factor(self) -> Exp:

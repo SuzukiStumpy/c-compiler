@@ -171,12 +171,32 @@ class _TacGenerator:
             A ``tac.Function`` with the same name and a flattened instruction body.
 
         Raises:
-            CodeGenerationError: If any statement in the body cannot be translated.
+            CodeGenerationError: If any block item in the body cannot be translated.
         """
         instructions: list[tac.Instruction] = []
-        for stmt in function.body:
-            instructions.extend(self.translate_statement(stmt))
+        for item in function.body:
+            instructions.extend(self.translate_block_item(item))
         return tac.Function(name=function.name, body=tuple(instructions))
+
+    def translate_block_item(self, item: ast.BlockItem) -> list[tac.Instruction]:
+        """Translate a single block item into a sequence of TAC instructions.
+
+        Args:
+            item: The block item node to translate.
+
+        Returns:
+            A list of ``tac.Instruction`` nodes equivalent to the block item.
+
+        Raises:
+            CodeGenerationError: If the block item variant is not supported.
+        """
+        match item:
+            case ast.S(statement=stmt):
+                return self.translate_statement(stmt)
+            case ast.D():
+                raise CodeGenerationError("variable declarations are not yet supported in TAC generation")
+            case _:
+                raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 
     def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:
         """Translate a single AST statement into a sequence of TAC instructions.
