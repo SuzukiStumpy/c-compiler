@@ -4,10 +4,14 @@ The parser uses recursive descent for all constructs except binary expressions,
 which are handled by precedence climbing.  The grammar is:
 
     program             ::= function
-    function            ::= "int" identifier "(" "void" ")" "{" statement "}"
+    function            ::= "int" identifier "(" "void" ")" "{" block_item* "}"
+    block_item          ::= statement | declaration
+    declaration         ::= "int" identifier [ "=" exp ] ";"
     statement           ::= "return" exp ";"
-    exp                 ::= factor | exp binop exp
-    factor              ::= int | unop factor | "(" exp ")"
+                          | exp ";"
+                          | ";"
+    exp                 ::= factor | exp binop exp | exp "=" exp
+    factor              ::= int | identifier | unop factor | "(" exp ")"
     unop                ::= "-" | "~" | "!"
     binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
                           | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
@@ -16,7 +20,8 @@ which are handled by precedence climbing.  The grammar is:
 
 Each grammar rule (except ``exp``) maps directly to a private ``_parse_*``
 method on ``Parser``.  ``_parse_exp`` implements precedence climbing so that
-operator associativity and precedence are handled without ambiguity.
+operator associativity and precedence are handled without ambiguity; assignment
+is right-associative at the lowest precedence level.
 The public ``parse()`` function is the only entry point intended for use by
 other pipeline stages.
 """
@@ -26,16 +31,21 @@ from pathlib import Path
 from compiler.syntax.ast import (
     Add,
     And,
+    Assignment,
     Binary,
     BinaryOperator,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    BlockItem,
     Complement,
     Constant,
+    D,
+    Declaration,
     Divide,
     Equal,
     Exp,
+    Expression,
     Function,
     GreaterOrEqual,
     GreaterThan,
@@ -47,17 +57,20 @@ from compiler.syntax.ast import (
     Negate,
     Not,
     NotEqual,
+    Null,
     Or,
     Parameter,
     Program,
     Remainder,
     Return,
     RightShift,
+    S,
     Statement,
     Subtract,
     Type,
     Unary,
     UnaryOperator,
+    Var,
 )
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
@@ -66,6 +79,7 @@ from compiler.utils.exceptions import ParseError
 # Higher values bind more tightly.  Operators absent from this table are not
 # binary operators and will terminate the climbing loop.
 _BINARY_PRECEDENCE: dict[TokenType, int] = {
+    TokenType.ASSIGNMENT: 1,
     TokenType.OR: 5,
     TokenType.AND: 10,
     TokenType.PIPE: 15,
@@ -248,7 +262,7 @@ class Parser:
         Grammar::
 
             function_definition = Function(type return_type, identifier name,
-                                           parameter* params, statement+ body)
+                                           parameter* params, block_item* body)
 
         Returns:
             A ``Function`` node.
@@ -313,37 +327,78 @@ class Parser:
         name_token = self._expect(TokenType.IDENTIFIER)
         return Parameter(param_type=param_type, name=name_token.value)
 
-    def _parse_body(self) -> tuple[Statement, ...]:
-        """Parse the statement sequence forming a function body.
+    def _parse_body(self) -> tuple[BlockItem, ...]:
+        """Parse the block-item sequence forming a function body.
 
-        Consumes statements until a ``RBRACE`` is reached. At least one
-        statement is required by the grammar.
+        Consumes block items (statements and declarations interleaved) until a
+        ``RBRACE`` is reached.
 
         Returns:
-            A non-empty tuple of ``Statement`` nodes.
+            A tuple of ``BlockItem`` nodes (possibly empty).
 
         Raises:
-            ParseError: If the body contains no statements, or if any
-                statement is malformed.
+            ParseError: If the stream ends before ``}`` is found, or if any
+                block item is malformed.
         """
-        statements: list[Statement] = []
+        items: list[BlockItem] = []
         while True:
             token = self._peek()
             if token is None:
                 raise self._eof_error("expected '}', got end of input")
             if token.type == TokenType.RBRACE:
                 break
-            statements.append(self._parse_statement())
-        if not statements:
-            token = self._peek()
-            assert token is not None
-            raise self._token_error("function body must contain at least one statement", token)
-        return tuple(statements)
+            items.append(self._parse_block_item())
+        return tuple(items)
+
+    def _parse_block_item(self) -> BlockItem:
+        """Parse a single block item: either a declaration or a statement.
+
+        A declaration begins with a type keyword (currently only ``int``);
+        everything else is treated as a statement.
+
+        Returns:
+            A ``D`` node wrapping a ``Declaration``, or an ``S`` node wrapping
+            a ``Statement``.
+
+        Raises:
+            ParseError: If the item is malformed.
+        """
+        token = self._peek()
+        if token is not None and token.type == TokenType.INT:
+            return D(declaration=self._parse_declaration())
+        return S(statement=self._parse_statement())
+
+    def _parse_declaration(self) -> Declaration:
+        """Parse a variable declaration, with an optional initialiser.
+
+        Grammar::
+
+            declaration ::= "int" identifier [ "=" exp ] ";"
+
+        Returns:
+            A ``Declaration`` node.
+
+        Raises:
+            ParseError: If the identifier or semicolon is missing, or if the
+                initialiser expression is malformed.
+        """
+        self._expect(TokenType.INT)
+        name_token = self._expect(TokenType.IDENTIFIER)
+        init: Exp | None = None
+        if self._peek() is not None and self._peek().type == TokenType.ASSIGNMENT:  # type: ignore[union-attr]
+            self._consume()
+            init = self._parse_exp()
+        self._expect(TokenType.SEMICOLON)
+        return Declaration(name=name_token.value, init=init)
 
     def _parse_statement(self) -> Statement:
         """Parse a single statement.
 
-        Currently only ``return`` statements are supported.
+        Grammar::
+
+            statement ::= "return" exp ";"
+                        | exp ";"
+                        | ";"
 
         Returns:
             A ``Statement`` node.
@@ -356,7 +411,12 @@ class Parser:
             raise self._eof_error("expected a statement, got end of input")
         if token.type == TokenType.RETURN:
             return self._parse_return()
-        raise self._token_error(f"expected a statement, got {token.type.name} '{token.value}'", token)
+        if token.type == TokenType.SEMICOLON:
+            self._consume()
+            return Null()
+        exp = self._parse_exp()
+        self._expect(TokenType.SEMICOLON)
+        return Expression(exp=exp)
 
     def _parse_return(self) -> Return:
         """Parse a ``return <exp>;`` statement.
@@ -444,8 +504,11 @@ class Parser:
         """Parse an expression using precedence climbing.
 
         Parses a left-hand ``factor``, then repeatedly folds in any following
-        binary operator whose precedence is at least ``min_prec``, recursing
-        with ``precedence + 1`` to enforce left-associativity.
+        binary operator whose precedence is at least ``min_prec``. Binary
+        operators recurse with ``precedence + 1`` for left-associativity;
+        assignment (``=``) recurses with the same precedence level for
+        right-associativity and produces an ``Assignment`` node rather than a
+        ``Binary`` node.
 
         Args:
             min_prec: Minimum operator precedence to consume at this level.
@@ -457,9 +520,14 @@ class Parser:
         left: Exp = self._parse_factor()
         prec = _BINARY_PRECEDENCE.get(self._peek().type) if self._peek() is not None else None
         while prec is not None and prec >= min_prec:
-            op = self._parse_binop()
-            right = self._parse_exp(prec + 1)
-            left = Binary(op, left, right)
+            if self._peek() is not None and self._peek().type == TokenType.ASSIGNMENT:  # type: ignore[union-attr]
+                self._consume()
+                right = self._parse_exp(prec)  # right-associative
+                left = Assignment(left, right)
+            else:
+                op = self._parse_binop()
+                right = self._parse_exp(prec + 1)  # left-associative
+                left = Binary(op, left, right)
             prec = _BINARY_PRECEDENCE.get(self._peek().type) if self._peek() is not None else None
         return left
 
@@ -484,6 +552,9 @@ class Parser:
         match token.type:
             case TokenType.NUMBER:
                 return self._parse_constant()
+            case TokenType.IDENTIFIER:
+                self._consume()
+                return Var(name=token.value)
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT:
                 operator = self._parse_unaryop()
                 inner_exp = self._parse_factor()

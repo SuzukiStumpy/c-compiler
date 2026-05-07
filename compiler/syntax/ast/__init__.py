@@ -6,19 +6,22 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
 
     program             = Program(function_definition+)
     function_definition = Function(type return_type, identifier name,
-                                   parameter* params, statement+ body)
+                                   parameter* params, block_item* body)
     parameter           = Parameter(type param_type, identifier name)
-    statement           = Return(exp)
+    statement           = Return(exp) | Expression(exp) | Null
+    declaration         = Declaration(identifier name, exp? init)
     exp                 = Constant(int)
+                        | Var(identifier)
                         | Unary(unary_operator, exp)
                         | Binary(binary_operator, exp, exp)
+                        | Assignment(exp, exp)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
                         | And | Or | Equal | NotEqual | LessThan | LessOrEqual
                         | GreaterThan | GreaterOrEqual
     type                = IntType
-
+    block_item          = S(statement) | D(declaration)
 Nodes are organised into submodules by logical role:
 
     types        — C type nodes (Type, IntType)
@@ -41,8 +44,8 @@ variant is a concrete frozen dataclass subclassing the appropriate base. All
 nodes are immutable — once constructed an AST node cannot be modified.
 """
 
-from compiler.syntax.ast.declarations import Function, Parameter, Program
-from compiler.syntax.ast.expressions import Binary, Constant, Exp, Unary
+from compiler.syntax.ast.declarations import BlockItem, D, Declaration, Function, Parameter, Program, S
+from compiler.syntax.ast.expressions import Assignment, Binary, Constant, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
     And,
@@ -69,10 +72,14 @@ from compiler.syntax.ast.operators import (
     UnaryOperator,
 )
 from compiler.syntax.ast.pretty_print import pretty_print
-from compiler.syntax.ast.statements import Return, Statement
+from compiler.syntax.ast.statements import Expression, Null, Return, Statement
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "Expression",
+    "Null",
+    "Var",
+    "Assignment",
     "Type",
     "IntType",
     "Exp",
@@ -83,6 +90,10 @@ __all__ = [
     "BinaryOperator",
     "Statement",
     "Return",
+    "BlockItem",
+    "S",
+    "D",
+    "Declaration",
     "Parameter",
     "Function",
     "Program",

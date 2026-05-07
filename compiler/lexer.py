@@ -20,8 +20,13 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LBRACE", r"\{"),
     ("RBRACE", r"\}"),
     ("SEMICOLON", r";"),
+    # Multi-char tokens containing '=' must precede the single '=' ASSIGNMENT token
+    ("EQ", r"=="),
+    ("NEQ", r"!="),
+    ("LEQ", r"<="),
+    ("GEQ", r">="),
     ("ASSIGNMENT", r"\="),
-    # Boolan Operations
+    # Boolean Operations
     ("BITWISE_NOT", r"~"),
     # Unary Operators
     ("DECREMENT", r"--"),
@@ -43,10 +48,6 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("AMPERSAND", r"&"),
     ("OR", r"\|\|"),
     ("PIPE", r"\|"),
-    ("EQ", r"=="),
-    ("NEQ", r"!="),
-    ("LEQ", r"<="),
-    ("GEQ", r">="),
     ("NOT", r"!"),
     ("LT", r"<"),
     ("GT", r">"),

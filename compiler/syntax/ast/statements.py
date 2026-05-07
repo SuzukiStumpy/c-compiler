@@ -31,3 +31,19 @@ class Return(Statement):
     """
 
     exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class Expression(Statement):
+    """An expression statement (ie: an expression which doesn't return a value)
+
+    Attributes:
+        exp: The expression contained within the statement
+    """
+
+    exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class Null(Statement):
+    """An empty statement for when a placeholder is needed in the source."""

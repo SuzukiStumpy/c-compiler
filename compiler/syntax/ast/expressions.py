@@ -34,6 +34,17 @@ class Constant(Exp):
 
 
 @dataclass(frozen=True, slots=True)
+class Var(Exp):
+    """A named variable in the program.
+
+    Attributes:
+        name: The name of the variable.
+    """
+
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class Unary(Exp):
     """A unary operator expression.
 
@@ -59,3 +70,16 @@ class Binary(Exp):
     operator: BinaryOperator
     left: Exp
     right: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class Assignment(Exp):
+    """An assignment expression.
+
+    Attributes:
+        lvalue: The left side of the assignment (ie: the thing being assigned to)
+        rvalue: The expression that we're assiging to the lvalue.
+    """
+
+    lvalue: Exp
+    rvalue: Exp

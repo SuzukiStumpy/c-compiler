@@ -3,12 +3,17 @@
 Covers the full range of constructs supported by the current grammar:
 
     program             ::= function
-    function            ::= "int" identifier "(" "void" ")" "{" statement "}"
+    function            ::= "int" identifier "(" "void" ")" "{" block_item* "}"
+    block_item          ::= statement | declaration
+    declaration         ::= "int" identifier [ "=" exp ] ";"
     statement           ::= "return" exp ";"
-    exp                 ::= factor | exp binop exp
-    factor              ::= int | unop factor | "(" exp ")"
-    unop                ::= "-" | "~"
+                          | exp ";"
+                          | ";"
+    exp                 ::= factor | exp binop exp | exp "=" exp
+    factor              ::= int | identifier | unop factor | "(" exp ")"
+    unop                ::= "-" | "~" | "!"
     binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
+                          | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
     identifier          ::= ? An identifier token ?
     int                 ::= ? A constant token ?
 
@@ -19,7 +24,7 @@ parser behaviour is tested in isolation from lexer behaviour.
 import pytest
 
 from compiler.parser import parse
-from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return
+from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return, S
 from compiler.syntax.ast.expressions import Binary, Exp, Unary
 from compiler.syntax.ast.operators import (
     Add,
@@ -125,9 +130,10 @@ def _parsed_exp(*exp_tokens: Token) -> Exp:
     """
     tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, *exp_tokens, _SEMICOLON, _RBRACE]
     result = parse(tokens)
-    stmt = result.functions[0].body[0]
-    assert isinstance(stmt, Return)
-    return stmt.exp
+    item = result.functions[0].body[0]
+    assert isinstance(item, S)
+    assert isinstance(item.statement, Return)
+    return item.statement.exp
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +154,7 @@ class TestValidPrograms:
                     return_type=IntType(),
                     name="main",
                     params=(),
-                    body=(Return(exp=Constant(value=0)),),
+                    body=(S(statement=Return(exp=Constant(value=0))),),
                 ),
             )
         )
@@ -164,7 +170,7 @@ class TestValidPrograms:
         """``return 42;`` produces a ``Constant`` with the correct integer value."""
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("42"), _SEMICOLON, _RBRACE]
         result = parse(tokens)
-        assert result.functions[0].body == (Return(exp=Constant(value=42)),)
+        assert result.functions[0].body == (S(statement=Return(exp=Constant(value=42))),)
 
     def test_single_int_parameter(self) -> None:
         """``int foo(int x) { return x; }`` — wait, no variable references yet.
@@ -218,8 +224,8 @@ class TestValidPrograms:
         ]
         result = parse(tokens)
         assert result.functions[0].body == (
-            Return(exp=Constant(value=1)),
-            Return(exp=Constant(value=2)),
+            S(statement=Return(exp=Constant(value=1))),
+            S(statement=Return(exp=Constant(value=2))),
         )
 
 
@@ -261,10 +267,10 @@ class TestParseErrors:
             parse(tokens)
 
     def test_empty_function_body(self) -> None:
-        """``int main(void) {}`` — body with no statements is rejected."""
+        """``int main(void) {}`` — empty body is valid; produces an empty block-item tuple."""
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RBRACE]
-        with pytest.raises(ParseError, match="at least one statement"):
-            parse(tokens)
+        result = parse(tokens)
+        assert result.functions[0].body == ()
 
     def test_missing_semicolon(self) -> None:
         """``return 0 }`` — missing semicolon after expression."""
@@ -279,8 +285,8 @@ class TestParseErrors:
             parse(tokens)
 
     def test_non_number_expression(self) -> None:
-        """``return main;`` — IDENTIFIER is not a valid expression."""
-        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _ident("main"), _SEMICOLON, _RBRACE]
+        """``return );`` — RPAREN is not a valid expression start."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _RPAREN, _SEMICOLON, _RBRACE]
         with pytest.raises(ParseError, match="Malformed expression."):
             parse(tokens)
 
