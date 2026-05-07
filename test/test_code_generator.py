@@ -523,3 +523,232 @@ def test_unsupported_instruction_raises_codegen_error() -> None:
     )
     with pytest.raises(CodeGenerationError):
         generate(program)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for relational / jump / label tests
+# ---------------------------------------------------------------------------
+
+
+def _relational_tac_program(
+    op: tac.BinaryOperator,
+    src1: tac.Val | None = None,
+    src2: tac.Val | None = None,
+) -> tac.Program:
+    """Build a ``tac.Program`` that evaluates ``src1 <op> src2`` and returns the result.
+
+    Args:
+        op: A relational binary operator (Equal, NotEqual, LessThan, etc.).
+        src1: Left operand; defaults to ``Constant(1)``.
+        src2: Right operand; defaults to ``Constant(2)``.
+
+    Returns:
+        A ``tac.Program`` whose sole function returns 0 or 1 based on the comparison.
+    """
+    return tac.Program(
+        function=tac.Function(
+            name="main",
+            body=(
+                tac.Binary(
+                    operator=op,
+                    src1=src1 if src1 is not None else tac.Constant(value=1),
+                    src2=src2 if src2 is not None else tac.Constant(value=2),
+                    dst=tac.Var(value="tmp.0"),
+                ),
+                tac.Return(val=tac.Var(value="tmp.0")),
+            ),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Relational operator code generation
+# ---------------------------------------------------------------------------
+
+
+class TestRelationalCodeGen:
+    """Relational TAC operators lower to ``Cmp + Mov(0, dst) + SetCC``."""
+
+    @pytest.mark.parametrize(
+        ("tac_op", "expected_cc"),
+        [
+            (tac.Equal(), asm.CondCodes.E),
+            (tac.NotEqual(), asm.CondCodes.NE),
+            (tac.LessThan(), asm.CondCodes.L),
+            (tac.LessOrEqual(), asm.CondCodes.LE),
+            (tac.GreaterThan(), asm.CondCodes.G),
+            (tac.GreaterOrEqual(), asm.CondCodes.GE),
+        ],
+        ids=["eq", "ne", "lt", "le", "gt", "ge"],
+    )
+    def test_relational_op_maps_to_correct_cond_code(
+        self, tac_op: tac.BinaryOperator, expected_cc: asm.CondCodes
+    ) -> None:
+        """Each relational TAC operator produces a ``SetCC`` with the matching condition code."""
+        result = generate(_relational_tac_program(tac_op))
+        setcc = next(i for i in result.function.instructions if isinstance(i, asm.SetCC))
+        assert setcc.cond_code == expected_cc
+
+    def test_relational_emits_cmp_instruction(self) -> None:
+        """A relational binary op always produces a ``Cmp`` instruction."""
+        result = generate(_relational_tac_program(tac.Equal()))
+        assert any(isinstance(i, asm.Cmp) for i in result.function.instructions)
+
+    def test_relational_zeroes_destination_before_setcc(self) -> None:
+        """``Mov(Imm(0), dst)`` immediately precedes ``SetCC`` in the output."""
+        result = generate(_relational_tac_program(tac.Equal()))
+        instrs = result.function.instructions
+        setcc_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.SetCC))
+        zero_mov = instrs[setcc_idx - 1]
+        assert isinstance(zero_mov, asm.Mov)
+        assert zero_mov.src == asm.Imm(value=0)
+
+    def test_no_pseudo_operands_in_relational_output(self) -> None:
+        """No ``Pseudo`` operands survive into the final output for a relational expression."""
+        result = generate(_relational_tac_program(tac.Equal(), tac.Var("a"), tac.Var("b")))
+        for instr in result.function.instructions:
+            match instr:
+                case asm.Cmp(op1=op1, op2=op2):
+                    assert not isinstance(op1, asm.Pseudo)
+                    assert not isinstance(op2, asm.Pseudo)
+                case asm.SetCC(operand=operand):
+                    assert not isinstance(operand, asm.Pseudo)
+                case asm.Mov(src=src, dst=dst):
+                    assert not isinstance(src, asm.Pseudo)
+                    assert not isinstance(dst, asm.Pseudo)
+
+
+# ---------------------------------------------------------------------------
+# Jump, label, and copy code generation
+# ---------------------------------------------------------------------------
+
+
+class TestJumpAndLabelCodeGen:
+    """``tac.Jump``, ``tac.JumpIfZero``, ``tac.JumpIfNotZero``, ``tac.Label``, and ``tac.Copy`` lowering."""
+
+    def _program(self, *body: tac.Instruction) -> tac.Program:
+        return tac.Program(function=tac.Function(name="main", body=body))
+
+    def test_jump_produces_jmp(self) -> None:
+        """``tac.Jump(target)`` lowers to ``asm.Jmp(label)``."""
+        result = generate(self._program(tac.Jump(target="end"), tac.Return(val=tac.Constant(value=0))))
+        assert any(isinstance(i, asm.Jmp) and i.label == "end" for i in result.function.instructions)
+
+    def test_label_produces_asm_label(self) -> None:
+        """``tac.Label(name)`` lowers to ``asm.Label(name)``."""
+        result = generate(self._program(tac.Label(name="loop"), tac.Return(val=tac.Constant(value=0))))
+        assert any(isinstance(i, asm.Label) and i.name == "loop" for i in result.function.instructions)
+
+    def test_copy_produces_mov(self) -> None:
+        """``tac.Copy(src, dst)`` lowers to a single ``asm.Mov``."""
+        result = generate(
+            self._program(
+                tac.Copy(src=tac.Constant(value=7), dst=tac.Var(value="x")),
+                tac.Return(val=tac.Var(value="x")),
+            )
+        )
+        movs = [i for i in result.function.instructions if isinstance(i, asm.Mov)]
+        assert any(isinstance(m.src, asm.Imm) and m.src.value == 7 for m in movs)
+
+    def test_jump_if_zero_produces_cmp_and_jmpcc_e(self) -> None:
+        """``tac.JumpIfZero`` lowers to ``Cmp(Imm(0), cond), JmpCC(E, target)``."""
+        result = generate(
+            self._program(
+                tac.JumpIfZero(condition=tac.Var(value="x"), target="end"),
+                tac.Return(val=tac.Constant(value=0)),
+            )
+        )
+        jmpcc_instrs = [i for i in result.function.instructions if isinstance(i, asm.JmpCC)]
+        assert len(jmpcc_instrs) == 1
+        assert jmpcc_instrs[0].cond_code == asm.CondCodes.E
+        assert jmpcc_instrs[0].label == "end"
+
+    def test_jump_if_not_zero_produces_jmpcc_ne(self) -> None:
+        """``tac.JumpIfNotZero`` lowers to ``JmpCC(NE, target)``."""
+        result = generate(
+            self._program(
+                tac.JumpIfNotZero(condition=tac.Var(value="x"), target="loop"),
+                tac.Return(val=tac.Constant(value=0)),
+            )
+        )
+        jmpcc_instrs = [i for i in result.function.instructions if isinstance(i, asm.JmpCC)]
+        assert len(jmpcc_instrs) == 1
+        assert jmpcc_instrs[0].cond_code == asm.CondCodes.NE
+        assert jmpcc_instrs[0].label == "loop"
+
+
+# ---------------------------------------------------------------------------
+# Cmp pseudo-register replacement
+# ---------------------------------------------------------------------------
+
+
+class TestCmpPseudoReplacement:
+    """Pseudo operands inside ``Cmp`` and ``SetCC`` are resolved by pseudo-replacement."""
+
+    def test_cmp_operands_resolved_to_stack(self) -> None:
+        """Both operands of every ``Cmp`` instruction are ``Stack`` (not ``Pseudo``) after code gen."""
+        result = generate(_relational_tac_program(tac.Equal(), tac.Var("a"), tac.Var("b")))
+        for instr in result.function.instructions:
+            if isinstance(instr, asm.Cmp):
+                assert not isinstance(instr.op1, asm.Pseudo), "Pseudo survived in Cmp.op1"
+                assert not isinstance(instr.op2, asm.Pseudo), "Pseudo survived in Cmp.op2"
+
+    def test_setcc_operand_resolved(self) -> None:
+        """The operand of every ``SetCC`` instruction is not a ``Pseudo`` after code gen."""
+        result = generate(_relational_tac_program(tac.Equal(), tac.Var("a"), tac.Var("b")))
+        for instr in result.function.instructions:
+            if isinstance(instr, asm.SetCC):
+                assert not isinstance(instr.operand, asm.Pseudo), "Pseudo survived in SetCC.operand"
+
+    def test_jump_if_zero_cmp_operand_resolved(self) -> None:
+        """The ``Cmp(Imm(0), cond)`` emitted for ``JumpIfZero`` has its condition operand resolved."""
+        program = tac.Program(
+            function=tac.Function(
+                name="main",
+                body=(
+                    tac.JumpIfZero(condition=tac.Var(value="x"), target="end"),
+                    tac.Label(name="end"),
+                    tac.Return(val=tac.Constant(value=0)),
+                ),
+            )
+        )
+        result = generate(program)
+        for instr in result.function.instructions:
+            if isinstance(instr, asm.Cmp):
+                assert not isinstance(instr.op1, asm.Pseudo)
+                assert not isinstance(instr.op2, asm.Pseudo)
+
+
+# ---------------------------------------------------------------------------
+# Cmp instruction fixup
+# ---------------------------------------------------------------------------
+
+
+class TestCmpFixup:
+    """``_fix_instructions`` rewrites invalid ``Cmp`` operand combinations."""
+
+    def test_cmp_imm_op2_routed_through_r11(self) -> None:
+        """When ``Cmp`` op2 is an immediate, it is routed through ``%r11d``."""
+        result = generate(_relational_tac_program(tac.Equal()))
+        for instr in result.function.instructions:
+            if isinstance(instr, asm.Cmp):
+                assert not isinstance(instr.op2, asm.Imm), "Imm survived as Cmp.op2 after fixup"
+
+    def test_cmp_stack_stack_routed_through_r10(self) -> None:
+        """When both ``Cmp`` operands are ``Stack``, op1 is routed through ``%r10d``."""
+        result = generate(_relational_tac_program(tac.Equal(), tac.Var("a"), tac.Var("b")))
+        for instr in result.function.instructions:
+            if isinstance(instr, asm.Cmp):
+                assert not (isinstance(instr.op1, asm.Stack) and isinstance(instr.op2, asm.Stack)), (
+                    "Cmp(mem, mem) survived fixup"
+                )
+
+    def test_cmp_stack_imm_imm_case_fires_first(self) -> None:
+        """``Cmp(Stack, Imm)`` is handled by the Imm fixup: op2 goes to ``%r11d``, op1 stays as Stack."""
+        # src1=Constant → Imm becomes op2 of Cmp; src2=Var → Stack becomes op1 of Cmp
+        result = generate(_relational_tac_program(tac.Equal(), tac.Constant(5), tac.Var("b")))
+        cmp_instrs = [i for i in result.function.instructions if isinstance(i, asm.Cmp)]
+        assert len(cmp_instrs) == 1
+        cmp = cmp_instrs[0]
+        assert cmp.op2 == asm.Register(asm.Registers.R11), "op2 should be routed through R11"
+        assert isinstance(cmp.op1, asm.Stack), "op1 (Stack) should be unchanged"

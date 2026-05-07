@@ -7,17 +7,33 @@ operand form supported by the code generator is represented as a subclass of
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, IntEnum
 
 
-class Registers(StrEnum):
-    """Names of the hardware registers used during code generation."""
+class Width(IntEnum):
+    """Byte width of a hardware register access.
 
-    AX = "eax"
-    CX = "ecx"
-    DX = "edx"
-    R10 = "r10d"
-    R11 = "r11d"
+    Used to select the correct register name when a logical register can be
+    addressed at multiple granularities (e.g. ``%eax`` vs ``%al``).
+    """
+
+    BYTE = 1
+    DWORD = 4
+
+
+class Registers(Enum):
+    """Logical hardware registers and their width-specific assembly names.
+
+    Each member's value is a ``{Width: str}`` mapping from access width to the
+    AT&T register name for that width.  Add a new entry to the dict to support
+    additional widths without touching any other code.
+    """
+
+    AX = {Width.DWORD: "eax", Width.BYTE: "al"}
+    CX = {Width.DWORD: "ecx", Width.BYTE: "cl"}
+    DX = {Width.DWORD: "edx", Width.BYTE: "dl"}
+    R10 = {Width.DWORD: "r10d", Width.BYTE: "r10b"}
+    R11 = {Width.DWORD: "r11d", Width.BYTE: "r11b"}
 
 
 class Operand(ABC):
@@ -58,24 +74,26 @@ class Imm(Operand):
 
 @dataclass(frozen=True, slots=True)
 class Register(Operand):
-    """A hardware register operand.
+    """A hardware register operand at a specific byte width.
 
-    Wraps a ``Registers`` enum value so that the specific register (e.g.
-    ``%ax``, ``%r10``) is explicit in the AST rather than hard-coded.
+    Wraps a ``Registers`` enum value and a ``Width`` so that both the logical
+    register and its access size are explicit in the AST.
 
     Attributes:
-        reg: The register to use.
+        reg: The logical register (e.g. ``Registers.AX``).
+        width: The access width; defaults to ``Width.DWORD`` (32-bit).
     """
 
     reg: Registers
+    width: Width = Width.DWORD
 
     def emit(self) -> str:
         """Return the register name in AT&T syntax.
 
         Returns:
-            A string of the form ``%<name>``, e.g. ``%ax`` or ``%r10``.
+            A string of the form ``%<name>``, e.g. ``%eax``, ``%al``, ``%r10b``.
         """
-        return f"%{self.reg.value}"
+        return f"%{self.reg.value[self.width]}"
 
 
 @dataclass(frozen=True, slots=True)

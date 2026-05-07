@@ -9,7 +9,23 @@ from pathlib import Path
 import pytest
 
 from compiler.emitter import emit_program
-from compiler.syntax.asm import Function, Imm, Mov, Program, Register, Registers, Ret
+from compiler.syntax.asm import (
+    Cmp,
+    CondCodes,
+    Function,
+    Imm,
+    Jmp,
+    JmpCC,
+    Label,
+    Mov,
+    Program,
+    Register,
+    Registers,
+    Ret,
+    SetCC,
+    Stack,
+    Width,
+)
 
 # ---------------------------------------------------------------------------
 # Operand emit()
@@ -29,6 +45,38 @@ def test_imm_emit_zero() -> None:
 def test_register_emit() -> None:
     """``Register(Registers.AX).emit()`` produces ``%eax``."""
     assert Register(Registers.AX).emit() == "%eax"
+
+
+@pytest.mark.parametrize(
+    ("reg", "width", "expected"),
+    [
+        (Registers.AX, Width.DWORD, "%eax"),
+        (Registers.AX, Width.BYTE, "%al"),
+        (Registers.CX, Width.DWORD, "%ecx"),
+        (Registers.CX, Width.BYTE, "%cl"),
+        (Registers.DX, Width.DWORD, "%edx"),
+        (Registers.DX, Width.BYTE, "%dl"),
+        (Registers.R10, Width.DWORD, "%r10d"),
+        (Registers.R10, Width.BYTE, "%r10b"),
+        (Registers.R11, Width.DWORD, "%r11d"),
+        (Registers.R11, Width.BYTE, "%r11b"),
+    ],
+    ids=[
+        "ax-dword",
+        "ax-byte",
+        "cx-dword",
+        "cx-byte",
+        "dx-dword",
+        "dx-byte",
+        "r10-dword",
+        "r10-byte",
+        "r11-dword",
+        "r11-byte",
+    ],
+)
+def test_register_emit_all_widths(reg: Registers, width: Width, expected: str) -> None:
+    """``Register.emit()`` returns the correct AT&T name for every register/width combination."""
+    assert Register(reg, width).emit() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -186,3 +234,67 @@ def test_emit_program_bad_path_raises(tmp_path: Path) -> None:
     program = Program(function=Function(name="main", instructions=(Ret(),)))
     with pytest.raises(OSError):
         emit_program(program, tmp_path / "nonexistent_dir" / "out.s", platform="linux")
+
+
+# ---------------------------------------------------------------------------
+# New instruction emit()
+# ---------------------------------------------------------------------------
+
+
+def test_cmp_emit() -> None:
+    """``Cmp`` emits ``  cmpl <op1>, <op2>``."""
+    assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)).emit() == "  cmpl $1, %eax"
+
+
+def test_cmp_emit_memory_operands() -> None:
+    """``Cmp`` with a stack op2 emits the correct memory reference."""
+    assert Cmp(op1=Imm(value=0), op2=Stack(offset=-4)).emit() == "  cmpl $0, -4(%rbp)"
+
+
+def test_jmp_emit() -> None:
+    """``Jmp`` emits ``  jmp .L<label>``."""
+    assert Jmp(label="my_label").emit() == "  jmp .Lmy_label"
+
+
+@pytest.mark.parametrize(
+    ("cond_code", "expected"),
+    [
+        (CondCodes.E, "  je .Lfoo"),
+        (CondCodes.NE, "  jne .Lfoo"),
+        (CondCodes.L, "  jl .Lfoo"),
+        (CondCodes.LE, "  jle .Lfoo"),
+        (CondCodes.G, "  jg .Lfoo"),
+        (CondCodes.GE, "  jge .Lfoo"),
+    ],
+    ids=["e", "ne", "l", "le", "g", "ge"],
+)
+def test_jmpcc_emit(cond_code: CondCodes, expected: str) -> None:
+    """``JmpCC`` emits ``  j<cc> .L<label>`` for every condition code."""
+    assert JmpCC(cond_code=cond_code, label="foo").emit() == expected
+
+
+@pytest.mark.parametrize(
+    ("cond_code", "expected"),
+    [
+        (CondCodes.E, "  sete %al"),
+        (CondCodes.NE, "  setne %al"),
+        (CondCodes.L, "  setl %al"),
+        (CondCodes.LE, "  setle %al"),
+        (CondCodes.G, "  setg %al"),
+        (CondCodes.GE, "  setge %al"),
+    ],
+    ids=["e", "ne", "l", "le", "g", "ge"],
+)
+def test_setcc_emit(cond_code: CondCodes, expected: str) -> None:
+    """``SetCC`` emits ``  set<cc> <operand>`` for every condition code."""
+    assert SetCC(cond_code=cond_code, operand=Register(Registers.AX, Width.BYTE)).emit() == expected
+
+
+def test_setcc_emit_stack_operand() -> None:
+    """``SetCC`` with a stack operand emits the memory reference correctly."""
+    assert SetCC(cond_code=CondCodes.E, operand=Stack(offset=-4)).emit() == "  sete -4(%rbp)"
+
+
+def test_label_emit() -> None:
+    """``Label`` emits ``.L<name>:`` flush with the left margin."""
+    assert Label(name="loop_start").emit() == ".Lloop_start:"

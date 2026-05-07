@@ -103,16 +103,55 @@ def _translate_instruction(instr: tac.Instruction) -> list[asm.Instruction]:
     match instr:
         case tac.Return(val=val):
             return [asm.Mov(src=_translate_val(val), dst=asm.Register(asm.Registers.AX)), asm.Ret()]
-        case tac.Unary(operator=op, src=src, dst=dst):
+        case tac.Jump(target=target):
+            return [asm.Jmp(target)]
+        case tac.JumpIfZero(condition=condition, target=target):
             return [
-                asm.Mov(src=_translate_val(src), dst=_translate_val(dst)),
-                asm.Unary(operator=_translate_unary_op(op), operand=_translate_val(dst)),
+                asm.Cmp(asm.Imm(0), _translate_val(condition)),
+                asm.JmpCC(asm.CondCodes.E, target),
             ]
+        case tac.JumpIfNotZero(condition=condition, target=target):
+            return [
+                asm.Cmp(asm.Imm(0), _translate_val(condition)),
+                asm.JmpCC(asm.CondCodes.NE, target),
+            ]
+        case tac.Copy(src=src, dst=dst):
+            return [asm.Mov(_translate_val(src), _translate_val(dst))]
+        case tac.Label(name=name):
+            return [asm.Label(name)]
+        case tac.Unary(operator=op, src=src, dst=dst):
+            src_asm = _translate_val(src)
+            dst_asm = _translate_val(dst)
+            match op:
+                case tac.Not():
+                    return [
+                        asm.Cmp(asm.Imm(0), src_asm),
+                        asm.Mov(asm.Imm(0), dst_asm),
+                        asm.SetCC(asm.CondCodes.E, dst_asm),
+                    ]
+                case _:
+                    return [
+                        asm.Mov(src_asm, dst_asm),
+                        asm.Unary(operator=_translate_unary_op(op), operand=dst_asm),
+                    ]
         case tac.Binary(operator=op, src1=src1, src2=src2, dst=dst):
             src1_asm = _translate_val(src1)
             src2_asm = _translate_val(src2)
             dst_asm = _translate_val(dst)
             match op:
+                case (
+                    tac.Equal()
+                    | tac.NotEqual()
+                    | tac.LessThan()
+                    | tac.LessOrEqual()
+                    | tac.GreaterThan()
+                    | tac.GreaterOrEqual()
+                ):
+                    return [
+                        asm.Cmp(src2_asm, src1_asm),
+                        asm.Mov(asm.Imm(0), dst_asm),
+                        asm.SetCC(_translate_relational_op(op), dst_asm),
+                    ]
                 case (
                     tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor()
                 ):
@@ -236,6 +275,35 @@ def _translate_unary_op(op: tac.UnaryOperator) -> asm.UnaryOperator:
             raise CodeGenerationError(f"unsupported TAC unary operator: {type(op).__name__}")
 
 
+def _translate_relational_op(op: tac.BinaryOperator) -> asm.CondCodes:
+    """Translate a TAC relational operator (Equal/NotEqual/LessThan/etc.) to its assembly equivalent.
+
+    Args:
+        op: The TAC binary operator node.
+
+    Returns:
+        The corresponding ``asm.CondCode``.
+
+    Raises:
+        CodeGenerationError: If the operator variant is not supported.
+    """
+    match op:
+        case tac.Equal():
+            return asm.CondCodes.E
+        case tac.NotEqual():
+            return asm.CondCodes.NE
+        case tac.LessThan():
+            return asm.CondCodes.L
+        case tac.LessOrEqual():
+            return asm.CondCodes.LE
+        case tac.GreaterThan():
+            return asm.CondCodes.G
+        case tac.GreaterOrEqual():
+            return asm.CondCodes.GE
+        case _:
+            raise CodeGenerationError(f"unsupported TAC relational operator for asm.Binary: {type(op).__name__}")
+
+
 # ==============================================================================
 # Pass 2 — Pseudo-register replacement
 # ==============================================================================
@@ -283,6 +351,10 @@ def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
                 new_instructions.append(asm.Idiv(operand=resolve(operand)))
             case asm.Shl(operand=operand) | asm.Sar(operand=operand):
                 new_instructions.append(type(instr)(operand=resolve(operand)))
+            case asm.Cmp(op1=op1, op2=op2):
+                new_instructions.append(asm.Cmp(op1=resolve(op1), op2=resolve(op2)))
+            case asm.SetCC(cond_code=cc, operand=operand):
+                new_instructions.append(asm.SetCC(cond_code=cc, operand=resolve(operand)))
             case _:
                 new_instructions.append(instr)
 
@@ -318,6 +390,14 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 # idivl cannot take an immediate operand; route through %r11d
                 fixed.append(asm.Mov(src=imm, dst=asm.Register(asm.Registers.R11)))
                 fixed.append(asm.Idiv(operand=asm.Register(asm.Registers.R11)))
+            # op2 cannot be an immediate - so route it through %r11d
+            case asm.Cmp(op1=op1, op2=asm.Imm() as op2):
+                fixed.append(asm.Mov(src=op2, dst=asm.Register(asm.Registers.R11)))
+                fixed.append(asm.Cmp(op1=op1, op2=asm.Register(asm.Registers.R11)))
+            # op1 cannot be a memory address when op2 is also memory - route op1 through %r10d
+            case asm.Cmp(op1=asm.Stack() as op1, op2=op2):
+                fixed.append(asm.Mov(src=op1, dst=asm.Register(asm.Registers.R10)))
+                fixed.append(asm.Cmp(op1=asm.Register(asm.Registers.R10), op2=op2))
             case _:
                 fixed.append(instr)
     return asm.Function(name=fn.name, instructions=tuple(fixed))

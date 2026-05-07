@@ -8,7 +8,25 @@ import dataclasses
 
 import pytest
 
-from compiler.syntax.asm import Function, Imm, Instruction, Mov, Operand, Program, Register, Registers, Ret
+from compiler.syntax.asm import (
+    Cmp,
+    CondCodes,
+    Function,
+    Imm,
+    Instruction,
+    Jmp,
+    JmpCC,
+    Label,
+    Mov,
+    Operand,
+    Program,
+    Register,
+    Registers,
+    Ret,
+    SetCC,
+    Stack,
+    Width,
+)
 
 # ---------------------------------------------------------------------------
 # Operand nodes
@@ -42,10 +60,10 @@ class TestImm:
 
 
 class TestRegister:
-    """``Register`` is a no-field frozen dataclass representing ``%eax``."""
+    """``Register`` wraps a ``Registers`` enum value and an optional ``Width``."""
 
     def test_construction(self) -> None:
-        """``Register`` can be constructed with no arguments."""
+        """``Register`` can be constructed with just a register name."""
         Register(Registers.AX)
 
     def test_is_operand(self) -> None:
@@ -53,12 +71,24 @@ class TestRegister:
         assert isinstance(Register(Registers.AX), Operand)
 
     def test_equality(self) -> None:
-        """Two ``Register`` instances are equal."""
+        """Two ``Register`` instances with the same reg and default width are equal."""
         assert Register(Registers.AX) == Register(Registers.AX)
 
     def test_not_equal_to_imm(self) -> None:
         """``Register`` is not equal to an ``Imm`` node."""
         assert Register(Registers.AX) != Imm(value=0)
+
+    def test_default_width_is_dword(self) -> None:
+        """The default width for a ``Register`` is ``Width.DWORD``."""
+        assert Register(Registers.AX).width == Width.DWORD
+
+    def test_explicit_byte_width(self) -> None:
+        """``Register`` can be constructed with ``Width.BYTE``."""
+        assert Register(Registers.AX, Width.BYTE).width == Width.BYTE
+
+    def test_different_widths_not_equal(self) -> None:
+        """``Register`` nodes for the same logical register at different widths are not equal."""
+        assert Register(Registers.AX, Width.DWORD) != Register(Registers.AX, Width.BYTE)
 
 
 # ---------------------------------------------------------------------------
@@ -165,3 +195,128 @@ class TestProgram:
         prog = Program(function=Function(name="main", instructions=()))
         with pytest.raises(dataclasses.FrozenInstanceError):
             prog.function = Function(name="other", instructions=())  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# New instruction nodes
+# ---------------------------------------------------------------------------
+
+
+class TestCmp:
+    """``Cmp`` is a frozen dataclass for the ``cmpl`` comparison instruction."""
+
+    def test_construction(self) -> None:
+        """``Cmp`` stores its two operands."""
+        cmp = Cmp(op1=Imm(value=1), op2=Register(Registers.AX))
+        assert cmp.op1 == Imm(value=1)
+        assert cmp.op2 == Register(Registers.AX)
+
+    def test_is_instruction(self) -> None:
+        """``Cmp`` is a subclass of ``Instruction``."""
+        assert isinstance(Cmp(op1=Imm(value=0), op2=Register(Registers.AX)), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``Cmp`` nodes with identical operands are equal."""
+        assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)) == Cmp(op1=Imm(value=1), op2=Register(Registers.AX))
+
+    def test_inequality_different_op1(self) -> None:
+        """``Cmp`` nodes with different ``op1`` values are not equal."""
+        assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)) != Cmp(op1=Imm(value=2), op2=Register(Registers.AX))
+
+    def test_immutable(self) -> None:
+        """``Cmp`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        cmp = Cmp(op1=Imm(value=0), op2=Register(Registers.AX))
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            cmp.op1 = Imm(value=99)  # type: ignore[misc]
+
+
+class TestJmp:
+    """``Jmp`` is a frozen dataclass for an unconditional jump instruction."""
+
+    def test_construction(self) -> None:
+        """``Jmp`` stores the target label name as a string."""
+        assert Jmp(label="my_label").label == "my_label"
+
+    def test_is_instruction(self) -> None:
+        """``Jmp`` is a subclass of ``Instruction``."""
+        assert isinstance(Jmp(label="foo"), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``Jmp`` nodes with the same label are equal."""
+        assert Jmp(label="loop") == Jmp(label="loop")
+
+    def test_inequality(self) -> None:
+        """``Jmp`` nodes with different labels are not equal."""
+        assert Jmp(label="a") != Jmp(label="b")
+
+
+class TestJmpCC:
+    """``JmpCC`` is a frozen dataclass for a conditional jump instruction."""
+
+    def test_construction(self) -> None:
+        """``JmpCC`` stores its condition code and label."""
+        j = JmpCC(cond_code=CondCodes.E, label="done")
+        assert j.cond_code == CondCodes.E
+        assert j.label == "done"
+
+    def test_is_instruction(self) -> None:
+        """``JmpCC`` is a subclass of ``Instruction``."""
+        assert isinstance(JmpCC(cond_code=CondCodes.NE, label="foo"), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``JmpCC`` nodes with the same code and label are equal."""
+        assert JmpCC(cond_code=CondCodes.L, label="x") == JmpCC(cond_code=CondCodes.L, label="x")
+
+    def test_inequality_different_cond_code(self) -> None:
+        """``JmpCC`` nodes with different condition codes are not equal."""
+        assert JmpCC(cond_code=CondCodes.E, label="x") != JmpCC(cond_code=CondCodes.NE, label="x")
+
+    def test_inequality_different_label(self) -> None:
+        """``JmpCC`` nodes with different labels are not equal."""
+        assert JmpCC(cond_code=CondCodes.E, label="a") != JmpCC(cond_code=CondCodes.E, label="b")
+
+
+class TestSetCC:
+    """``SetCC`` is a frozen dataclass for the conditional byte-set instruction."""
+
+    def test_construction(self) -> None:
+        """``SetCC`` stores its condition code and operand."""
+        s = SetCC(cond_code=CondCodes.GE, operand=Register(Registers.AX, Width.BYTE))
+        assert s.cond_code == CondCodes.GE
+        assert s.operand == Register(Registers.AX, Width.BYTE)
+
+    def test_is_instruction(self) -> None:
+        """``SetCC`` is a subclass of ``Instruction``."""
+        assert isinstance(SetCC(cond_code=CondCodes.E, operand=Stack(offset=-4)), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``SetCC`` nodes with the same code and operand are equal."""
+        op = Register(Registers.AX, Width.BYTE)
+        assert SetCC(cond_code=CondCodes.E, operand=op) == SetCC(cond_code=CondCodes.E, operand=op)
+
+    def test_inequality_different_cond_code(self) -> None:
+        """``SetCC`` nodes with different condition codes are not equal."""
+        op = Stack(offset=-4)
+        assert SetCC(cond_code=CondCodes.E, operand=op) != SetCC(cond_code=CondCodes.NE, operand=op)
+
+
+class TestLabel:
+    """``Label`` is a frozen dataclass representing a local label declaration."""
+
+    def test_construction(self) -> None:
+        """``Label`` stores the label name."""
+        assert Label(name="loop_start").name == "loop_start"
+
+    def test_is_instruction(self) -> None:
+        """``Label`` is a subclass of ``Instruction``."""
+        assert isinstance(Label(name="foo"), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``Label`` nodes with the same name are equal."""
+        assert Label(name="end") == Label(name="end")
+
+    def test_immutable(self) -> None:
+        """``Label`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        lbl = Label(name="start")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            lbl.name = "other"  # type: ignore[misc]

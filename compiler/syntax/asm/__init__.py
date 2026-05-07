@@ -10,10 +10,15 @@ for the supported assembly subset:
     instruction         = Mov(operand src, operand dst)
                         | Unary(unary_operator, operand)
                         | Binary(binary_operator, operand src1, operand src2, operand dst)
+                        | Cmp(operand, operand)
                         | Idiv(operand)
                         | Shl(operand)
                         | Sar(operand)
                         | Cdq
+                        | Jmp(identifier)
+                        | JmpCC(cond_code, identifier)
+                        | SetCC(cond_code, operand)
+                        | Label(identifier)
                         | AllocateStack(int)
                         | Ret
     unary_operator      = Neg | Not
@@ -22,6 +27,7 @@ for the supported assembly subset:
                         | Register(reg)
                         | Pseudo(identifier)
                         | Stack(int)
+    cond_code           = E | NE | G | GE | L | LE
     reg                 = AX | CX | DX | R10 | R11
 
 Nodes are organised into submodules by logical role:
@@ -46,8 +52,25 @@ be replaced by ``Stack`` operands before the assembly is emitted.
 """
 
 from compiler.syntax.asm.declarations import Function, Program
-from compiler.syntax.asm.instructions import AllocateStack, Binary, Cdq, Idiv, Instruction, Mov, Ret, Sar, Shl, Unary
-from compiler.syntax.asm.operands import Imm, Operand, Pseudo, Register, Registers, Stack
+from compiler.syntax.asm.instructions import (
+    AllocateStack,
+    Binary,
+    Cdq,
+    Cmp,
+    CondCodes,
+    Idiv,
+    Instruction,
+    Jmp,
+    JmpCC,
+    Label,
+    Mov,
+    Ret,
+    Sar,
+    SetCC,
+    Shl,
+    Unary,
+)
+from compiler.syntax.asm.operands import Imm, Operand, Pseudo, Register, Registers, Stack, Width
 from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Neg, Not, Or, Sub, UnaryOperator, Xor
 
 __all__ = [
@@ -65,8 +88,10 @@ __all__ = [
     "Imm",
     "Register",
     "Registers",
+    "Width",
     "Pseudo",
     "Stack",
+    "CondCodes",
     "Instruction",
     "Mov",
     "Ret",
@@ -77,6 +102,11 @@ __all__ = [
     "Shl",
     "Sar",
     "AllocateStack",
+    "Cmp",
+    "Jmp",
+    "JmpCC",
+    "SetCC",
+    "Label",
     "Function",
     "Program",
 ]

@@ -7,10 +7,22 @@ subclass of ``Instruction``.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 
 from compiler.syntax.asm.operands import Operand, Register
 from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Or, Sub, UnaryOperator, Xor
 from compiler.utils.exceptions import CodeGenerationError
+
+
+class CondCodes(StrEnum):
+    """Condition codes which will be applied to the conditional set and jump commands"""
+
+    E = "e"
+    NE = "ne"
+    L = "l"
+    LE = "le"
+    G = "g"
+    GE = "ge"
 
 
 class Instruction(ABC):
@@ -249,3 +261,120 @@ class Sar(Instruction):
             A string of the form ``"  sarl %cl, <operand>"``.
         """
         return f"  sarl %cl, {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Cmp(Instruction):
+    """A ``cmpl`` instruction that compares two operands and sets the flags register.
+
+    The operands are subtracted (``op2 - op1``) for the purposes of flag
+    setting; neither is modified.  The result is consumed by a subsequent
+    ``JmpCC`` or ``SetCC`` instruction.
+
+    Attributes:
+        op1: The right-hand (subtracted) operand.
+        op2: The left-hand (base) operand.
+    """
+
+    op1: Operand
+    op2: Operand
+
+    def emit(self) -> str:
+        """Return a ``cmpl`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cmpl <op1>, <op2>"``.
+        """
+        return f"  cmpl {self.op1.emit()}, {self.op2.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Jmp(Instruction):
+    """An unconditional ``jmp`` instruction that transfers control to a label.
+
+    Attributes:
+        label: The name of the target label (without the ``.L`` prefix).
+    """
+
+    label: str
+
+    def emit(self) -> str:
+        """Return a ``jmp`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  jmp .L<label>"``.
+        """
+        return f"  jmp .L{self.label}"
+
+
+@dataclass(frozen=True, slots=True)
+class JmpCC(Instruction):
+    """A conditional jump instruction that transfers control based on the flags register.
+
+    The condition is evaluated against the flags set by the most recent ``Cmp``
+    instruction.  Control is transferred to ``label`` when the condition holds.
+
+    Attributes:
+        cond_code: The condition that must be satisfied for the jump to occur.
+        label: The name of the target label (without the ``.L`` prefix).
+    """
+
+    cond_code: CondCodes
+    label: str
+
+    def emit(self) -> str:
+        """Return a conditional jump instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  j<cond_code> .L<label>"``.
+        """
+        return f"  j{self.cond_code.value} .L{self.label}"
+
+
+@dataclass(frozen=True, slots=True)
+class SetCC(Instruction):
+    """A ``set<cc>`` instruction that writes 0 or 1 into a byte operand based on the flags register.
+
+    The condition is evaluated against the flags set by the most recent ``Cmp``
+    instruction.  The destination operand receives 1 if the condition holds and
+    0 otherwise.  The operand must be an 8-bit register or memory location.
+
+    Attributes:
+        cond_code: The condition that determines the value written.
+        operand: The byte-sized destination operand.
+    """
+
+    cond_code: CondCodes
+    operand: Operand
+
+    def emit(self) -> str:
+        """Return a conditional set instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  set<cond_code> <operand>"``.
+        """
+        return f"  set{self.cond_code.value} {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Label(Instruction):
+    """A label declaration that marks a position in the instruction stream.
+
+    Emitted as a ``.L``-prefixed local label followed by a colon, making it
+    visible to the assembler but not exported to the linker symbol table.
+
+    Attributes:
+        name: The label identifier, without the ``.L`` prefix or trailing colon.
+    """
+
+    name: str
+
+    def emit(self) -> str:
+        """Return a local label declaration in assembler syntax.
+
+        Returns:
+            A string of the form ``".L<name>:"``, flush with the left margin
+            (no leading spaces) so the assembler treats it as a label rather
+            than an instruction.
+        """
+        return f".L{self.name}:"
