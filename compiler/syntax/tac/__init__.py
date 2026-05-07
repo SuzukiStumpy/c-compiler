@@ -9,10 +9,17 @@ mirrors the ASDL grammar for the supported assembly subset:
     instruction         = Return(val)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
+                        | Copy(val src, val dst)
+                        | Jump(identifier target)
+                        | JumpIfZero(val condition, identifier target)
+                        | JumpIfNotZero(val condition, identifier target)
+                        | Label(identifier)
     val                 = Constant(int) | Var(identifier)
-    unary_operator      = Complement | Negate
+    unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
+                        | Equal | NotEqual | LessThan | LessOrEqual | GreaterThan
+                        | GreaterOrEqual
 
 Nodes are organised into submodules by logical role:
 
@@ -32,7 +39,17 @@ nodes are immutable - once constructed a tac AST node cannot be modified.
 """
 
 from compiler.syntax.tac.declarations import Function, Program
-from compiler.syntax.tac.instructions import Binary, Instruction, Return, Unary
+from compiler.syntax.tac.instructions import (
+    Binary,
+    Copy,
+    Instruction,
+    Jump,
+    JumpIfNotZero,
+    JumpIfZero,
+    Label,
+    Return,
+    Unary,
+)
 from compiler.syntax.tac.operators import (
     Add,
     BinaryOperator,
@@ -41,9 +58,16 @@ from compiler.syntax.tac.operators import (
     BitwiseXor,
     Complement,
     Divide,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
     LeftShift,
+    LessOrEqual,
+    LessThan,
     Multiply,
     Negate,
+    Not,
+    NotEqual,
     Remainder,
     RightShift,
     Subtract,
@@ -52,6 +76,18 @@ from compiler.syntax.tac.operators import (
 from compiler.syntax.tac.values import Constant, Val, Var
 
 __all__ = [
+    "Equal",
+    "GreaterOrEqual",
+    "GreaterThan",
+    "LessOrEqual",
+    "LessThan",
+    "NotEqual",
+    "Not",
+    "Copy",
+    "Jump",
+    "JumpIfNotZero",
+    "JumpIfZero",
+    "Label",
     "Program",
     "Function",
     "Instruction",

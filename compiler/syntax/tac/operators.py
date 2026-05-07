@@ -30,6 +30,11 @@ class Negate(UnaryOperator):
     """Represents the negation of an expression."""
 
 
+@dataclass(frozen=True, slots=True)
+class Not(UnaryOperator):
+    """Represents logical inverse (``!``) of an expression"""
+
+
 class BinaryOperator(ABC):
     """Abstract base for all tac Binary Operation nodes.
 
@@ -89,3 +94,33 @@ class BitwiseXor(BinaryOperator):
 @dataclass(frozen=True, slots=True)
 class BitwiseOr(BinaryOperator):
     """Represents the bitwise OR (``|``) of two expressions."""
+
+
+@dataclass(frozen=True, slots=True)
+class Equal(BinaryOperator):
+    """Represents equality (``==``) of two expressions"""
+
+
+@dataclass(frozen=True, slots=True)
+class NotEqual(BinaryOperator):
+    """Represents inequality (``!=``) of two expressions"""
+
+
+@dataclass(frozen=True, slots=True)
+class LessThan(BinaryOperator):
+    """Represents strict inequality - less than (``<``) of two expressions"""
+
+
+@dataclass(frozen=True, slots=True)
+class LessOrEqual(BinaryOperator):
+    """Represents inequality - less than (``<=``) of two expressions"""
+
+
+@dataclass(frozen=True, slots=True)
+class GreaterThan(BinaryOperator):
+    """Represents strict inequality - greater than (``>``) of two expressions"""
+
+
+@dataclass(frozen=True, slots=True)
+class GreaterOrEqual(BinaryOperator):
+    """Represents inequality - greater than (``>=``) of two expressions"""

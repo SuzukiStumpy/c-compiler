@@ -62,3 +62,67 @@ class Binary(Instruction):
     src1: Val
     src2: Val
     dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class Copy(Instruction):
+    """Represents a copy operation with the tac
+
+    Attributes:
+        src: The source location to copy from
+        dst: The destination location to copy to
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class Jump(Instruction):
+    """Represents an unconditional jump within the tac
+
+    Attributes:
+        target: The labelled location to jump to
+    """
+
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
+class JumpIfZero(Instruction):
+    """Represents a conditional jump if the condition evaluates
+    to zero.
+
+    Attributes:
+        condition: The condition to evaluate
+        target: The labelled location to jump to
+    """
+
+    condition: Val
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
+class JumpIfNotZero(Instruction):
+    """Represents a conditional jump if the condition evaluates
+    to something other than zero
+
+    Attributes:
+        condition: The condition to evaluate
+        target: The labelled location to jump to
+    """
+
+    condition: Val
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
+class Label(Instruction):
+    """Represents a named location within the code.  Generally used
+    as a jump target.
+
+    Attributes:
+        name: The name of the label
+    """
+
+    name: str

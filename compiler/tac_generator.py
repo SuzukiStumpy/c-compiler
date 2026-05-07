@@ -13,8 +13,23 @@ The translation follows this mapping:
     ast.Constant(v)            → tac.Constant(v)   (no extra instructions)
     ast.Unary(op, inner)       → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
                                  returns tmp as the result val
-    ast.Binary(op, left, right)   → <emit(left)> + <emit(right)> + [tac.Binary(op, left_val, right_val, tmp)]
-    ... (other constructs to be added in future stages)
+    ast.Binary(op, l, r)       → <emit(l)> + <emit(r)>
+      (arithmetic / bitwise /    + [tac.Binary(op, l_val, r_val, tmp)]
+       comparison operators)     returns tmp as the result val
+    ast.Binary(And, l, r)      → <emit(l)>
+                                 + [JumpIfZero(l_val, false_lbl)]
+                                 + <emit(r)>
+                                 + [JumpIfZero(r_val, false_lbl),
+                                    Copy(1, tmp), Jump(end_lbl),
+                                    false_lbl, Copy(0, tmp), end_lbl]
+                                 returns tmp as the result val
+    ast.Binary(Or, l, r)       → <emit(l)>
+                                 + [JumpIfNotZero(l_val, true_lbl)]
+                                 + <emit(r)>
+                                 + [JumpIfNotZero(r_val, true_lbl),
+                                    Copy(0, tmp), Jump(end_lbl),
+                                    true_lbl, Copy(1, tmp), end_lbl]
+                                 returns tmp as the result val
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -78,6 +93,18 @@ def _translate_binary_op(op: ast.BinaryOperator) -> tac.BinaryOperator:
             return tac.BitwiseXor()
         case ast.BitwiseOr():
             return tac.BitwiseOr()
+        case ast.Equal():
+            return tac.Equal()
+        case ast.NotEqual():
+            return tac.NotEqual()
+        case ast.LessThan():
+            return tac.LessThan()
+        case ast.LessOrEqual():
+            return tac.LessOrEqual()
+        case ast.GreaterThan():
+            return tac.GreaterThan()
+        case ast.GreaterOrEqual():
+            return tac.GreaterOrEqual()
         case _:
             raise CodeGenerationError(f"unsupported binary operator: {type(op).__name__}")
 
@@ -99,6 +126,8 @@ def _translate_unary_op(op: ast.UnaryOperator) -> tac.UnaryOperator:
             return tac.Complement()
         case ast.Negate():
             return tac.Negate()
+        case ast.Not():
+            return tac.Not()
         case _:
             raise CodeGenerationError(f"unsupported unary operator: {type(op).__name__}")
 
@@ -112,8 +141,9 @@ class _TacGenerator:
     """
 
     def __init__(self) -> None:
-        """Initialise the generator with a zero temporary-variable counter."""
+        """Initialise the generator with zeroed temporary-variable and label counters."""
         self._counter = count()
+        self._label_counter = count()
 
     def _make_temp(self) -> tac.Var:
         """Create a fresh temporary variable and advance the counter.
@@ -122,6 +152,14 @@ class _TacGenerator:
             A ``tac.Var`` named ``tmp.<n>`` where ``n`` is the next counter value.
         """
         return tac.Var(value=f"tmp.{next(self._counter)}")
+
+    def _make_label(self, base: str) -> tac.Label:
+        """Create a fresh label and avance the counter.
+
+        Returns:
+            A ``tac.Label`` named ``${base}.<n>`` where ``n`` is the next counter value.
+        """
+        return tac.Label(name=f"{base}.{next(self._label_counter)}")
 
     def translate_function(self, function: ast.Function) -> tac.Function:
         """Translate an AST ``Function`` into a TAC ``Function``.
@@ -183,7 +221,44 @@ class _TacGenerator:
             case ast.Unary(operator=op, exp=inner):
                 src, inner_instrs = self.translate_exp(inner)
                 dst = self._make_temp()
-                return dst, [*inner_instrs, tac.Unary(operator=_translate_unary_op(op), src=src, dst=dst)]
+                return dst, [
+                    *inner_instrs,
+                    tac.Unary(operator=_translate_unary_op(op), src=src, dst=dst),
+                ]
+            case ast.Binary(operator=ast.And(), left=left, right=right):
+                label_false = self._make_label("and_false")
+                label_end = self._make_label("and_end")
+                dst = self._make_temp()
+                left_val, left_instrs = self.translate_exp(left)
+                right_val, right_instrs = self.translate_exp(right)
+                return dst, [
+                    *left_instrs,
+                    tac.JumpIfZero(condition=left_val, target=label_false.name),
+                    *right_instrs,
+                    tac.JumpIfZero(condition=right_val, target=label_false.name),
+                    tac.Copy(src=tac.Constant(value=1), dst=dst),
+                    tac.Jump(target=label_end.name),
+                    label_false,
+                    tac.Copy(src=tac.Constant(value=0), dst=dst),
+                    label_end,
+                ]
+            case ast.Binary(operator=ast.Or(), left=left, right=right):
+                label_true = self._make_label("or_true")
+                label_end = self._make_label("or_end")
+                dst = self._make_temp()
+                left_val, left_instrs = self.translate_exp(left)
+                right_val, right_instrs = self.translate_exp(right)
+                return dst, [
+                    *left_instrs,
+                    tac.JumpIfNotZero(condition=left_val, target=label_true.name),
+                    *right_instrs,
+                    tac.JumpIfNotZero(condition=right_val, target=label_true.name),
+                    tac.Copy(src=tac.Constant(value=0), dst=dst),
+                    tac.Jump(target=label_end.name),
+                    label_true,
+                    tac.Copy(src=tac.Constant(value=1), dst=dst),
+                    label_end,
+                ]
             case ast.Binary(operator=op, left=left, right=right):
                 src1, left_instrs = self.translate_exp(left)
                 src2, right_instrs = self.translate_exp(right)
