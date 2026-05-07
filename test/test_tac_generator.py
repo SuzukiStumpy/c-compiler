@@ -94,6 +94,12 @@ class TestTacGeneratorExistingConstructs:
         (ast.BitwiseAnd(), tac.BitwiseAnd()),
         (ast.BitwiseXor(), tac.BitwiseXor()),
         (ast.BitwiseOr(), tac.BitwiseOr()),
+        (ast.Equal(), tac.Equal()),
+        (ast.NotEqual(), tac.NotEqual()),
+        (ast.LessThan(), tac.LessThan()),
+        (ast.LessOrEqual(), tac.LessOrEqual()),
+        (ast.GreaterThan(), tac.GreaterThan()),
+        (ast.GreaterOrEqual(), tac.GreaterOrEqual()),
     ],
 )
 def test_binary_operator_maps_to_tac_operator(ast_op: ast.BinaryOperator, expected: tac.BinaryOperator) -> None:
@@ -228,3 +234,184 @@ class TestTacGeneratorErrors:
         exp = ast.Binary(operator=_FakeBinaryOp(), left=ast.Constant(value=1), right=ast.Constant(value=2))
         with pytest.raises(CodeGenerationError):
             generate(_program_returning(exp))
+
+    def test_unsupported_unary_operator_raises(self) -> None:
+        """An unrecognised ``UnaryOperator`` subclass raises ``CodeGenerationError``."""
+
+        class _FakeUnaryOp(ast.UnaryOperator):
+            pass
+
+        exp = ast.Unary(operator=_FakeUnaryOp(), exp=ast.Constant(value=1))
+        with pytest.raises(CodeGenerationError):
+            generate(_program_returning(exp))
+
+    def test_unsupported_expression_type_raises(self) -> None:
+        """An unrecognised ``Exp`` subclass raises ``CodeGenerationError``."""
+
+        class _FakeExp(ast.Exp):
+            pass
+
+        with pytest.raises(CodeGenerationError):
+            generate(_program_returning(_FakeExp()))
+
+    def test_unsupported_statement_type_raises(self) -> None:
+        """An unrecognised ``Statement`` subclass raises ``CodeGenerationError``."""
+
+        class _FakeStmt(ast.Statement):
+            pass
+
+        fn = ast.Function(
+            return_type=ast.IntType(),
+            name="main",
+            params=(),
+            body=(_FakeStmt(),),
+        )
+        with pytest.raises(CodeGenerationError):
+            generate(ast.Program(functions=(fn,)))
+
+    def test_zero_functions_raises(self) -> None:
+        """A program with no functions raises ``CodeGenerationError``."""
+        with pytest.raises(CodeGenerationError):
+            generate(ast.Program(functions=()))
+
+    def test_multiple_functions_raises(self) -> None:
+        """A program with more than one function raises ``CodeGenerationError``."""
+        fn = ast.Function(
+            return_type=ast.IntType(),
+            name="f",
+            params=(),
+            body=(ast.Return(exp=ast.Constant(value=0)),),
+        )
+        with pytest.raises(CodeGenerationError):
+            generate(ast.Program(functions=(fn, fn)))
+
+
+# ---------------------------------------------------------------------------
+# Unary operator coverage
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorUnaryOperators:
+    """All unary operator variants translate to their TAC equivalents."""
+
+    def test_complement_produces_unary_complement(self) -> None:
+        """``return ~1;`` → ``Unary(Complement, Constant(1), tmp.0)``."""
+        instrs = _body(ast.Unary(operator=ast.Complement(), exp=ast.Constant(value=1)))
+        assert isinstance(instrs[0], tac.Unary)
+        assert instrs[0].operator == tac.Complement()
+
+    def test_not_produces_unary_not(self) -> None:
+        """``return !1;`` → ``Unary(Not, Constant(1), tmp.0)``."""
+        instrs = _body(ast.Unary(operator=ast.Not(), exp=ast.Constant(value=1)))
+        assert isinstance(instrs[0], tac.Unary)
+        assert instrs[0].operator == tac.Not()
+
+
+# ---------------------------------------------------------------------------
+# Logical AND short-circuit
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorAndExpression:
+    """``ast.And`` produces a short-circuit JumpIfZero sequence."""
+
+    def test_full_instruction_sequence(self) -> None:
+        """``return 1 && 2;`` emits the full short-circuit sequence."""
+        instrs = _body(ast.Binary(operator=ast.And(), left=ast.Constant(value=1), right=ast.Constant(value=2)))
+        assert instrs == (
+            tac.JumpIfZero(condition=tac.Constant(value=1), target="and_false.0"),
+            tac.JumpIfZero(condition=tac.Constant(value=2), target="and_false.0"),
+            tac.Copy(src=tac.Constant(value=1), dst=tac.Var(value="tmp.0")),
+            tac.Jump(target="and_end.1"),
+            tac.Label(name="and_false.0"),
+            tac.Copy(src=tac.Constant(value=0), dst=tac.Var(value="tmp.0")),
+            tac.Label(name="and_end.1"),
+            tac.Return(val=tac.Var(value="tmp.0")),
+        )
+
+    def test_right_operand_instructions_appear_after_first_jump(self) -> None:
+        """Right sub-expression instructions are emitted after the first ``JumpIfZero``."""
+        exp = ast.Binary(
+            operator=ast.And(),
+            left=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
+            right=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)),
+        )
+        instrs = _body(exp)
+        assert isinstance(instrs[0], tac.Unary)  # left side: Negate(1)
+        assert isinstance(instrs[1], tac.JumpIfZero)  # short-circuit check on left
+        assert isinstance(instrs[2], tac.Unary)  # right side: Negate(2) — only after the jump
+        assert isinstance(instrs[3], tac.JumpIfZero)  # short-circuit check on right
+
+    def test_result_is_returned(self) -> None:
+        """The ``Return`` instruction uses the temporary written by the ``And`` sequence."""
+        instrs = _body(ast.Binary(operator=ast.And(), left=ast.Constant(value=1), right=ast.Constant(value=2)))
+        ret = instrs[-1]
+        assert isinstance(ret, tac.Return)
+        assert ret.val == tac.Var(value="tmp.0")
+
+    def test_labels_are_unique_across_nested_and_expressions(self) -> None:
+        """Nested ``&&`` expressions each receive distinct label names."""
+        exp = ast.Binary(
+            operator=ast.And(),
+            left=ast.Binary(operator=ast.And(), left=ast.Constant(value=1), right=ast.Constant(value=2)),
+            right=ast.Constant(value=3),
+        )
+        instrs = _body(exp)
+        label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
+        assert len(label_names) == len(set(label_names))  # all distinct
+        assert len(label_names) == 4  # two labels per And expression
+
+
+# ---------------------------------------------------------------------------
+# Logical OR short-circuit
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorOrExpression:
+    """``ast.Or`` produces a short-circuit JumpIfNotZero sequence."""
+
+    def test_full_instruction_sequence(self) -> None:
+        """``return 1 || 2;`` emits the full short-circuit sequence."""
+        instrs = _body(ast.Binary(operator=ast.Or(), left=ast.Constant(value=1), right=ast.Constant(value=2)))
+        assert instrs == (
+            tac.JumpIfNotZero(condition=tac.Constant(value=1), target="or_true.0"),
+            tac.JumpIfNotZero(condition=tac.Constant(value=2), target="or_true.0"),
+            tac.Copy(src=tac.Constant(value=0), dst=tac.Var(value="tmp.0")),
+            tac.Jump(target="or_end.1"),
+            tac.Label(name="or_true.0"),
+            tac.Copy(src=tac.Constant(value=1), dst=tac.Var(value="tmp.0")),
+            tac.Label(name="or_end.1"),
+            tac.Return(val=tac.Var(value="tmp.0")),
+        )
+
+    def test_right_operand_instructions_appear_after_first_jump(self) -> None:
+        """Right sub-expression instructions are emitted after the first ``JumpIfNotZero``."""
+        exp = ast.Binary(
+            operator=ast.Or(),
+            left=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
+            right=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)),
+        )
+        instrs = _body(exp)
+        assert isinstance(instrs[0], tac.Unary)  # left side: Negate(1)
+        assert isinstance(instrs[1], tac.JumpIfNotZero)  # short-circuit check on left
+        assert isinstance(instrs[2], tac.Unary)  # right side: Negate(2) — only after jump
+        assert isinstance(instrs[3], tac.JumpIfNotZero)  # short-circuit check on right
+
+    def test_result_is_returned(self) -> None:
+        """The ``Return`` instruction uses the temporary written by the ``Or`` sequence."""
+        instrs = _body(ast.Binary(operator=ast.Or(), left=ast.Constant(value=1), right=ast.Constant(value=2)))
+        ret = instrs[-1]
+        assert isinstance(ret, tac.Return)
+        assert ret.val == tac.Var(value="tmp.0")
+
+    def test_labels_are_unique_across_nested_or_expressions(self) -> None:
+        """Nested ``||`` expressions each receive distinct label names."""
+        exp = ast.Binary(
+            operator=ast.Or(),
+            left=ast.Binary(operator=ast.Or(), left=ast.Constant(value=1), right=ast.Constant(value=2)),
+            right=ast.Constant(value=3),
+        )
+        instrs = _body(exp)
+        label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
+        assert len(label_names) == len(set(label_names))
+        assert len(label_names) == 4

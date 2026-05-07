@@ -23,14 +23,23 @@ from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program,
 from compiler.syntax.ast.expressions import Binary, Exp, Unary
 from compiler.syntax.ast.operators import (
     Add,
+    And,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
     Complement,
     Divide,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
     LeftShift,
+    LessOrEqual,
+    LessThan,
     Multiply,
     Negate,
+    Not,
+    NotEqual,
+    Or,
     Remainder,
     RightShift,
     Subtract,
@@ -84,6 +93,15 @@ _RSHIFT = _tok(TokenType.RSHIFT, ">>")
 _AMPERSAND = _tok(TokenType.AMPERSAND, "&")
 _CARET = _tok(TokenType.CARET, "^")
 _PIPE = _tok(TokenType.PIPE, "|")
+_NOT = _tok(TokenType.NOT, "!")
+_AND = _tok(TokenType.AND, "&&")
+_OR = _tok(TokenType.OR, "||")
+_EQ = _tok(TokenType.EQ, "==")
+_NEQ = _tok(TokenType.NEQ, "!=")
+_LT = _tok(TokenType.LT, "<")
+_GT = _tok(TokenType.GT, ">")
+_LEQ = _tok(TokenType.LEQ, "<=")
+_GEQ = _tok(TokenType.GEQ, ">=")
 
 
 def _ident(name: str) -> Token:
@@ -326,6 +344,10 @@ class TestUnaryExpressions:
         """``return -~1;`` → Unary(Negate(), Unary(Complement(), Constant(1)))."""
         assert _parsed_exp(_MINUS, _BITWISE_NOT, _number("1")) == Unary(Negate(), Unary(Complement(), Constant(1)))
 
+    def test_logical_not(self) -> None:
+        """``return !1;`` → Unary(Not(), Constant(1))."""
+        assert _parsed_exp(_NOT, _number("1")) == Unary(Not(), Constant(1))
+
     def test_parenthesised_constant(self) -> None:
         """``return (42);`` — parentheses around a constant are transparent."""
         assert _parsed_exp(_LPAREN, _number("42"), _RPAREN) == Constant(42)
@@ -467,4 +489,87 @@ class TestBitwiseExpressions:
         """``return 1 << (2 + 3);`` → LeftShift(1, Add(2, 3)): grouping overrides normal precedence."""
         assert _parsed_exp(_number("1"), _LSHIFT, _LPAREN, _number("2"), _PLUS, _number("3"), _RPAREN) == Binary(
             LeftShift(), Constant(1), Binary(Add(), Constant(2), Constant(3))
+        )
+
+
+# ---------------------------------------------------------------------------
+# Comparison expressions
+# ---------------------------------------------------------------------------
+
+
+class TestComparisonExpressions:
+    """Parser correctly builds Binary nodes for all comparison operators."""
+
+    @pytest.mark.parametrize(
+        ("tok", "op"),
+        [
+            (_EQ, Equal()),
+            (_NEQ, NotEqual()),
+            (_LT, LessThan()),
+            (_LEQ, LessOrEqual()),
+            (_GT, GreaterThan()),
+            (_GEQ, GreaterOrEqual()),
+        ],
+    )
+    def test_operator_parses(self, tok: Token, op: object) -> None:
+        """Each comparison token produces the correct AST operator node."""
+        assert _parsed_exp(_number("1"), tok, _number("2")) == Binary(op, Constant(1), Constant(2))
+
+    def test_comparison_binds_tighter_than_logical_and(self) -> None:
+        """``1 && 2 == 3`` → ``And(1, Equal(2, 3))``: comparison prec 30 > logical AND prec 10."""
+        assert _parsed_exp(_number("1"), _AND, _number("2"), _EQ, _number("3")) == Binary(
+            And(), Constant(1), Binary(Equal(), Constant(2), Constant(3))
+        )
+
+    def test_comparison_binds_tighter_than_bitwise_or(self) -> None:
+        """``1 == 2 | 3`` → ``BitwiseOr(Equal(1, 2), 3)``: comparison prec 30 > bitwise OR prec 15."""
+        assert _parsed_exp(_number("1"), _EQ, _number("2"), _PIPE, _number("3")) == Binary(
+            BitwiseOr(), Binary(Equal(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_comparison_is_left_associative(self) -> None:
+        """``1 < 2 < 3`` → ``LessThan(LessThan(1, 2), 3)``."""
+        assert _parsed_exp(_number("1"), _LT, _number("2"), _LT, _number("3")) == Binary(
+            LessThan(), Binary(LessThan(), Constant(1), Constant(2)), Constant(3)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Logical AND / OR expressions
+# ---------------------------------------------------------------------------
+
+
+class TestLogicalExpressions:
+    """Parser correctly builds Binary nodes for ``&&`` and ``||``."""
+
+    def test_logical_and_parses(self) -> None:
+        """``return 1 && 2;`` → ``Binary(And(), Constant(1), Constant(2))``."""
+        assert _parsed_exp(_number("1"), _AND, _number("2")) == Binary(And(), Constant(1), Constant(2))
+
+    def test_logical_or_parses(self) -> None:
+        """``return 1 || 2;`` → ``Binary(Or(), Constant(1), Constant(2))``."""
+        assert _parsed_exp(_number("1"), _OR, _number("2")) == Binary(Or(), Constant(1), Constant(2))
+
+    def test_logical_and_binds_tighter_than_or(self) -> None:
+        """``1 || 2 && 3`` → ``Or(1, And(2, 3))``: AND prec 10 > OR prec 5."""
+        assert _parsed_exp(_number("1"), _OR, _number("2"), _AND, _number("3")) == Binary(
+            Or(), Constant(1), Binary(And(), Constant(2), Constant(3))
+        )
+
+    def test_bitwise_or_binds_tighter_than_logical_and(self) -> None:
+        """``1 && 2 | 3`` → ``And(1, BitwiseOr(2, 3))``: bitwise OR prec 15 > logical AND prec 10."""
+        assert _parsed_exp(_number("1"), _AND, _number("2"), _PIPE, _number("3")) == Binary(
+            And(), Constant(1), Binary(BitwiseOr(), Constant(2), Constant(3))
+        )
+
+    def test_logical_and_is_left_associative(self) -> None:
+        """``1 && 2 && 3`` → ``And(And(1, 2), 3)``."""
+        assert _parsed_exp(_number("1"), _AND, _number("2"), _AND, _number("3")) == Binary(
+            And(), Binary(And(), Constant(1), Constant(2)), Constant(3)
+        )
+
+    def test_logical_or_is_left_associative(self) -> None:
+        """``1 || 2 || 3`` → ``Or(Or(1, 2), 3)``."""
+        assert _parsed_exp(_number("1"), _OR, _number("2"), _OR, _number("3")) == Binary(
+            Or(), Binary(Or(), Constant(1), Constant(2)), Constant(3)
         )
