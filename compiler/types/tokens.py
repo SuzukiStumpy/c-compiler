@@ -51,6 +51,7 @@ class TokenType(Enum):
     GT = auto()  # >
     LEQ = auto()  # <=
     GEQ = auto()  # >=
+    ASSIGNMENT = auto()  # =
 
 
 @dataclass(frozen=True, slots=True)

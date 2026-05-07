@@ -20,11 +20,15 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LBRACE", r"\{"),
     ("RBRACE", r"\}"),
     ("SEMICOLON", r";"),
+    ("ASSIGNMENT", r"\="),
     # Boolan Operations
     ("BITWISE_NOT", r"~"),
     # Unary Operators
     ("DECREMENT", r"--"),
-    ("MINUS", r"-"),  # This is also a binary operator, which we disambiguate in the parser
+    (
+        "MINUS",
+        r"-",
+    ),  # This is also a binary operator, which we disambiguate in the parser
     # Binary Operators
     ("PLUS", r"\+"),
     ("TIMES", r"\*"),
@@ -127,7 +131,13 @@ def lexer(source: Path) -> list[Token]:
         assert tok.lastgroup is not None
         value = tok.group()
         tokens.append(
-            Token(type=TokenType[tok.lastgroup], value=value, line=current_line, col=current_col, filename=current_file)
+            Token(
+                type=TokenType[tok.lastgroup],
+                value=value,
+                line=current_line,
+                col=current_col,
+                filename=current_file,
+            )
         )
         current_col += len(value)
         pos += len(value)
