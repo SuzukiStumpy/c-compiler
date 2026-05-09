@@ -55,6 +55,8 @@ The translation follows this mapping:
                                  + [Jump(end_lbl), else_lbl]
                                  + <emit(else_)>
                                  + [end_lbl]
+    ast.Goto(target)           → [Jump(target)]
+    ast.Label(name, stmt)      → [Label(name)] + <emit(stmt)>
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -272,6 +274,10 @@ class _TacGenerator:
                     *self.translate_statement(else_stmt),
                     label_end,
                 ]
+            case ast.Goto(target=target):
+                return [tac.Jump(target=target)]
+            case ast.Label(name=name, statement=inner):
+                return [tac.Label(name=name), *self.translate_statement(inner)]
             case _:
                 raise CodeGenerationError(f"unsupported statement type: {type(stmt).__name__}")
 
