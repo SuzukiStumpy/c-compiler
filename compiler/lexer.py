@@ -11,6 +11,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("INT", r"int\b"),
     ("VOID", r"void\b"),
     ("RETURN", r"return\b"),
+    ("IF", r"if\b"),
+    ("ELSE", r"else\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("NUMBER", r"\d+\b"),
@@ -62,6 +64,9 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("NOT", r"!"),
     ("LT", r"<"),
     ("GT", r">"),
+    # Conditional Expressions
+    ("QUERY", r"\?"),
+    ("COLON", r":"),
 ]
 
 _TOKEN_REGEX = re.compile(

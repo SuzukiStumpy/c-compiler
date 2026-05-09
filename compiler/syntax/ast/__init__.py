@@ -8,7 +8,10 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     function_definition = Function(type return_type, identifier name,
                                    parameter* params, block_item* body)
     parameter           = Parameter(type param_type, identifier name)
-    statement           = Return(exp) | Expression(exp) | Null
+    statement           = Return(exp)
+                        | Expression(exp)
+                        | If(exp condition, statement then, statement? else_)
+                        | Null
     declaration         = Declaration(identifier name, exp? init)
     exp                 = Constant(int)
                         | Var(identifier)
@@ -80,10 +83,11 @@ from compiler.syntax.ast.operators import (
     UnaryOperator,
 )
 from compiler.syntax.ast.pretty_print import pretty_print
-from compiler.syntax.ast.statements import Expression, Null, Return, Statement
+from compiler.syntax.ast.statements import Expression, If, Null, Return, Statement
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "If",
     "PostDecrement",
     "PostIncrement",
     "PreIncrement",

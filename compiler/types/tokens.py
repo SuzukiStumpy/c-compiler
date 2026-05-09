@@ -17,6 +17,8 @@ class TokenType(Enum):
     INT = auto()
     VOID = auto()
     RETURN = auto()
+    IF = auto()
+    ELSE = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
@@ -64,6 +66,9 @@ class TokenType(Enum):
     LEQ = auto()  # <=
     GEQ = auto()  # >=
     ASSIGNMENT = auto()  # =
+    # Conditional Expressions
+    QUERY = auto()  # ?
+    COLON = auto()  # :
 
 
 @dataclass(frozen=True, slots=True)

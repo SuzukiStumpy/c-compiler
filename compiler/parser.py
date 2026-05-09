@@ -9,6 +9,7 @@ which are handled by precedence climbing.  The grammar is:
     declaration         ::= "int" identifier [ "=" exp ] ";"
     statement           ::= "return" exp ";"
                           | exp ";"
+                          | "if" "(" exp ")" statement ["else" statement]
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -53,6 +54,7 @@ from compiler.syntax.ast import (
     Function,
     GreaterOrEqual,
     GreaterThan,
+    If,
     IntType,
     LeftShift,
     LessOrEqual,
@@ -513,6 +515,7 @@ class Parser:
 
             statement ::= "return" exp ";"
                         | exp ";"
+                        | "if" "(" exp ")" statement ["else" statement]
                         | ";"
 
         Returns:
@@ -524,14 +527,29 @@ class Parser:
         token = self._peek()
         if token is None:
             raise self._eof_error("expected a statement, got end of input")
-        if token.type == TokenType.RETURN:
-            return self._parse_return()
-        if token.type == TokenType.SEMICOLON:
-            self._consume()
-            return Null()
-        exp = self._parse_exp()
-        self._expect(TokenType.SEMICOLON)
-        return Expression(exp=exp)
+
+        match token.type:
+            case TokenType.RETURN:
+                return self._parse_return()
+            case TokenType.SEMICOLON:
+                self._consume()
+                return Null()
+            case TokenType.IF:
+                self._consume()
+                self._expect(TokenType.LPAREN)
+                exp = self._parse_exp()
+                self._expect(TokenType.RPAREN)
+                then = self._parse_statement()
+                else_ = None
+
+                if self._match(TokenType.ELSE):
+                    self._consume()
+                    else_ = self._parse_statement()
+                return If(exp, then, else_)
+            case _:
+                exp = self._parse_exp()
+                self._expect(TokenType.SEMICOLON)
+                return Expression(exp=exp)
 
     def _parse_return(self) -> Return:
         """Parse a ``return <exp>;`` statement.

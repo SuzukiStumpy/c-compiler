@@ -8,6 +8,7 @@ Covers the full range of constructs supported by the current grammar:
     declaration         ::= "int" identifier [ "=" exp ] ";"
     statement           ::= "return" exp ";"
                           | exp ";"
+                          | "if" "(" exp ")" statement ["else" statement]
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -28,7 +29,20 @@ parser behaviour is tested in isolation from lexer behaviour.
 import pytest
 
 from compiler.parser import parse
-from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return, S
+from compiler.syntax.ast import (
+    BlockItem,
+    Constant,
+    Expression,
+    Function,
+    If,
+    IntType,
+    Null,
+    Parameter,
+    Program,
+    Return,
+    S,
+    Statement,
+)
 from compiler.syntax.ast.expressions import Binary, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
@@ -117,6 +131,8 @@ _LT = _tok(TokenType.LT, "<")
 _GT = _tok(TokenType.GT, ">")
 _LEQ = _tok(TokenType.LEQ, "<=")
 _GEQ = _tok(TokenType.GEQ, ">=")
+_IF = _tok(TokenType.IF, "if")
+_ELSE = _tok(TokenType.ELSE, "else")
 
 
 def _ident(name: str) -> Token:
@@ -127,6 +143,34 @@ def _ident(name: str) -> Token:
 def _number(value: str) -> Token:
     """Return a NUMBER token with the given literal text."""
     return _tok(TokenType.NUMBER, value)
+
+
+def _parsed_body(*body_tokens: Token) -> tuple[BlockItem, ...]:
+    """Parse a minimal function from the given body tokens and return the body tuple.
+
+    Args:
+        body_tokens: Token sequence that forms the function body (between braces).
+
+    Returns:
+        The ``body`` tuple of ``BlockItem`` nodes from the parsed function.
+    """
+    tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, *body_tokens, _RBRACE]
+    return parse(tokens).functions[0].body
+
+
+def _parsed_stmt(*body_tokens: Token) -> Statement:
+    """Parse a function body and return the first statement node.
+
+    Args:
+        body_tokens: Token sequence forming the first (and only expected) statement.
+
+    Returns:
+        The ``Statement`` node from the first block item of the parsed body.
+    """
+    body = _parsed_body(*body_tokens)
+    item = body[0]
+    assert isinstance(item, S)
+    return item.statement
 
 
 def _parsed_exp(*exp_tokens: Token) -> Exp:
@@ -629,3 +673,174 @@ class TestIncDecExpressions:
         assert _parsed_exp(_INCREMENT, _ident("a"), _INCREMENT) == Unary(
             PreIncrement(), Unary(PostIncrement(), Var("a"))
         )
+
+
+# ---------------------------------------------------------------------------
+# If / else statements (_parse_statement → IF case)
+# ---------------------------------------------------------------------------
+
+
+class TestIfStatements:
+    """Parser correctly builds ``If`` nodes for if/else statements."""
+
+    def test_if_without_else(self) -> None:
+        """``if (1) return 0;`` → ``If(condition=Constant(1), then=Return(Constant(0)), else_=None)``."""
+        result = _parsed_stmt(_IF, _LPAREN, _number("1"), _RPAREN, _RETURN, _number("0"), _SEMICOLON)
+        assert result == If(condition=Constant(1), then=Return(exp=Constant(0)), else_=None)
+
+    def test_if_with_else(self) -> None:
+        """``if (1) return 1; else return 0;`` → ``If`` with both branches populated."""
+        result = _parsed_stmt(
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+            _ELSE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+        )
+        assert result == If(
+            condition=Constant(1),
+            then=Return(exp=Constant(1)),
+            else_=Return(exp=Constant(0)),
+        )
+
+    def test_if_null_then_clause(self) -> None:
+        """``if (1);`` → ``If`` whose ``then`` is a ``Null`` statement."""
+        result = _parsed_stmt(_IF, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
+        assert result == If(condition=Constant(1), then=Null(), else_=None)
+
+    def test_if_null_else_clause(self) -> None:
+        """``if (1) return 1; else;`` → ``If`` whose ``else_`` is a ``Null`` statement."""
+        result = _parsed_stmt(
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+            _ELSE,
+            _SEMICOLON,
+        )
+        assert result == If(
+            condition=Constant(1),
+            then=Return(exp=Constant(1)),
+            else_=Null(),
+        )
+
+    def test_if_without_else_does_not_consume_next_statement(self) -> None:
+        """``if (1) return 1; return 0;`` — the ``return 0`` is not swallowed by the if."""
+        body = _parsed_body(
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+        )
+        assert len(body) == 2
+        item = body[1]
+        assert isinstance(item, S)
+        assert item.statement == Return(exp=Constant(0))
+
+    def test_dangling_else_binds_to_nearest_if(self) -> None:
+        """``if (1) if (2) return 2; else return 1;`` — else belongs to the inner if (C rule)."""
+        result = _parsed_stmt(
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _IF,
+            _LPAREN,
+            _number("2"),
+            _RPAREN,
+            _RETURN,
+            _number("2"),
+            _SEMICOLON,
+            _ELSE,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+        )
+        assert result == If(
+            condition=Constant(1),
+            then=If(
+                condition=Constant(2),
+                then=Return(exp=Constant(2)),
+                else_=Return(exp=Constant(1)),
+            ),
+            else_=None,
+        )
+
+    def test_if_condition_is_arbitrary_expression(self) -> None:
+        """``if (a > 1) return a;`` — comparison expression as condition."""
+        result = _parsed_stmt(
+            _IF,
+            _LPAREN,
+            _ident("a"),
+            _GT,
+            _number("1"),
+            _RPAREN,
+            _RETURN,
+            _ident("a"),
+            _SEMICOLON,
+        )
+        assert result == If(
+            condition=Binary(GreaterThan(), Var("a"), Constant(1)),
+            then=Return(exp=Var("a")),
+            else_=None,
+        )
+
+    def test_if_then_is_expression_statement(self) -> None:
+        """``if (1) a;`` — expression statement (not return) in the then branch."""
+        result = _parsed_stmt(_IF, _LPAREN, _number("1"), _RPAREN, _ident("a"), _SEMICOLON)
+        assert result == If(condition=Constant(1), then=Expression(exp=Var("a")), else_=None)
+
+    def test_if_missing_lparen(self) -> None:
+        """``if 1) return 0;`` — no opening parenthesis raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _IF,
+            _number("1"),
+            _RPAREN,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected LPAREN"):
+            parse(tokens)
+
+    def test_if_missing_rparen(self) -> None:
+        """``if (1 return 0;`` — no closing parenthesis raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected RPAREN"):
+            parse(tokens)

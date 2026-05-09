@@ -47,3 +47,18 @@ class Expression(Statement):
 @dataclass(frozen=True, slots=True)
 class Null(Statement):
     """An empty statement for when a placeholder is needed in the source."""
+
+
+@dataclass(frozen=True, slots=True)
+class If(Statement):
+    """An if statement along with optional else clause
+
+    Attributes:
+        condition: The condition to check
+        then: the statement to execute if the condition is truthy
+        else_: the statement to execute if the condition is falsy
+    """
+
+    condition: Exp
+    then: Statement
+    else_: Statement | None
