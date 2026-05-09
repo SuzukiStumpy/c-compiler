@@ -75,7 +75,7 @@
 | **Expression statement** | A statement consisting of a single expression evaluated for its side effects; the expression's value is discarded | — |
 | **Null statement** | An empty placeholder statement with no effect | Empty statement |
 | **Declaration** | An AST node representing a variable declaration, carrying the variable name and an optional initialiser expression | Variable declaration |
-| **Expression** | A syntactic construct that evaluates to a value; one of: constant, variable, unary operation, binary operation, or assignment | Value, rvalue |
+| **Expression** | A syntactic construct that evaluates to a value; one of: constant, variable, unary operation (including prefix/postfix increment and decrement), binary operation, or assignment | Value, rvalue |
 | **Integer constant expression** | The expression form consisting of a single integer literal | Literal expression, number expression |
 | **Variable expression** | The expression form consisting of a reference to a declared variable by name | Variable reference |
 | **Unary expression** | The expression form consisting of a unary operator applied to a single sub-expression | — |
@@ -105,11 +105,32 @@
 
 ### Unary operators
 
-| Term | C token | Definition |
-| ---- | ------- | ---------- |
-| **Complement** | `~` | Bitwise complement: flips every bit of the operand |
-| **Negate** | `-` | Arithmetic negation: computes the two's-complement negative of the operand |
-| **Not** | `!` | Logical negation: produces 1 if the operand is zero, 0 otherwise |
+| Term | C token | Form | Definition |
+| ---- | ------- | ---- | ---------- |
+| **Complement** | `~` | prefix | Bitwise complement: flips every bit of the operand |
+| **Negate** | `-` | prefix | Arithmetic negation: computes the two's-complement negative of the operand |
+| **Not** | `!` | prefix | Logical negation: produces 1 if the operand is zero, 0 otherwise |
+| **PreIncrement** | `++` | prefix | Increments the operand by 1 and evaluates to the new value |
+| **PreDecrement** | `--` | prefix | Decrements the operand by 1 and evaluates to the new value |
+| **PostIncrement** | `++` | postfix | Evaluates to the operand's current value, then increments it by 1 |
+| **PostDecrement** | `--` | postfix | Evaluates to the operand's current value, then decrements it by 1 |
+
+### Compound assignment operators
+
+Compound assignments are syntactic sugar desugared by the parser into a plain `Assignment` wrapping a `Binary` operation. They do not introduce new AST nodes.
+
+| Token | Desugars to |
+| ----- | ----------- |
+| `+=` | `x = x + <rhs>` |
+| `-=` | `x = x - <rhs>` |
+| `*=` | `x = x * <rhs>` |
+| `/=` | `x = x / <rhs>` |
+| `%=` | `x = x % <rhs>` |
+| `&=` | `x = x & <rhs>` |
+| `\|=` | `x = x \| <rhs>` |
+| `^=` | `x = x ^ <rhs>` |
+| `<<=` | `x = x << <rhs>` |
+| `>>=` | `x = x >> <rhs>` |
 
 ### Binary operators — arithmetic
 

@@ -165,3 +165,43 @@ def test_lexer_error_reports_correct_column_number(preprocess_c_file: Preprocess
     with pytest.raises(LexerError) as exc_info:
         lexer(preprocess_c_file("invalid/bad_char.c"))
     assert exc_info.value.col == 12
+
+
+# ---------------------------------------------------------------------------
+# Multi-character token disambiguation
+# ---------------------------------------------------------------------------
+
+
+def test_increment_is_single_token_not_two_plus(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/inc_dec.c"))
+    types = [t.type for t in tokens]
+    assert TokenType.INCREMENT in types
+    assert TokenType.PLUS not in types
+
+
+def test_decrement_is_single_token_not_two_minus(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/inc_dec.c"))
+    types = [t.type for t in tokens]
+    assert TokenType.DECREMENT in types
+    assert TokenType.MINUS not in types
+
+
+def test_plus_assign_is_single_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/compound_assign.c"))
+    types = [t.type for t in tokens]
+    assert TokenType.PLUS_ASSIGN in types
+    assert TokenType.PLUS not in types
+
+
+def test_lshift_assign_is_single_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/compound_assign.c"))
+    types = [t.type for t in tokens]
+    assert TokenType.LSHIFT_ASSIGN in types
+    assert TokenType.LSHIFT not in types
+
+
+def test_rshift_assign_is_single_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/compound_assign.c"))
+    types = [t.type for t in tokens]
+    assert TokenType.RSHIFT_ASSIGN in types
+    assert TokenType.RSHIFT not in types

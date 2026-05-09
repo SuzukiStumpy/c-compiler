@@ -613,3 +613,77 @@ class TestTacGeneratorDeclarations:
         assert isinstance(instrs[1], tac.Copy)
         assert instrs[1].src == instrs[0].dst
         assert instrs[1].dst == tac.Var(value="x")
+
+
+# ---------------------------------------------------------------------------
+# Pre/post increment and decrement desugaring
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorIncDecOperators:
+    """Pre/post increment and decrement desugar into Binary + Copy sequences."""
+
+    def test_pre_increment_full_sequence(self) -> None:
+        """``return ++x;`` → ``Binary(Add, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(x)``."""
+        instrs = _body(ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name="x")))
+        assert instrs == (
+            tac.Binary(
+                operator=tac.Add(), src1=tac.Var(value="x"), src2=tac.Constant(value=1), dst=tac.Var(value="tmp.0")
+            ),
+            tac.Copy(src=tac.Var(value="tmp.0"), dst=tac.Var(value="x")),
+            tac.Return(val=tac.Var(value="x")),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_pre_decrement_full_sequence(self) -> None:
+        """``return --x;`` → ``Binary(Sub, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(x)``."""
+        instrs = _body(ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name="x")))
+        assert instrs == (
+            tac.Binary(
+                operator=tac.Subtract(), src1=tac.Var(value="x"), src2=tac.Constant(value=1), dst=tac.Var(value="tmp.0")
+            ),
+            tac.Copy(src=tac.Var(value="tmp.0"), dst=tac.Var(value="x")),
+            tac.Return(val=tac.Var(value="x")),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_post_increment_full_sequence(self) -> None:
+        """``return x++;`` → ``Copy(x, old)``, ``Binary(Add, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(old)``."""
+        instrs = _body(ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name="x")))
+        assert instrs == (
+            tac.Copy(src=tac.Var(value="x"), dst=tac.Var(value="tmp.0")),
+            tac.Binary(
+                operator=tac.Add(), src1=tac.Var(value="x"), src2=tac.Constant(value=1), dst=tac.Var(value="tmp.1")
+            ),
+            tac.Copy(src=tac.Var(value="tmp.1"), dst=tac.Var(value="x")),
+            tac.Return(val=tac.Var(value="tmp.0")),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_post_decrement_full_sequence(self) -> None:
+        """``return x--;`` → ``Copy(x, old)``, ``Binary(Sub, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(old)``."""
+        instrs = _body(ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name="x")))
+        assert instrs == (
+            tac.Copy(src=tac.Var(value="x"), dst=tac.Var(value="tmp.0")),
+            tac.Binary(
+                operator=tac.Subtract(), src1=tac.Var(value="x"), src2=tac.Constant(value=1), dst=tac.Var(value="tmp.1")
+            ),
+            tac.Copy(src=tac.Var(value="tmp.1"), dst=tac.Var(value="x")),
+            tac.Return(val=tac.Var(value="tmp.0")),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_pre_increment_returns_new_value(self) -> None:
+        """``++x`` returns the variable itself (post-increment value)."""
+        instrs = _body(ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name="x")))
+        ret = instrs[-2]
+        assert isinstance(ret, tac.Return)
+        assert ret.val == tac.Var(value="x")
+
+    def test_post_increment_returns_original_value(self) -> None:
+        """``x++`` returns the saved copy, not the variable after increment."""
+        instrs = _body(ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name="x")))
+        ret = instrs[-2]
+        assert isinstance(ret, tac.Return)
+        assert ret.val == tac.Var(value="tmp.0")  # the saved copy, not Var("x")
+        assert ret.val != tac.Var(value="x")

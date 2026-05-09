@@ -46,6 +46,42 @@ class Not(UnaryOperator):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class PreIncrement(UnaryOperator):
+    """Enacts preincrementing of an expression.
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class PostIncrement(UnaryOperator):
+    """Enacts post incrementing of an expression.
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class PostDecrement(UnaryOperator):
+    """Enacts post decrementing of an expression.
+
+    Attributes:
+        None
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class PreDecrement(UnaryOperator):
+    """Enacts predecrementing of an expression.
+
+    Attributes:
+        None
+    """
+
+
 class BinaryOperator(ABC):
     """Abstract base for all binary operator nodes.
 

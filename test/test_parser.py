@@ -9,11 +9,15 @@ Covers the full range of constructs supported by the current grammar:
     statement           ::= "return" exp ";"
                           | exp ";"
                           | ";"
-    exp                 ::= factor | exp binop exp | exp "=" exp
-    factor              ::= int | identifier | unop factor | "(" exp ")"
-    unop                ::= "-" | "~" | "!"
+    exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
+    factor              ::= prefix_unop factor | primary postfix_unop?
+    primary             ::= int | identifier | "(" exp ")"
+    prefix_unop         ::= "-" | "~" | "!" | "++" | "--"
+    postfix_unop        ::= "++" | "--"
     binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
                           | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
+    assignop            ::= "+=" | "-=" | "*=" | "/=" | "%="
+                          | "&=" | "|=" | "^=" | "<<=" | ">>="
     identifier          ::= ? An identifier token ?
     int                 ::= ? A constant token ?
 
@@ -25,7 +29,7 @@ import pytest
 
 from compiler.parser import parse
 from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return, S
-from compiler.syntax.ast.expressions import Binary, Exp, Unary
+from compiler.syntax.ast.expressions import Binary, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
     And,
@@ -45,6 +49,10 @@ from compiler.syntax.ast.operators import (
     Not,
     NotEqual,
     Or,
+    PostDecrement,
+    PostIncrement,
+    PreDecrement,
+    PreIncrement,
     Remainder,
     RightShift,
     Subtract,
@@ -100,6 +108,8 @@ _CARET = _tok(TokenType.CARET, "^")
 _PIPE = _tok(TokenType.PIPE, "|")
 _NOT = _tok(TokenType.NOT, "!")
 _AND = _tok(TokenType.AND, "&&")
+_INCREMENT = _tok(TokenType.INCREMENT, "++")
+_DECREMENT = _tok(TokenType.DECREMENT, "--")
 _OR = _tok(TokenType.OR, "||")
 _EQ = _tok(TokenType.EQ, "==")
 _NEQ = _tok(TokenType.NEQ, "!=")
@@ -578,4 +588,44 @@ class TestLogicalExpressions:
         """``1 || 2 || 3`` → ``Or(Or(1, 2), 3)``."""
         assert _parsed_exp(_number("1"), _OR, _number("2"), _OR, _number("3")) == Binary(
             Or(), Binary(Or(), Constant(1), Constant(2)), Constant(3)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Prefix and postfix increment / decrement (_parse_factor)
+# ---------------------------------------------------------------------------
+
+
+class TestIncDecExpressions:
+    """Parser correctly builds Unary nodes for prefix and postfix ++/-- operators."""
+
+    def test_prefix_increment(self) -> None:
+        """``return ++a;`` → ``Unary(PreIncrement(), Var("a"))``."""
+        assert _parsed_exp(_INCREMENT, _ident("a")) == Unary(PreIncrement(), Var("a"))
+
+    def test_prefix_decrement(self) -> None:
+        """``return --a;`` → ``Unary(PreDecrement(), Var("a"))``."""
+        assert _parsed_exp(_DECREMENT, _ident("a")) == Unary(PreDecrement(), Var("a"))
+
+    def test_postfix_increment(self) -> None:
+        """``return a++;`` → ``Unary(PostIncrement(), Var("a"))``."""
+        assert _parsed_exp(_ident("a"), _INCREMENT) == Unary(PostIncrement(), Var("a"))
+
+    def test_postfix_decrement(self) -> None:
+        """``return a--;`` → ``Unary(PostDecrement(), Var("a"))``."""
+        assert _parsed_exp(_ident("a"), _DECREMENT) == Unary(PostDecrement(), Var("a"))
+
+    def test_chained_postfix_increment_then_decrement(self) -> None:
+        """``return a++--;`` → ``Unary(PostDecrement(), Unary(PostIncrement(), Var("a")))``."""
+        assert _parsed_exp(_ident("a"), _INCREMENT, _DECREMENT) == Unary(
+            PostDecrement(), Unary(PostIncrement(), Var("a"))
+        )
+
+    def test_postfix_binds_tighter_than_prefix(self) -> None:
+        """``return ++a++;`` → ``Unary(PreIncrement(), Unary(PostIncrement(), Var("a")))``.
+
+        Postfix is parsed as part of the primary before prefix wraps it.
+        """
+        assert _parsed_exp(_INCREMENT, _ident("a"), _INCREMENT) == Unary(
+            PreIncrement(), Unary(PostIncrement(), Var("a"))
         )

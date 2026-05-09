@@ -16,6 +16,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | Binary(binary_operator, exp, exp)
                         | Assignment(exp, exp)
     unary_operator      = Complement | Negate | Not
+                        | PreIncrement | PreDecrement
+                        | PostIncrement | PostDecrement
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
                         | And | Or | Equal | NotEqual | LessThan | LessOrEqual
@@ -29,7 +31,9 @@ Nodes are organised into submodules by logical role:
     statements   — Statement nodes (Statement, Return)
     declarations — Program structure nodes (Parameter, Function, Program)
     operators    — Operators which act upon expressions
-                   (Complement, Negate, Not, Add, Subtract, Multiply, Divide, Remainder,
+                   (Complement, Negate, Not,
+                   PreIncrement, PreDecrement, PostIncrement, PostDecrement,
+                   Add, Subtract, Multiply, Divide, Remainder,
                    LeftShift, RightShift, BitwiseAnd, BitwiseXor, BitwiseOr,
                    And, Or, Equal, NotEqual, LessThan, LessOrEqual,
                    GreaterThan, GreaterOrEqual)
@@ -66,6 +70,10 @@ from compiler.syntax.ast.operators import (
     Not,
     NotEqual,
     Or,
+    PostDecrement,
+    PostIncrement,
+    PreDecrement,
+    PreIncrement,
     Remainder,
     RightShift,
     Subtract,
@@ -76,6 +84,10 @@ from compiler.syntax.ast.statements import Expression, Null, Return, Statement
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "PostDecrement",
+    "PostIncrement",
+    "PreIncrement",
+    "PreDecrement",
     "Expression",
     "Null",
     "Var",

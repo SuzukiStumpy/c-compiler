@@ -28,9 +28,21 @@ class TokenType(Enum):
     SEMICOLON = auto()
     # Boolean Operators
     BITWISE_NOT = auto()
+    # Compound Assignment Operators
+    PLUS_ASSIGN = auto()  # +=
+    MINUS_ASSIGN = auto()  # -=
+    MUL_ASSIGN = auto()  # *=
+    DIV_ASSIGN = auto()  # /=
+    MOD_ASSIGN = auto()  # %=
+    BITWISE_AND_ASSIGN = auto()  # &=
+    BITWISE_OR_ASSIGN = auto()  # \|=
+    BITWISE_XOR_ASSIGN = auto()  # \^=
+    LSHIFT_ASSIGN = auto()  # <<=
+    RSHIFT_ASSIGN = auto()  # >>=
     # Unary Operators
     MINUS = auto()  # This is also a binary operator, which we disambiguate in the parser
     DECREMENT = auto()
+    INCREMENT = auto()
     # Binary Operators
     PLUS = auto()
     TIMES = auto()

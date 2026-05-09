@@ -13,6 +13,14 @@ The translation follows this mapping:
     ast.Constant(v)            → tac.Constant(v)   (no extra instructions)
     ast.Unary(op, inner)       → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
                                  returns tmp as the result val
+    ast.Unary(PreIncrement, x) → [Binary(Add, x, 1, tmp), Copy(tmp, x)]
+                                 returns x (new value)
+    ast.Unary(PreDecrement, x) → [Binary(Sub, x, 1, tmp), Copy(tmp, x)]
+                                 returns x (new value)
+    ast.Unary(PostIncrement,x) → [Copy(x, old), Binary(Add, x, 1, tmp), Copy(tmp, x)]
+                                 returns old (original value)
+    ast.Unary(PostDecrement,x) → [Copy(x, old), Binary(Sub, x, 1, tmp), Copy(tmp, x)]
+                                 returns old (original value)
     ast.Binary(op, l, r)       → <emit(l)> + <emit(r)>
       (arithmetic / bitwise /    + [tac.Binary(op, l_val, r_val, tmp)]
        comparison operators)     returns tmp as the result val
@@ -249,6 +257,38 @@ class _TacGenerator:
         match exp:
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
+            case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
+                var = tac.Var(value=name)
+                tmp = self._make_temp()
+                return var, [
+                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(value=1), dst=tmp),
+                    tac.Copy(src=tmp, dst=var),
+                ]
+            case ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name=name)):
+                var = tac.Var(value=name)
+                tmp = self._make_temp()
+                return var, [
+                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(value=1), dst=tmp),
+                    tac.Copy(src=tmp, dst=var),
+                ]
+            case ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name=name)):
+                var = tac.Var(value=name)
+                old = self._make_temp()
+                tmp = self._make_temp()
+                return old, [
+                    tac.Copy(src=var, dst=old),
+                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(value=1), dst=tmp),
+                    tac.Copy(src=tmp, dst=var),
+                ]
+            case ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name=name)):
+                var = tac.Var(value=name)
+                old = self._make_temp()
+                tmp = self._make_temp()
+                return old, [
+                    tac.Copy(src=var, dst=old),
+                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(value=1), dst=tmp),
+                    tac.Copy(src=tmp, dst=var),
+                ]
             case ast.Unary(operator=op, exp=inner):
                 src, inner_instrs = self.translate_exp(inner)
                 dst = self._make_temp()

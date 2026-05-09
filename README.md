@@ -12,8 +12,11 @@ The compiler currently handles:
 - Logical operators with short-circuit evaluation: `!`, `&&`, `||`
 - Relational operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
 - Unary negation (`-`) and bitwise complement (`~`)
+- Prefix increment and decrement: `++x`, `--x`
+- Postfix increment and decrement: `x++`, `x--`
 - Local variable declarations (`int x;`, `int x = <expr>;`)
 - Variable assignment (`x = <expr>`)
+- Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - Expression statements (expressions evaluated for side effects)
 
 ## Prerequisites

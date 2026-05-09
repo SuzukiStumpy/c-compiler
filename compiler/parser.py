@@ -10,11 +10,15 @@ which are handled by precedence climbing.  The grammar is:
     statement           ::= "return" exp ";"
                           | exp ";"
                           | ";"
-    exp                 ::= factor | exp binop exp | exp "=" exp
-    factor              ::= int | identifier | unop factor | "(" exp ")"
-    unop                ::= "-" | "~" | "!"
+    exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
+    factor              ::= prefix_unop factor | primary postfix_unop?
+    primary             ::= int | identifier | "(" exp ")"
+    prefix_unop         ::= "-" | "~" | "!" | "++" | "--"
+    postfix_unop        ::= "++" | "--"
     binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
                           | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
+    assignop            ::= "+=" | "-=" | "*=" | "/=" | "%="
+                          | "&=" | "|=" | "^=" | "<<=" | ">>="
     identifier          ::= ? An identifier token ?
     int                 ::= ? A constant token ?
 
@@ -60,6 +64,10 @@ from compiler.syntax.ast import (
     Null,
     Or,
     Parameter,
+    PostDecrement,
+    PostIncrement,
+    PreDecrement,
+    PreIncrement,
     Program,
     Remainder,
     Return,
@@ -80,6 +88,16 @@ from compiler.utils.exceptions import ParseError
 # binary operators and will terminate the climbing loop.
 _BINARY_PRECEDENCE: dict[TokenType, int] = {
     TokenType.ASSIGNMENT: 1,
+    TokenType.PLUS_ASSIGN: 1,
+    TokenType.MINUS_ASSIGN: 1,
+    TokenType.MUL_ASSIGN: 1,
+    TokenType.DIV_ASSIGN: 1,
+    TokenType.MOD_ASSIGN: 1,
+    TokenType.BITWISE_AND_ASSIGN: 1,
+    TokenType.BITWISE_OR_ASSIGN: 1,
+    TokenType.BITWISE_XOR_ASSIGN: 1,
+    TokenType.LSHIFT_ASSIGN: 1,
+    TokenType.RSHIFT_ASSIGN: 1,
     TokenType.OR: 5,
     TokenType.AND: 10,
     TokenType.PIPE: 15,
@@ -155,6 +173,42 @@ class Parser:
         self._pos += 1
         return token
 
+    def _consume_compound_assignment(self) -> BinaryOperator:
+        """Consumes a compound assignment operator and returns the actual
+        binary operator which it encodes.
+
+        Returns:
+            The correct binary operator to which the compound assignment refers
+
+        Raises:
+            ParserError: If the stream is already exhausted, or if an incorrect token type
+                has been passed in.
+        """
+        token = self._consume()
+        match token.type:
+            case TokenType.PLUS_ASSIGN:
+                return Add()
+            case TokenType.MINUS_ASSIGN:
+                return Subtract()
+            case TokenType.MUL_ASSIGN:
+                return Multiply()
+            case TokenType.DIV_ASSIGN:
+                return Divide()
+            case TokenType.MOD_ASSIGN:
+                return Remainder()
+            case TokenType.BITWISE_AND_ASSIGN:
+                return BitwiseAnd()
+            case TokenType.BITWISE_OR_ASSIGN:
+                return BitwiseOr()
+            case TokenType.BITWISE_XOR_ASSIGN:
+                return BitwiseXor()
+            case TokenType.LSHIFT_ASSIGN:
+                return LeftShift()
+            case TokenType.RSHIFT_ASSIGN:
+                return RightShift()
+            case _:
+                raise self._token_error("expected a compound assignment operator", token)
+
     def _expect(self, token_type: TokenType) -> Token:
         """Consume the next token, raising ``ParseError`` if its type does not match.
 
@@ -191,6 +245,38 @@ class Parser:
         """
         token = self._peek()
         return token is not None and token.type == token_type
+
+    def _match_compound_assignment(self) -> bool:
+        """Return ``True`` if the next token's type is one of the compound assignment
+        tokens.  Does not consume the token.  Returns ``False`` at end of stream.
+
+        Args:
+            token_type: The token type to test against.
+
+        Returns:
+            ``True`` when the next token has the given type, ``False`` otherwise.
+        """
+        token = self._peek()
+
+        if token is None:
+            return False
+
+        match token.type:
+            case (
+                TokenType.PLUS_ASSIGN
+                | TokenType.MINUS_ASSIGN
+                | TokenType.MUL_ASSIGN
+                | TokenType.DIV_ASSIGN
+                | TokenType.MOD_ASSIGN
+                | TokenType.BITWISE_AND_ASSIGN
+                | TokenType.BITWISE_OR_ASSIGN
+                | TokenType.BITWISE_XOR_ASSIGN
+                | TokenType.LSHIFT_ASSIGN
+                | TokenType.RSHIFT_ASSIGN
+            ):
+                return True
+            case _:
+                return False
 
     def _get_precedence(self) -> int | None:
         """Return the binary-operator precedence of the next token, or ``None``.
@@ -476,6 +562,10 @@ class Parser:
                 return Negate()
             case TokenType.NOT:
                 return Not()
+            case TokenType.INCREMENT:
+                return PreIncrement()
+            case TokenType.DECREMENT:
+                return PreDecrement()
             case _:
                 raise self._token_error("Syntax Error: Expected a unary operator token.", token)
 
@@ -553,6 +643,10 @@ class Parser:
                 self._consume()
                 right = self._parse_exp(prec)  # right-associative
                 left = Assignment(left, right)
+            elif self._match_compound_assignment():
+                op = self._consume_compound_assignment()
+                right = self._parse_exp(prec)
+                left = Assignment(left, Binary(op, left, right))
             else:
                 op = self._parse_binop()
                 right = self._parse_exp(prec + 1)  # left-associative
@@ -561,11 +655,19 @@ class Parser:
         return left
 
     def _parse_factor(self) -> Exp:
-        """Parse a factor: a constant, a unary expression, or a parenthesised expression.
+        """Parse a factor: a primary expression optionally wrapped in prefix/postfix operators.
+
+        Prefix unary operators (``-``, ``~``, ``!``, ``++``, ``--``) are parsed
+        recursively and returned immediately. Primary expressions (constants,
+        identifiers, parenthesised expressions) are then checked for a trailing
+        postfix ``++`` or ``--`` before returning.
 
         Grammar::
 
-            factor ::= int | unop factor | "(" exp ")"
+            factor   ::= prefix_unop factor | primary postfix_unop?
+            primary  ::= int | identifier | "(" exp ")"
+            prefix_unop  ::= "-" | "~" | "!" | "++" | "--"
+            postfix_unop ::= "++" | "--"
 
         Returns:
             An ``Exp`` node.
@@ -579,22 +681,29 @@ class Parser:
             raise self._eof_error("Syntax error: expected expression, got end of input")
 
         match token.type:
+            case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
+                return Unary(self._parse_unaryop(), self._parse_factor())
             case TokenType.NUMBER:
-                return self._parse_constant()
+                primary: Exp = self._parse_constant()
             case TokenType.IDENTIFIER:
                 self._consume()
-                return Var(name=token.value)
-            case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT:
-                operator = self._parse_unaryop()
-                inner_exp = self._parse_factor()
-                return Unary(operator, inner_exp)
+                primary = Var(name=token.value)
             case TokenType.LPAREN:
                 self._consume()
-                inner_exp = self._parse_exp()
+                primary = self._parse_exp()
                 self._expect(TokenType.RPAREN)
-                return inner_exp
             case _:
                 raise self._token_error("Syntax error: Malformed expression.", token)
+
+        while True:
+            if self._match(TokenType.INCREMENT):
+                self._consume()
+                primary = Unary(PostIncrement(), primary)
+            elif self._match(TokenType.DECREMENT):
+                self._consume()
+                primary = Unary(PostDecrement(), primary)
+            else:
+                return primary
 
     def _parse_constant(self) -> Constant:
         """Parse an integer constant expression.
