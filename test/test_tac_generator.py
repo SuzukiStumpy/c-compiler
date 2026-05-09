@@ -687,3 +687,240 @@ class TestTacGeneratorIncDecOperators:
         assert isinstance(ret, tac.Return)
         assert ret.val == tac.Var(value="tmp.0")  # the saved copy, not Var("x")
         assert ret.val != tac.Var(value="x")
+
+
+# ---------------------------------------------------------------------------
+# If statement
+# ---------------------------------------------------------------------------
+
+
+def _if_instrs(stmt: ast.If) -> tuple[tac.Instruction, ...]:
+    """Translate a single ``If`` statement and return the resulting TAC instructions.
+
+    Args:
+        stmt: The ``If`` node to translate.
+
+    Returns:
+        The TAC instruction tuple from the generated function body.
+    """
+    return _instrs_for_body((ast.S(statement=stmt),))
+
+
+class TestTacGeneratorIfStatement:
+    """``ast.If`` translates to the correct conditional jump sequence."""
+
+    def test_if_without_else_full_sequence(self) -> None:
+        """``if (1) return 2;`` → ``JumpIfZero``, then-body, end-label, guard."""
+        instrs = _if_instrs(
+            ast.If(
+                condition=ast.Constant(value=1),
+                then=ast.Return(exp=ast.Constant(value=2)),
+                else_=None,
+            )
+        )
+        assert instrs == (
+            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_end.0"),
+            tac.Return(val=tac.Constant(value=2)),
+            tac.Label(name="if_end.0"),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_if_with_else_full_sequence(self) -> None:
+        """``if (1) return 2; else return 3;`` → ``JumpIfZero``,
+        then-body, ``Jump``, else-label, else-body, end-label, guard."""
+        instrs = _if_instrs(
+            ast.If(
+                condition=ast.Constant(value=1),
+                then=ast.Return(exp=ast.Constant(value=2)),
+                else_=ast.Return(exp=ast.Constant(value=3)),
+            )
+        )
+        assert instrs == (
+            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_else.0"),
+            tac.Return(val=tac.Constant(value=2)),
+            tac.Jump(target="if_end.1"),
+            tac.Label(name="if_else.0"),
+            tac.Return(val=tac.Constant(value=3)),
+            tac.Label(name="if_end.1"),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_condition_instructions_precede_jump(self) -> None:
+        """A non-trivial condition is fully evaluated before the conditional jump."""
+        instrs = _if_instrs(
+            ast.If(
+                condition=ast.Unary(operator=ast.Not(), exp=ast.Constant(value=1)),
+                then=ast.Return(exp=ast.Constant(value=0)),
+                else_=None,
+            )
+        )
+        assert isinstance(instrs[0], tac.Unary)
+        assert instrs[0].operator == tac.Not()
+        assert isinstance(instrs[1], tac.JumpIfZero)
+        assert instrs[1].condition == instrs[0].dst
+
+    def test_null_then_clause_emits_no_then_instructions(self) -> None:
+        """``if (1);`` — a ``Null`` then-branch contributes no instructions between the jump and the end-label."""
+        instrs = _if_instrs(
+            ast.If(
+                condition=ast.Constant(value=1),
+                then=ast.Null(),
+                else_=None,
+            )
+        )
+        assert instrs == (
+            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_end.0"),
+            tac.Label(name="if_end.0"),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_null_else_clause_emits_no_else_instructions(self) -> None:
+        """``if (1) return 2; else;`` — a ``Null`` else-branch produces adjacent labels."""
+        instrs = _if_instrs(
+            ast.If(
+                condition=ast.Constant(value=1),
+                then=ast.Return(exp=ast.Constant(value=2)),
+                else_=ast.Null(),
+            )
+        )
+        assert instrs == (
+            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_else.0"),
+            tac.Return(val=tac.Constant(value=2)),
+            tac.Jump(target="if_end.1"),
+            tac.Label(name="if_else.0"),
+            tac.Label(name="if_end.1"),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_labels_are_unique_across_nested_if_statements(self) -> None:
+        """Nested ``if`` statements each receive distinct label names."""
+        inner = ast.If(
+            condition=ast.Constant(value=2),
+            then=ast.Return(exp=ast.Constant(value=1)),
+            else_=None,
+        )
+        outer = ast.If(
+            condition=ast.Constant(value=1),
+            then=inner,
+            else_=None,
+        )
+        instrs = _if_instrs(outer)
+        label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
+        assert len(label_names) == len(set(label_names))
+        assert len(label_names) == 2  # one end-label per if-without-else
+
+
+# ---------------------------------------------------------------------------
+# Conditional (ternary) expressions
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorConditionalExpression:
+    """``ast.Conditional`` translates to the correct ternary jump-and-copy sequence."""
+
+    def test_full_instruction_sequence(self) -> None:
+        """``return 1 ? 2 : 3;`` emits the full ternary sequence followed by the guard."""
+        instrs = _body(
+            ast.Conditional(
+                condition=ast.Constant(value=1),
+                exp_true=ast.Constant(value=2),
+                exp_false=ast.Constant(value=3),
+            )
+        )
+        assert instrs == (
+            tac.JumpIfZero(condition=tac.Constant(value=1), target="cond_false.0"),
+            tac.Copy(src=tac.Constant(value=2), dst=tac.Var(value="tmp.0")),
+            tac.Jump(target="cond_end.1"),
+            tac.Label(name="cond_false.0"),
+            tac.Copy(src=tac.Constant(value=3), dst=tac.Var(value="tmp.0")),
+            tac.Label(name="cond_end.1"),
+            tac.Return(val=tac.Var(value="tmp.0")),
+            tac.Return(val=tac.Constant(value=0)),
+        )
+
+    def test_condition_instructions_precede_jump(self) -> None:
+        """A non-trivial condition is fully evaluated before the conditional jump."""
+        instrs = _body(
+            ast.Conditional(
+                condition=ast.Unary(operator=ast.Not(), exp=ast.Constant(value=1)),
+                exp_true=ast.Constant(value=2),
+                exp_false=ast.Constant(value=3),
+            )
+        )
+        assert isinstance(instrs[0], tac.Unary)
+        assert instrs[0].operator == tac.Not()
+        assert isinstance(instrs[1], tac.JumpIfZero)
+        assert instrs[1].condition == instrs[0].dst
+
+    def test_true_branch_instructions_precede_copy(self) -> None:
+        """A non-trivial true branch is evaluated before its result is copied into the destination."""
+        instrs = _body(
+            ast.Conditional(
+                condition=ast.Constant(value=1),
+                exp_true=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)),
+                exp_false=ast.Constant(value=3),
+            )
+        )
+        # JumpIfZero, then: Unary(Negate, 2, tmp), Copy(tmp, dst)
+        assert isinstance(instrs[1], tac.Unary)
+        assert isinstance(instrs[2], tac.Copy)
+        assert instrs[2].src == instrs[1].dst
+
+    def test_false_branch_instructions_precede_copy(self) -> None:
+        """A non-trivial false branch is evaluated before its result is copied into the destination."""
+        instrs = _body(
+            ast.Conditional(
+                condition=ast.Constant(value=1),
+                exp_true=ast.Constant(value=2),
+                exp_false=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=3)),
+            )
+        )
+        # Locate the cond_false label, then check Unary followed by Copy
+        false_label_idx = next(i for i, x in enumerate(instrs) if isinstance(x, tac.Label))
+        assert isinstance(instrs[false_label_idx + 1], tac.Unary)
+        assert isinstance(instrs[false_label_idx + 2], tac.Copy)
+        assert instrs[false_label_idx + 2].src == instrs[false_label_idx + 1].dst
+
+    def test_both_branches_write_to_same_destination(self) -> None:
+        """Both the true and false branches copy their result into the same temporary."""
+        instrs = _body(
+            ast.Conditional(
+                condition=ast.Constant(value=1),
+                exp_true=ast.Constant(value=2),
+                exp_false=ast.Constant(value=3),
+            )
+        )
+        copies = [i for i in instrs if isinstance(i, tac.Copy)]
+        assert len(copies) == 2
+        assert copies[0].dst == copies[1].dst
+
+    def test_result_is_returned(self) -> None:
+        """The ``Return`` instruction uses the shared temporary written by both branches."""
+        instrs = _body(
+            ast.Conditional(
+                condition=ast.Constant(value=1),
+                exp_true=ast.Constant(value=2),
+                exp_false=ast.Constant(value=3),
+            )
+        )
+        copies = [i for i in instrs if isinstance(i, tac.Copy)]
+        ret = instrs[-2]  # penultimate; last is the function guard
+        assert isinstance(ret, tac.Return)
+        assert ret.val == copies[0].dst
+
+    def test_labels_unique_across_nested_conditionals(self) -> None:
+        """Nested ternary expressions each receive distinct label names."""
+        inner = ast.Conditional(
+            condition=ast.Constant(value=2),
+            exp_true=ast.Constant(value=3),
+            exp_false=ast.Constant(value=4),
+        )
+        outer = ast.Conditional(
+            condition=ast.Constant(value=1),
+            exp_true=inner,
+            exp_false=ast.Constant(value=5),
+        )
+        instrs = _body(outer)
+        label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
+        assert len(label_names) == len(set(label_names))
+        assert len(label_names) == 4  # two labels per ternary

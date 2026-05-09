@@ -138,6 +138,8 @@ class SemanticAnalyser:
                 return ast.Unary(op, self.resolve_exp(exp))
             case ast.Binary(operator=op, left=left, right=right):
                 return ast.Binary(op, self.resolve_exp(left), self.resolve_exp(right))
+            case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
+                return ast.Conditional(self.resolve_exp(cond), self.resolve_exp(exp_true), self.resolve_exp(exp_false))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -165,6 +167,12 @@ class SemanticAnalyser:
                 return ast.Expression(self.resolve_exp(exp))
             case ast.Null():
                 return statement
+            case ast.If(condition=cond, then=then_stmt, else_=None):
+                return ast.If(self.resolve_exp(cond), self._resolve_statement(then_stmt), None)
+            case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
+                return ast.If(
+                    self.resolve_exp(cond), self._resolve_statement(then_stmt), self._resolve_statement(else_stmt)
+                )
             case _:
                 raise SemanticError("Unhandled statement type in semantic analyser")
 

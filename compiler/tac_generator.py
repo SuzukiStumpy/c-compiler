@@ -38,6 +38,23 @@ The translation follows this mapping:
                                     Copy(0, tmp), Jump(end_lbl),
                                     true_lbl, Copy(1, tmp), end_lbl]
                                  returns tmp as the result val
+    ast.If(cond, then, None)   → <emit(cond)>
+                                 + [JumpIfZero(cond_val, end_lbl)]
+                                 + <emit(then)>
+                                 + [end_lbl]
+    ast.Conditional(c, e1, e2) → <emit(c)>
+                                 + [JumpIfZero(c_val, false_lbl)]
+                                 + <emit(e1)>
+                                 + [Copy(e1_val, tmp), Jump(end_lbl), false_lbl]
+                                 + <emit(e2)>
+                                 + [Copy(e2_val, tmp), end_lbl]
+                                 returns tmp as the result val
+    ast.If(cond, then, else_)  → <emit(cond)>
+                                 + [JumpIfZero(cond_val, else_lbl)]
+                                 + <emit(then)>
+                                 + [Jump(end_lbl), else_lbl]
+                                 + <emit(else_)>
+                                 + [end_lbl]
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -233,6 +250,28 @@ class _TacGenerator:
                 return instr
             case ast.Null():
                 return []
+            case ast.If(condition=cond, then=then_stmt, else_=None):
+                cond_val, cond_instrs = self.translate_exp(cond)
+                label_end = self._make_label("if_end")
+                return [
+                    *cond_instrs,
+                    tac.JumpIfZero(condition=cond_val, target=label_end.name),
+                    *self.translate_statement(then_stmt),
+                    label_end,
+                ]
+            case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
+                cond_val, cond_instrs = self.translate_exp(cond)
+                label_else = self._make_label("if_else")
+                label_end = self._make_label("if_end")
+                return [
+                    *cond_instrs,
+                    tac.JumpIfZero(condition=cond_val, target=label_else.name),
+                    *self.translate_statement(then_stmt),
+                    tac.Jump(target=label_end.name),
+                    label_else,
+                    *self.translate_statement(else_stmt),
+                    label_end,
+                ]
             case _:
                 raise CodeGenerationError(f"unsupported statement type: {type(stmt).__name__}")
 
@@ -342,5 +381,23 @@ class _TacGenerator:
                 val, instrs = self.translate_exp(rvalue)
                 dst = tac.Var(value=name)
                 return dst, [*instrs, tac.Copy(src=val, dst=dst)]
+            case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
+                cond_val, cond_instrs = self.translate_exp(cond)
+                label_false = self._make_label("cond_false")
+                label_end = self._make_label("cond_end")
+                dst = self._make_temp()
+                e1_val, e1_instrs = self.translate_exp(exp_true)
+                e2_val, e2_instrs = self.translate_exp(exp_false)
+                return dst, [
+                    *cond_instrs,
+                    tac.JumpIfZero(condition=cond_val, target=label_false.name),
+                    *e1_instrs,
+                    tac.Copy(src=e1_val, dst=dst),
+                    tac.Jump(target=label_end.name),
+                    label_false,
+                    *e2_instrs,
+                    tac.Copy(src=e2_val, dst=dst),
+                    label_end,
+                ]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

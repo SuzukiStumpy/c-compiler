@@ -190,6 +190,34 @@ class TestResolveExp:
         with pytest.raises(SemanticError, match="Invalid lvalue"):
             analyser.resolve_exp(ast.Assignment(lvalue=ast.Constant(value=1), rvalue=ast.Constant(value=2)))
 
+    def test_conditional_recurses_into_all_three_branches(self) -> None:
+        """All three sub-expressions of a ``Conditional`` are resolved independently."""
+        analyser = self._analyser_with("x", "y")
+        result = analyser.resolve_exp(
+            ast.Conditional(
+                condition=ast.Var(name="x"),
+                exp_true=ast.Var(name="x"),
+                exp_false=ast.Var(name="y"),
+            )
+        )
+        assert result == ast.Conditional(
+            condition=ast.Var(name=".Vx.0"),
+            exp_true=ast.Var(name=".Vx.0"),
+            exp_false=ast.Var(name=".Vy.1"),
+        )
+
+    def test_conditional_undeclared_variable_raises(self) -> None:
+        """An undeclared variable in any branch of a ``Conditional`` raises ``SemanticError``."""
+        analyser = self._analyser_with("x")
+        with pytest.raises(SemanticError, match="Undeclared"):
+            analyser.resolve_exp(
+                ast.Conditional(
+                    condition=ast.Var(name="x"),
+                    exp_true=ast.Constant(value=1),
+                    exp_false=ast.Var(name="undeclared"),
+                )
+            )
+
     def test_unknown_expression_type_raises(self) -> None:
         """An unrecognised ``Exp`` subclass raises ``SemanticError``."""
 
@@ -241,6 +269,141 @@ class TestResolveStatement:
 
         with pytest.raises(SemanticError, match="Unhandled statement type"):
             resolve(_program((ast.S(statement=_FakeStmt()),)))
+
+
+# ---------------------------------------------------------------------------
+# If statement resolution
+# ---------------------------------------------------------------------------
+
+
+class TestResolveIfStatement:
+    """``If`` statements propagate variable resolution into condition and both branches."""
+
+    def test_if_without_else_condition_is_resolved(self) -> None:
+        """The condition of an ``if``-without-``else`` has variable references renamed."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Var(name="x"),
+                    then=ast.Return(exp=ast.Constant(value=0)),
+                    else_=None,
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        item = resolved[1]
+        assert isinstance(item, ast.S)
+        assert isinstance(item.statement, ast.If)
+        assert item.statement.condition == ast.Var(name=".Vx.0")
+
+    def test_if_without_else_then_branch_is_resolved(self) -> None:
+        """The then-branch of an ``if``-without-``else`` has variable references renamed."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Return(exp=ast.Var(name="x")),
+                    else_=None,
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        item = resolved[1]
+        assert isinstance(item, ast.S)
+        assert isinstance(item.statement, ast.If)
+        assert item.statement.then == ast.Return(exp=ast.Var(name=".Vx.0"))
+
+    def test_if_with_else_all_three_parts_are_resolved(self) -> None:
+        """The condition, then-branch, and else-branch all have variable references renamed."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.D(declaration=ast.Declaration(name="y", init=None)),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Var(name="x"),
+                    then=ast.Return(exp=ast.Var(name="x")),
+                    else_=ast.Return(exp=ast.Var(name="y")),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        item = resolved[2]
+        assert isinstance(item, ast.S)
+        assert item.statement == ast.If(
+            condition=ast.Var(name=".Vx.0"),
+            then=ast.Return(exp=ast.Var(name=".Vx.0")),
+            else_=ast.Return(exp=ast.Var(name=".Vy.1")),
+        )
+
+    def test_undeclared_variable_in_condition_raises(self) -> None:
+        """An undeclared variable in the ``if`` condition raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Var(name="undeclared"),
+                    then=ast.Return(exp=ast.Constant(value=0)),
+                    else_=None,
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(_program(body))
+
+    def test_undeclared_variable_in_then_branch_raises(self) -> None:
+        """An undeclared variable in the then-branch raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Return(exp=ast.Var(name="undeclared")),
+                    else_=None,
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(_program(body))
+
+    def test_undeclared_variable_in_else_branch_raises(self) -> None:
+        """An undeclared variable in the else-branch raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Return(exp=ast.Constant(value=0)),
+                    else_=ast.Return(exp=ast.Var(name="undeclared")),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(_program(body))
+
+    def test_nested_if_variable_references_resolved(self) -> None:
+        """Variable references inside a nested ``if`` are resolved at all levels."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.D(declaration=ast.Declaration(name="y", init=None)),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Var(name="x"),
+                    then=ast.If(
+                        condition=ast.Var(name="y"),
+                        then=ast.Return(exp=ast.Var(name="x")),
+                        else_=None,
+                    ),
+                    else_=None,
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_if = resolved[2].statement
+        assert isinstance(outer_if, ast.If)
+        assert outer_if.condition == ast.Var(name=".Vx.0")
+        inner_if = outer_if.then
+        assert isinstance(inner_if, ast.If)
+        assert inner_if.condition == ast.Var(name=".Vy.1")
+        assert inner_if.then == ast.Return(exp=ast.Var(name=".Vx.0"))
 
 
 # ---------------------------------------------------------------------------
