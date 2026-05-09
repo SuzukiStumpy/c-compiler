@@ -510,3 +510,148 @@ class TestCounterIsolation:
         r2 = analyser.resolve_declaration(ast.Declaration(name="b", init=None))
         assert r1.name == ".Va.0"
         assert r2.name == ".Vb.1"
+
+
+# ---------------------------------------------------------------------------
+# Goto statement resolution
+# ---------------------------------------------------------------------------
+
+
+class TestResolveGoto:
+    """``Goto`` nodes are validated against the function's label set."""
+
+    def test_goto_valid_label_passes(self) -> None:
+        """``goto end;`` where ``end:`` exists in the same function resolves successfully."""
+        body = (
+            ast.S(statement=ast.Goto(target="end")),
+            ast.S(statement=ast.Label(name="end", statement=ast.Return(exp=ast.Constant(value=0)))),
+        )
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Goto(target="end"))
+
+    def test_goto_forward_reference_is_valid(self) -> None:
+        """A ``goto`` that precedes its target label in the body is permitted."""
+        body = (
+            ast.S(statement=ast.Goto(target="later")),
+            ast.S(statement=ast.Return(exp=ast.Constant(value=1))),
+            ast.S(statement=ast.Label(name="later", statement=ast.Return(exp=ast.Constant(value=0)))),
+        )
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Goto(target="later"))
+
+    def test_goto_label_inside_if_branch_is_valid(self) -> None:
+        """A label nested inside an ``if`` branch is still reachable by ``goto``."""
+        body = (
+            ast.S(statement=ast.Goto(target="nested")),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Label(name="nested", statement=ast.Return(exp=ast.Constant(value=0))),
+                    else_=None,
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Goto(target="nested"))
+
+    def test_goto_undefined_label_raises(self) -> None:
+        """A ``goto`` targeting a label not declared anywhere in the function raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Goto(target="nonexistent")),)
+        with pytest.raises(SemanticError, match="undefined label"):
+            resolve(_program(body))
+
+    def test_goto_target_name_not_confused_with_variable(self) -> None:
+        """A variable name identical to a label name does not satisfy the goto check."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="target", init=None)),
+            ast.S(statement=ast.Goto(target="target")),
+        )
+        with pytest.raises(SemanticError, match="undefined label"):
+            resolve(_program(body))
+
+
+# ---------------------------------------------------------------------------
+# Labeled statement resolution
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLabeledStatement:
+    """``Label`` nodes are validated, deduplicated, and their inner statements resolved."""
+
+    def test_label_passes_through_unchanged(self) -> None:
+        """A label wrapping a ``Null`` statement is returned with the name intact."""
+        body = (ast.S(statement=ast.Label(name="foo", statement=ast.Null())),)
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Label(name="foo", statement=ast.Null()))
+
+    def test_label_resolves_inner_statement_variable(self) -> None:
+        """Variable references inside a labeled statement are resolved."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(statement=ast.Label(name="lbl", statement=ast.Return(exp=ast.Var(name="x")))),
+        )
+        resolved = _resolved_body(body)
+        assert resolved[1] == ast.S(statement=ast.Label(name="lbl", statement=ast.Return(exp=ast.Var(name=".Vx.0"))))
+
+    def test_duplicate_label_at_top_level_raises(self) -> None:
+        """Two labels with the same name at the top level of a function raise ``SemanticError``."""
+        body = (
+            ast.S(statement=ast.Label(name="foo", statement=ast.Null())),
+            ast.S(statement=ast.Label(name="foo", statement=ast.Null())),
+        )
+        with pytest.raises(SemanticError, match="Duplicate label"):
+            resolve(_program(body))
+
+    def test_duplicate_label_in_if_branch_raises(self) -> None:
+        """A label that duplicates one already defined inside an ``if`` branch raises ``SemanticError``."""
+        body = (
+            ast.S(statement=ast.Label(name="foo", statement=ast.Null())),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Label(name="foo", statement=ast.Null()),
+                    else_=None,
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Duplicate label"):
+            resolve(_program(body))
+
+    def test_duplicate_label_across_both_if_branches_raises(self) -> None:
+        """The same label name in both the then- and else-branches raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Label(name="foo", statement=ast.Null()),
+                    else_=ast.Label(name="foo", statement=ast.Null()),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Duplicate label"):
+            resolve(_program(body))
+
+    def test_distinct_labels_in_same_function_are_accepted(self) -> None:
+        """Multiple labels with different names in the same function are all valid."""
+        body = (
+            ast.S(statement=ast.Label(name="a", statement=ast.Null())),
+            ast.S(statement=ast.Label(name="b", statement=ast.Null())),
+            ast.S(statement=ast.Label(name="c", statement=ast.Return(exp=ast.Constant(value=0)))),
+        )
+        resolved = _resolved_body(body)
+        assert len(resolved) == 3
+
+    def test_same_label_name_in_different_functions_is_accepted(self) -> None:
+        """The same label name may appear in two separate functions without conflict."""
+
+        def _fn(name: str) -> ast.Function:
+            return ast.Function(
+                return_type=ast.IntType(),
+                name=name,
+                params=(),
+                body=(ast.S(statement=ast.Label(name="lbl", statement=ast.Return(exp=ast.Constant(value=0)))),),
+            )
+
+        program = ast.Program(functions=(_fn("foo"), _fn("bar")))
+        resolved = resolve(program)
+        assert len(resolved.functions) == 2

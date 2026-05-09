@@ -36,12 +36,16 @@ class SemanticAnalyser:
         _counter: Monotonically increasing integer source for unique suffixes.
         _variable_map: Mapping from source-level variable names to their unique
             internal names for the function currently being analysed.
+        _label_set: Set of all label names declared in the function currently
+            being analysed.  Populated by a first pass before resolution begins
+            so that forward ``goto`` targets can be validated.
     """
 
     def __init__(self) -> None:
         """Initialise the analyser with a fresh counter and an empty symbol table."""
         self._counter: count[int] = count()
         self._variable_map: dict[str, str] = {}
+        self._label_set: set[str] = set()
 
     def _make_unique(self, name: str) -> str:
         """Generate a unique internal name for a source-level variable.
@@ -58,6 +62,51 @@ class SemanticAnalyser:
             value drawn from ``_counter``.
         """
         return f".V{name}.{next(self._counter)}"
+
+    def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
+        """Recursively collect label names from a statement into ``_label_set``.
+
+        Raises ``SemanticError`` immediately upon finding a duplicate label name.
+        Recurses into compound statements (``If``, ``Label``) so that labels
+        nested inside branches are also captured.
+
+        Args:
+            statement: The statement node to walk.
+
+        Raises:
+            SemanticError: If a label name already present in ``_label_set`` is
+                encountered, indicating a duplicate within the current function.
+        """
+        match statement:
+            case ast.Label(name=name, statement=inner):
+                if name in self._label_set:
+                    raise SemanticError(f"Duplicate label '{name}' in function.")
+                self._label_set.add(name)
+                self._collect_labels_in_statement(inner)
+            case ast.If(then=then_stmt, else_=else_stmt):
+                self._collect_labels_in_statement(then_stmt)
+                if else_stmt is not None:
+                    self._collect_labels_in_statement(else_stmt)
+            case _:
+                pass
+
+    def _collect_labels(self, body: tuple[ast.BlockItem, ...]) -> None:
+        """First-pass walk over a function body to populate ``_label_set``.
+
+        Only statement block items are walked; declaration items contain no
+        labels.  Delegates to ``_collect_labels_in_statement`` for each
+        statement found.
+
+        Args:
+            body: The sequence of block items forming the function body.
+
+        Raises:
+            SemanticError: If any duplicate label name is found within ``body``.
+        """
+        for item in body:
+            match item:
+                case ast.S(statement=statement):
+                    self._collect_labels_in_statement(statement)
 
     def resolve_declaration(self, declaration: ast.Declaration) -> ast.Declaration:
         """Resolve a variable declaration against the current symbol table.
@@ -173,6 +222,12 @@ class SemanticAnalyser:
                 return ast.If(
                     self.resolve_exp(cond), self._resolve_statement(then_stmt), self._resolve_statement(else_stmt)
                 )
+            case ast.Goto(target=target):
+                if target not in self._label_set:
+                    raise SemanticError(f"goto targets undefined label '{target}'.")
+                return statement
+            case ast.Label(name=name, statement=inner):
+                return ast.Label(name, self._resolve_statement(inner))
             case _:
                 raise SemanticError("Unhandled statement type in semantic analyser")
 
@@ -216,6 +271,8 @@ class SemanticAnalyser:
             SemanticError: If the function body contains any semantic violation.
         """
         self._variable_map = {}
+        self._label_set = set()
+        self._collect_labels(function.body)
         return ast.Function(
             return_type=function.return_type,
             name=function.name,
