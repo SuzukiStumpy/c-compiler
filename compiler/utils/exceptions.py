@@ -119,6 +119,27 @@ class CodeGenerationError(Exception):
         super().__init__(message)
 
 
+class SemanticError(Exception):
+    """Raised when the semantic analyser encounters a violation it cannot resolve.
+
+    Covers errors that are grammatically valid but semantically illegal, such as
+    duplicate variable declarations within the same scope or references to
+    undeclared identifiers.
+
+    Attributes:
+        message: Human-readable description of what went wrong.
+    """
+
+    def __init__(self, message: str) -> None:
+        """Initialise a SemanticError with a descriptive message.
+
+        Args:
+            message: Human-readable description of the semantic violation.
+        """
+        self.message = message
+        super().__init__(message)
+
+
 class ParseError(Exception):
     """Raised when the parser encounters an unexpected token or end of input.
 

@@ -14,6 +14,7 @@ from compiler.code_generator import generate
 from compiler.emitter import emit_program
 from compiler.lexer import lexer
 from compiler.parser import parse
+from compiler.semantic_analysis import resolve
 from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.syntax.ast import pretty_print
 from compiler.tac_generator import generate as tac_generate
@@ -89,6 +90,7 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     Raises:
         LexerError: If the lexer stage encounters an invalid character.
         ParseError: If the token stream does not conform to the grammar.
+        SemanticError: If the AST fails semantic analysis.
         CodeGenerationError: If the AST or TAC contains a construct that cannot
             be translated.
     """
@@ -102,6 +104,11 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
 
     if Stage.PARSE in stages:
         program = parse(token_stream)
+        if Stage.VALIDATE not in stages:
+            click.echo(pretty_print(program))
+
+    if Stage.VALIDATE in stages:
+        program = resolve(program)
         if Stage.TACKY not in stages:
             click.echo(pretty_print(program))
 
@@ -139,28 +146,35 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     "--lex",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["parse", "tacky", "codegen"],
+    mutually_exclusive=["parse", "validate", "tacky", "codegen"],
     help="Stop after lexing.",
 )
 @click.option(
     "--parse",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["lex", "tacky", "codegen"],
+    mutually_exclusive=["lex", "validate", "tacky", "codegen"],
     help="Stop after parsing; print the AST.",
+)
+@click.option(
+    "--validate",
+    is_flag=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["lex", "parse", "tacky", "codegen"],
+    help="Stop after performing semantic analysis; print the AST.",
 )
 @click.option(
     "--tacky",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["lex", "parse", "codegen"],
+    mutually_exclusive=["lex", "parse", "validate", "codegen"],
     help="Stop after TAC generation; print the TAC AST.",
 )
 @click.option(
     "--codegen",
     is_flag=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["lex", "parse", "tacky"],
+    mutually_exclusive=["lex", "parse", "validate", "tacky"],
     help="Stop after code generation; emit assembly but do not link.",
 )
 @click.argument("source", type=click.Path(), required=True, nargs=1)
@@ -168,6 +182,7 @@ def compiler(
     source: str,
     lex: bool,
     parse: bool,
+    validate: bool,
     tacky: bool,
     codegen: bool,
 ) -> None:
@@ -177,13 +192,16 @@ def compiler(
         source: Path to the C source file to compile.
         lex: Stop the pipeline after lexing.
         parse: Stop the pipeline after parsing; print the AST.
+        validate: Stop after semantic analysis; print the resolved AST.
         tacky: Stop the pipeline after TAC generation; print the TAC AST.
         codegen: Stop after code generation; emit assembly but do not link.
     """
     if codegen:
-        stages = Stage.LEX | Stage.PARSE | Stage.TACKY | Stage.CODEGEN
+        stages = Stage.LEX | Stage.PARSE | Stage.VALIDATE | Stage.TACKY | Stage.CODEGEN
     elif tacky:
-        stages = Stage.LEX | Stage.PARSE | Stage.TACKY
+        stages = Stage.LEX | Stage.PARSE | Stage.VALIDATE | Stage.TACKY
+    elif validate:
+        stages = Stage.LEX | Stage.PARSE | Stage.VALIDATE
     elif parse:
         stages = Stage.LEX | Stage.PARSE
     elif lex:

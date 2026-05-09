@@ -10,7 +10,10 @@ class Stage(IntFlag):
     member combines every stage flag for a complete compilation run. Omitting
     a flag causes the pipeline to stop before that stage.
 
-    ``TACKY`` sits between ``PARSE`` and ``CODEGEN`` and represents the
+    ``VALIDATE`` sits directly before the ``TACKY`` stage and performs semantic
+    analysis on the generated AST.
+
+    ``TACKY`` sits between ``VALIDATE`` and ``CODEGEN`` and represents the
     intermediate three-address-code (TAC) generation pass.
 
     The ``LINK`` stage distinguishes a full compilation run (which assembles
@@ -21,7 +24,8 @@ class Stage(IntFlag):
 
     LEX = auto()
     PARSE = auto()
+    VALIDATE = auto()
     TACKY = auto()
     CODEGEN = auto()
     LINK = auto()
-    ALL = LEX | PARSE | TACKY | CODEGEN | LINK
+    ALL = LEX | PARSE | VALIDATE | TACKY | CODEGEN | LINK
