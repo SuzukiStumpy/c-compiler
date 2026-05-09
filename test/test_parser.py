@@ -43,7 +43,7 @@ from compiler.syntax.ast import (
     S,
     Statement,
 )
-from compiler.syntax.ast.expressions import Binary, Exp, Unary, Var
+from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
     And,
@@ -133,6 +133,9 @@ _LEQ = _tok(TokenType.LEQ, "<=")
 _GEQ = _tok(TokenType.GEQ, ">=")
 _IF = _tok(TokenType.IF, "if")
 _ELSE = _tok(TokenType.ELSE, "else")
+_ASSIGNMENT = _tok(TokenType.ASSIGNMENT, "=")
+_QUERY = _tok(TokenType.QUERY, "?")
+_COLON = _tok(TokenType.COLON, ":")
 
 
 def _ident(name: str) -> Token:
@@ -843,4 +846,91 @@ class TestIfStatements:
             _RBRACE,
         ]
         with pytest.raises(ParseError, match="expected RPAREN"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Ternary / conditional expressions (_parse_exp → QUERY case)
+# ---------------------------------------------------------------------------
+
+
+class TestTernaryExpressions:
+    """Parser correctly builds ``Conditional`` nodes for ternary ``?:`` expressions."""
+
+    def test_basic_ternary(self) -> None:
+        """``return 1 ? 2 : 3;`` → ``Conditional(Constant(1), Constant(2), Constant(3))``."""
+        assert _parsed_exp(_number("1"), _QUERY, _number("2"), _COLON, _number("3")) == Conditional(
+            condition=Constant(1), exp_true=Constant(2), exp_false=Constant(3)
+        )
+
+    def test_condition_is_arbitrary_expression(self) -> None:
+        """``return a > 0 ? 1 : 0;`` — comparison expression as condition."""
+        assert _parsed_exp(_ident("a"), _GT, _number("0"), _QUERY, _number("1"), _COLON, _number("0")) == Conditional(
+            condition=Binary(GreaterThan(), Var("a"), Constant(0)),
+            exp_true=Constant(1),
+            exp_false=Constant(0),
+        )
+
+    def test_ternary_is_right_associative(self) -> None:
+        """``return 1 ? 2 : 3 ? 4 : 5;`` — else-branch contains a nested ternary, not the reverse."""
+        assert _parsed_exp(
+            _number("1"),
+            _QUERY,
+            _number("2"),
+            _COLON,
+            _number("3"),
+            _QUERY,
+            _number("4"),
+            _COLON,
+            _number("5"),
+        ) == Conditional(
+            condition=Constant(1),
+            exp_true=Constant(2),
+            exp_false=Conditional(condition=Constant(3), exp_true=Constant(4), exp_false=Constant(5)),
+        )
+
+    def test_ternary_is_rhs_of_assignment(self) -> None:
+        """``return a = 1 ? 2 : 3;`` — ternary (prec 3) binds tighter than assignment (prec 1)."""
+        assert _parsed_exp(
+            _ident("a"), _ASSIGNMENT, _number("1"), _QUERY, _number("2"), _COLON, _number("3")
+        ) == Assignment(
+            lvalue=Var("a"),
+            rvalue=Conditional(condition=Constant(1), exp_true=Constant(2), exp_false=Constant(3)),
+        )
+
+    def test_ternary_binds_looser_than_logical_or(self) -> None:
+        """``return 1 || 2 ? 3 : 4;`` — ``||`` (prec 5) groups before ``?:`` (prec 3)."""
+        assert _parsed_exp(_number("1"), _OR, _number("2"), _QUERY, _number("3"), _COLON, _number("4")) == Conditional(
+            condition=Binary(Or(), Constant(1), Constant(2)),
+            exp_true=Constant(3),
+            exp_false=Constant(4),
+        )
+
+    def test_true_branch_allows_assignment(self) -> None:
+        """``return 1 ? a = 2 : 3;`` — middle is parsed at prec 0, so assignment is valid."""
+        assert _parsed_exp(
+            _number("1"), _QUERY, _ident("a"), _ASSIGNMENT, _number("2"), _COLON, _number("3")
+        ) == Conditional(
+            condition=Constant(1),
+            exp_true=Assignment(lvalue=Var("a"), rvalue=Constant(2)),
+            exp_false=Constant(3),
+        )
+
+    def test_missing_colon(self) -> None:
+        """``return 1 ? 2;`` — absent ``:`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("1"),
+            _QUERY,
+            _number("2"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected COLON"):
             parse(tokens)

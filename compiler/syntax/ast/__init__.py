@@ -18,6 +18,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | Unary(unary_operator, exp)
                         | Binary(binary_operator, exp, exp)
                         | Assignment(exp, exp)
+                        | Conditional(exp condition, exp exp_true, exp exp_false)
     unary_operator      = Complement | Negate | Not
                         | PreIncrement | PreDecrement
                         | PostIncrement | PostDecrement
@@ -27,11 +28,12 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | GreaterThan | GreaterOrEqual
     type                = IntType
     block_item          = S(statement) | D(declaration)
+
 Nodes are organised into submodules by logical role:
 
     types        — C type nodes (Type, IntType)
-    expressions  — Expression nodes (Exp, Constant, Unary, Binary)
-    statements   — Statement nodes (Statement, Return)
+    expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment, Conditional)
+    statements   — Statement nodes (Statement, Return, Expression, If, Null)
     declarations — Program structure nodes (Parameter, Function, Program)
     operators    — Operators which act upon expressions
                    (Complement, Negate, Not,
@@ -52,7 +54,7 @@ nodes are immutable — once constructed an AST node cannot be modified.
 """
 
 from compiler.syntax.ast.declarations import BlockItem, D, Declaration, Function, Parameter, Program, S
-from compiler.syntax.ast.expressions import Assignment, Binary, Constant, Exp, Unary, Var
+from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Constant, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
     And,
@@ -87,6 +89,7 @@ from compiler.syntax.ast.statements import Expression, If, Null, Return, Stateme
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "Conditional",
     "If",
     "PostDecrement",
     "PostIncrement",

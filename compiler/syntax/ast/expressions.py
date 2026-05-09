@@ -83,3 +83,18 @@ class Assignment(Exp):
 
     lvalue: Exp
     rvalue: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class Conditional(Exp):
+    """A ternary (``?:``) expression.
+
+    Attributes:
+        condition: The condition to be tested for truthiness
+        exp_true: The expression to be evaluated if condition is truthy
+        exp_false: The expression to be evaluated if condition is falsy
+    """
+
+    condition: Exp
+    exp_true: Exp
+    exp_false: Exp

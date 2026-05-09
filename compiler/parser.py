@@ -11,7 +11,7 @@ which are handled by precedence climbing.  The grammar is:
                           | exp ";"
                           | "if" "(" exp ")" statement ["else" statement]
                           | ";"
-    exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
+    exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
     factor              ::= prefix_unop factor | primary postfix_unop?
     primary             ::= int | identifier | "(" exp ")"
     prefix_unop         ::= "-" | "~" | "!" | "++" | "--"
@@ -82,6 +82,7 @@ from compiler.syntax.ast import (
     UnaryOperator,
     Var,
 )
+from compiler.syntax.ast.expressions import Conditional
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -100,6 +101,7 @@ _BINARY_PRECEDENCE: dict[TokenType, int] = {
     TokenType.BITWISE_XOR_ASSIGN: 1,
     TokenType.LSHIFT_ASSIGN: 1,
     TokenType.RSHIFT_ASSIGN: 1,
+    TokenType.QUERY: 3,
     TokenType.OR: 5,
     TokenType.AND: 10,
     TokenType.PIPE: 15,
@@ -643,9 +645,11 @@ class Parser:
         Parses a left-hand ``factor``, then repeatedly folds in any following
         binary operator whose precedence is at least ``min_prec``. Binary
         operators recurse with ``precedence + 1`` for left-associativity;
-        assignment (``=``) recurses with the same precedence level for
-        right-associativity and produces an ``Assignment`` node rather than a
-        ``Binary`` node.
+        assignment (``=``) and ternary (``?:``) recurse with the same
+        precedence level for right-associativity and produce ``Assignment``
+        and ``Conditional`` nodes respectively, rather than ``Binary`` nodes.
+        The true-branch of a ternary is parsed at precedence zero so that any
+        operator (including assignment) is valid inside it.
 
         Args:
             min_prec: Minimum operator precedence to consume at this level.
@@ -665,12 +669,36 @@ class Parser:
                 op = self._consume_compound_assignment()
                 right = self._parse_exp(prec)
                 left = Assignment(left, Binary(op, left, right))
+            elif self._match(TokenType.QUERY):
+                middle = self._parse_conditional_middle()
+                right = self._parse_exp(prec)
+                left = Conditional(left, middle, right)
             else:
                 op = self._parse_binop()
                 right = self._parse_exp(prec + 1)  # left-associative
                 left = Binary(op, left, right)
             prec = self._get_precedence()
         return left
+
+    def _parse_conditional_middle(self) -> Exp:
+        """Parse the true-branch expression of a ternary ``?:`` expression.
+
+        Consumes the ``?`` token (already confirmed by the caller via ``_match``)
+        and the closing ``:`` separator, returning the expression between them.
+        The middle is parsed at precedence zero so that any operator, including
+        assignment, is valid as the true-branch.
+
+        Returns:
+            An ``Exp`` node representing the true-branch expression.
+
+        Raises:
+            ParseError: If the ``:`` separator is absent after the true-branch
+                expression.
+        """
+        self._consume()  # consume the already-matched '?'
+        exp = self._parse_exp()
+        self._expect(TokenType.COLON)
+        return exp
 
     def _parse_factor(self) -> Exp:
         """Parse a factor: a primary expression optionally wrapped in prefix/postfix operators.
