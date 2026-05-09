@@ -1,38 +1,51 @@
 # c-compiler
 
-A homegown C compiler written in Python (only works for a subset of the C language)
+A homegrown C compiler written in Python, supporting a growing subset of the C language. The compiler takes a `.c` source file through the full pipeline from preprocessing to a native executable.
+
+## Supported C subset
+
+The compiler currently handles:
+
+- `int`-typed functions with a `return` statement
+- Integer constants and arithmetic: `+`, `-`, `*`, `/`, `%`
+- Bitwise operators: `~`, `&`, `|`, `^`, `<<`, `>>`
+- Logical operators with short-circuit evaluation: `!`, `&&`, `||`
+- Relational operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
+- Unary negation (`-`) and bitwise complement (`~`)
+- Local variable declarations (`int x;`, `int x = <expr>;`)
+- Variable assignment (`x = <expr>`)
+- Expression statements (expressions evaluated for side effects)
+
+## Prerequisites
+
+- **Python 3.13** — managed via [`uv`](https://github.com/astral-sh/uv)
+- **`ruff`** — enforced by the pre-commit hooks (installed via `uv sync`)
+- **`pyrefly`** — type checker (installed via `uv sync`)
+- **`gcc`** or **`clang`** (with a `gcc` shim) — used for preprocessing and final assembly/linking; must be available on `PATH`
+
+The toolchain is designed for Linux or WSL environments.
 
 ## Dev installation
 
-The codebase requires the use of ``uv`` and ``ruff``.  ``pyrefly`` is assumed to be in place
-as the linter.  These tools should all be installed under a Linux or WSL environment.
-
-The project also requires the presence of ``gcc`` or ``clang`` (with the ``gcc`` command shim)
-C compilers to handle the preprocessing and final assembly/linking stages of any programs.
-
-To install, clone the repository into your filesystem, then launch ``VS Code``.  From a ``bash``
-terminal in the IDE, issue the command:
+Clone the repository, then from a terminal in the project root:
 
 ```bash
-$ uv sync
+uv sync
 ```
 
-This should set up the virtual environment and ensure the correct dependencies are installed.
+This creates a virtual environment under `.venv`, installs all dependencies (including dev tools), and registers the `compiler` entry point in editable mode so changes to `compiler/` take effect immediately without reinstalling.
+
+VS Code users: the `.venv` is auto-activated via `launch_venv.sh`.
 
 ## Tool installation
 
-From within the IDE, the compiler can be invoked directly from the command line.  If you want to
-later install it for use outside the development environment then you'll need to issue the command
+To install the compiler for use outside the development environment:
 
 ```bash
-$ uv tool install compiler
+uv tool install .
 ```
 
 ## Usage
-
-To call the compiler simply call ``compiler`` from the command line.  The command requires you to pass in
-a ``C`` source file on the command line.  It also accepts three optional switches which will halt compilation
-at the appropriate stage.  Note that these switches (``lex``, ``parse`` and ``codegen``) are mutually exclusive.
 
 ```
 Usage: compiler [OPTIONS] SOURCE
@@ -43,8 +56,65 @@ Usage: compiler [OPTIONS] SOURCE
   output. Without a flag the full pipeline runs and an executable is produced.
 
 Options:
-  --lex      Stop after lexing.
-  --parse    Stop after parsing.
-  --codegen  Stop after code generation; emit assembly but do not link.
-  --help     Show this message and exit.
+  --lex       Stop after lexing.
+  --parse     Stop after parsing; print the AST.
+  --validate  Stop after semantic analysis; print the resolved AST.
+  --tacky     Stop after TAC generation; print the TAC intermediate representation.
+  --codegen   Stop after code generation; emit assembly but do not link.
+  --help      Show this message and exit.
+```
+
+### Example
+
+```bash
+# Compile a C source file to an executable
+compiler hello.c
+
+# Inspect the token stream only
+compiler --lex hello.c
+
+# Inspect the abstract syntax tree
+compiler --parse hello.c
+
+# Inspect the AST after variable resolution
+compiler --validate hello.c
+
+# Inspect the three-address code intermediate representation
+compiler --tacky hello.c
+
+# Generate assembly but stop before linking
+compiler --codegen hello.c
+```
+
+## Pipeline
+
+The compiler runs six stages in sequence:
+
+| Stage | CLI flag | Description |
+| ----- | -------- | ----------- |
+| Preprocessing | *(automatic)* | Runs `gcc -E` to expand macros; produces a `.i` file |
+| Lexing | `--lex` | Converts the preprocessed file into a token stream |
+| Parsing | `--parse` | Converts the token stream into an abstract syntax tree (AST) |
+| Semantic analysis | `--validate` | Verifies variable declarations and resolves all names to unique identifiers |
+| TAC generation | `--tacky` | Flattens the AST into a three-address-code (TAC) intermediate representation |
+| Code generation | `--codegen` | Translates TAC into an x86-64 assembly AST and emits a `.s` file |
+| Assembly and linking | *(default)* | Passes the `.s` file to `gcc` to produce a native executable |
+
+## Development
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run a single test file
+uv run pytest test/test_semantic_analysis.py
+
+# Lint (check only)
+uv run ruff check .
+
+# Lint (auto-fix)
+uv run ruff check --fix .
+
+# Type check
+uv run pyrefly check
 ```
