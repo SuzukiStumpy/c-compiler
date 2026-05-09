@@ -62,3 +62,29 @@ class If(Statement):
     condition: Exp
     then: Statement
     else_: Statement | None
+
+
+@dataclass(frozen=True, slots=True)
+class Goto(Statement):
+    """A goto statement - sends program flow directly to the statement
+    identifed by the specified label within the current function scope.
+
+    Attributes:
+        target: The label that we are targeting.
+    """
+
+    target: str
+
+
+@dataclass(frozen=True, slots=True)
+class Label(Statement):
+    """A labeled statement, associating an identifier with the statement that
+    immediately follows it so that it may be targeted by a ``goto``.
+
+    Attributes:
+        name: The label identifier.
+        statement: The statement governed by this label.
+    """
+
+    name: str
+    statement: Statement

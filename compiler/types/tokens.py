@@ -19,6 +19,7 @@ class TokenType(Enum):
     RETURN = auto()
     IF = auto()
     ELSE = auto()
+    GOTO = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()

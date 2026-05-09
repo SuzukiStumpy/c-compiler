@@ -9,6 +9,8 @@ Covers the full range of constructs supported by the current grammar:
     statement           ::= "return" exp ";"
                           | exp ";"
                           | "if" "(" exp ")" statement ["else" statement]
+                          | "goto" identifier ";"
+                          | identifier ":" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -34,8 +36,10 @@ from compiler.syntax.ast import (
     Constant,
     Expression,
     Function,
+    Goto,
     If,
     IntType,
+    Label,
     Null,
     Parameter,
     Program,
@@ -133,6 +137,7 @@ _LEQ = _tok(TokenType.LEQ, "<=")
 _GEQ = _tok(TokenType.GEQ, ">=")
 _IF = _tok(TokenType.IF, "if")
 _ELSE = _tok(TokenType.ELSE, "else")
+_GOTO = _tok(TokenType.GOTO, "goto")
 _ASSIGNMENT = _tok(TokenType.ASSIGNMENT, "=")
 _QUERY = _tok(TokenType.QUERY, "?")
 _COLON = _tok(TokenType.COLON, ":")
@@ -934,3 +939,75 @@ class TestTernaryExpressions:
         ]
         with pytest.raises(ParseError, match="expected COLON"):
             parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Goto statements (_parse_statement → GOTO case)
+# ---------------------------------------------------------------------------
+
+
+class TestGotoStatements:
+    """Parser correctly builds ``Goto`` nodes for goto statements."""
+
+    def test_goto_produces_goto_node(self) -> None:
+        """``goto foo;`` → ``Goto(target="foo")``."""
+        assert _parsed_stmt(_GOTO, _ident("foo"), _SEMICOLON) == Goto(target="foo")
+
+    def test_goto_target_name_is_preserved(self) -> None:
+        """The label name is stored verbatim in ``Goto.target``."""
+        result = _parsed_stmt(_GOTO, _ident("my_label"), _SEMICOLON)
+        assert isinstance(result, Goto)
+        assert result.target == "my_label"
+
+    def test_goto_missing_semicolon_raises_parse_error(self) -> None:
+        """``goto foo`` without a trailing semicolon raises ``ParseError``."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _GOTO, _ident("foo"), _RBRACE]
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
+            parse(tokens)
+
+    def test_goto_missing_identifier_raises_parse_error(self) -> None:
+        """``goto;`` without a label name raises ``ParseError``."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _GOTO, _SEMICOLON, _RBRACE]
+        with pytest.raises(ParseError, match="expected IDENTIFIER"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Labeled statements (_parse_statement → label lookahead)
+# ---------------------------------------------------------------------------
+
+
+class TestLabeledStatements:
+    """Parser correctly builds ``Label`` nodes for labeled statements."""
+
+    def test_label_wraps_return_statement(self) -> None:
+        """``foo: return 0;`` → ``Label(name="foo", statement=Return(Constant(0)))``."""
+        assert _parsed_stmt(_ident("foo"), _COLON, _RETURN, _number("0"), _SEMICOLON) == Label(
+            name="foo", statement=Return(exp=Constant(0))
+        )
+
+    def test_label_wraps_null_statement(self) -> None:
+        """``foo:;`` → ``Label(name="foo", statement=Null())``."""
+        assert _parsed_stmt(_ident("foo"), _COLON, _SEMICOLON) == Label(name="foo", statement=Null())
+
+    def test_label_wraps_expression_statement(self) -> None:
+        """``foo: a;`` → ``Label(name="foo", statement=Expression(Var("a")))``."""
+        assert _parsed_stmt(_ident("foo"), _COLON, _ident("a"), _SEMICOLON) == Label(
+            name="foo", statement=Expression(exp=Var("a"))
+        )
+
+    def test_nested_labels(self) -> None:
+        """``foo: bar: return 0;`` → ``Label("foo", Label("bar", Return(Constant(0))))``."""
+        assert _parsed_stmt(_ident("foo"), _COLON, _ident("bar"), _COLON, _RETURN, _number("0"), _SEMICOLON) == Label(
+            name="foo", statement=Label(name="bar", statement=Return(exp=Constant(0)))
+        )
+
+    def test_label_target_name_is_preserved(self) -> None:
+        """The label identifier is stored verbatim in ``Label.name``."""
+        result = _parsed_stmt(_ident("my_label"), _COLON, _SEMICOLON)
+        assert isinstance(result, Label)
+        assert result.name == "my_label"
+
+    def test_identifier_without_colon_is_expression_statement(self) -> None:
+        """``foo;`` — a bare identifier not followed by ``:`` is an expression statement."""
+        assert _parsed_stmt(_ident("foo"), _SEMICOLON) == Expression(exp=Var("foo"))

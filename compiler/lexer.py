@@ -13,6 +13,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("RETURN", r"return\b"),
     ("IF", r"if\b"),
     ("ELSE", r"else\b"),
+    ("GOTO", r"goto\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("NUMBER", r"\d+\b"),

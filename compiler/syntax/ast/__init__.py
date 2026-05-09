@@ -11,6 +11,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     statement           = Return(exp)
                         | Expression(exp)
                         | If(exp condition, statement then, statement? else_)
+                        | Goto(identifier target)
+                        | Label(identifier name, statement)
                         | Null
     declaration         = Declaration(identifier name, exp? init)
     exp                 = Constant(int)
@@ -85,10 +87,12 @@ from compiler.syntax.ast.operators import (
     UnaryOperator,
 )
 from compiler.syntax.ast.pretty_print import pretty_print
-from compiler.syntax.ast.statements import Expression, If, Null, Return, Statement
+from compiler.syntax.ast.statements import Expression, Goto, If, Label, Null, Return, Statement
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "Goto",
+    "Label",
     "Conditional",
     "If",
     "PostDecrement",

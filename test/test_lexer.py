@@ -205,3 +205,26 @@ def test_rshift_assign_is_single_token(preprocess_c_file: Preprocessor) -> None:
     types = [t.type for t in tokens]
     assert TokenType.RSHIFT_ASSIGN in types
     assert TokenType.RSHIFT not in types
+
+
+# ---------------------------------------------------------------------------
+# Goto and labeled statements
+# ---------------------------------------------------------------------------
+
+
+def test_goto_keyword_produces_goto_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/goto_label.c"))
+    goto_token = next(t for t in tokens if t.value == "goto")
+    assert goto_token.type == TokenType.GOTO
+
+
+def test_label_colon_produces_colon_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/goto_label.c"))
+    assert TokenType.COLON in [t.type for t in tokens]
+
+
+def test_label_identifier_and_colon_are_separate_tokens(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/goto_label.c"))
+    colon_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.COLON)
+    assert tokens[colon_idx - 1].type == TokenType.IDENTIFIER
+    assert tokens[colon_idx - 1].value == "end"

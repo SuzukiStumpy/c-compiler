@@ -10,6 +10,8 @@ which are handled by precedence climbing.  The grammar is:
     statement           ::= "return" exp ";"
                           | exp ";"
                           | "if" "(" exp ")" statement ["else" statement]
+                          | "goto" identifier ";"
+                          | identifier ":" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -44,6 +46,7 @@ from compiler.syntax.ast import (
     BitwiseXor,
     BlockItem,
     Complement,
+    Conditional,
     Constant,
     D,
     Declaration,
@@ -52,10 +55,12 @@ from compiler.syntax.ast import (
     Exp,
     Expression,
     Function,
+    Goto,
     GreaterOrEqual,
     GreaterThan,
     If,
     IntType,
+    Label,
     LeftShift,
     LessOrEqual,
     LessThan,
@@ -82,7 +87,6 @@ from compiler.syntax.ast import (
     UnaryOperator,
     Var,
 )
-from compiler.syntax.ast.expressions import Conditional
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -150,15 +154,20 @@ class Parser:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _peek(self) -> Token | None:
-        """Return the next token without consuming it, or ``None`` at EOF.
+    def _peek(self, offset: int = 0) -> Token | None:
+        """Return a token without consuming it, or ``None`` at EOF.
+
+        Args:
+            offset: How many positions ahead of the current position to look.
+                    Defaults to ``0`` (the next token to be consumed).
 
         Returns:
-            The token at the current position, or ``None`` if the stream is
-            exhausted.
+            The token at ``current + offset``, or ``None`` if that position is
+            beyond the end of the stream.
         """
-        if self._pos < len(self._tokens):
-            return self._tokens[self._pos]
+        pos = self._pos + offset
+        if pos < len(self._tokens):
+            return self._tokens[pos]
         return None
 
     def _consume(self) -> Token:
@@ -518,7 +527,13 @@ class Parser:
             statement ::= "return" exp ";"
                         | exp ";"
                         | "if" "(" exp ")" statement ["else" statement]
+                        | "goto" identifier ";"
+                        | identifier ":" statement
                         | ";"
+
+        A labeled statement is detected via one token of lookahead before the
+        main dispatch, so identifiers not followed by ``:`` fall through to the
+        expression-statement path in the catch-all branch.
 
         Returns:
             A ``Statement`` node.
@@ -529,6 +544,12 @@ class Parser:
         token = self._peek()
         if token is None:
             raise self._eof_error("expected a statement, got end of input")
+
+        next_tok = self._peek(1)
+        if token.type == TokenType.IDENTIFIER and next_tok is not None and next_tok.type == TokenType.COLON:
+            name_token = self._consume()
+            self._consume()  # consume ':'
+            return Label(name=name_token.value, statement=self._parse_statement())
 
         match token.type:
             case TokenType.RETURN:
@@ -548,6 +569,11 @@ class Parser:
                     self._consume()
                     else_ = self._parse_statement()
                 return If(exp, then, else_)
+            case TokenType.GOTO:
+                self._consume()
+                label = self._expect(TokenType.IDENTIFIER)
+                self._expect(TokenType.SEMICOLON)
+                return Goto(label.value)
             case _:
                 exp = self._parse_exp()
                 self._expect(TokenType.SEMICOLON)
