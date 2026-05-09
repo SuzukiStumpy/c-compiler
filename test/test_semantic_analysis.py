@@ -64,10 +64,10 @@ class TestResolveDeclaration:
     """``resolve_declaration`` renames variables and enforces scope rules."""
 
     def test_declaration_assigns_unique_suffix(self) -> None:
-        """The first declaration in a fresh analyser receives the suffix ``.0``."""
+        """The first declaration in a fresh analyser receives the unique name ``.Vx.0``."""
         analyser = SemanticAnalyser()
         result = analyser.resolve_declaration(ast.Declaration(name="x", init=None))
-        assert result.name == "x.0"
+        assert result.name == ".Vx.0"
 
     def test_declaration_preserves_none_init(self) -> None:
         """A declaration without an initialiser keeps ``init=None`` after resolution."""
@@ -84,17 +84,17 @@ class TestResolveDeclaration:
     def test_declaration_with_var_init_renames_init_var(self) -> None:
         """An initialiser that references an already-declared variable is renamed."""
         analyser = SemanticAnalyser()
-        analyser.resolve_declaration(ast.Declaration(name="y", init=None))  # y → y.0
+        analyser.resolve_declaration(ast.Declaration(name="y", init=None))  # y → .Vy.0
         result = analyser.resolve_declaration(ast.Declaration(name="x", init=ast.Var(name="y")))
-        assert result.init == ast.Var(name="y.0")
+        assert result.init == ast.Var(name=".Vy.0")
 
     def test_two_declarations_receive_distinct_suffixes(self) -> None:
         """Successive declarations in the same analyser get incrementing suffixes."""
         analyser = SemanticAnalyser()
         r1 = analyser.resolve_declaration(ast.Declaration(name="x", init=None))
         r2 = analyser.resolve_declaration(ast.Declaration(name="y", init=None))
-        assert r1.name == "x.0"
-        assert r2.name == "y.1"
+        assert r1.name == ".Vx.0"
+        assert r2.name == ".Vy.1"
 
     def test_duplicate_declaration_raises(self) -> None:
         """Declaring the same name twice in the same scope raises ``SemanticError``."""
@@ -143,7 +143,7 @@ class TestResolveExp:
         """A ``Var`` whose name is in the symbol table is replaced by its unique name."""
         analyser = self._analyser_with("x")
         result = analyser.resolve_exp(ast.Var(name="x"))
-        assert result == ast.Var(name="x.0")
+        assert result == ast.Var(name=".Vx.0")
 
     def test_undeclared_var_raises(self) -> None:
         """A ``Var`` not present in the symbol table raises ``SemanticError``."""
@@ -155,19 +155,19 @@ class TestResolveExp:
         """``Unary`` expressions have their sub-expression resolved."""
         analyser = self._analyser_with("x")
         result = analyser.resolve_exp(ast.Unary(operator=ast.Negate(), exp=ast.Var(name="x")))
-        assert result == ast.Unary(operator=ast.Negate(), exp=ast.Var(name="x.0"))
+        assert result == ast.Unary(operator=ast.Negate(), exp=ast.Var(name=".Vx.0"))
 
     def test_binary_recurses_into_both_operands(self) -> None:
         """Both sides of a ``Binary`` expression are resolved independently."""
         analyser = self._analyser_with("x", "y")
         result = analyser.resolve_exp(ast.Binary(operator=ast.Add(), left=ast.Var(name="x"), right=ast.Var(name="y")))
-        assert result == ast.Binary(operator=ast.Add(), left=ast.Var(name="x.0"), right=ast.Var(name="y.1"))
+        assert result == ast.Binary(operator=ast.Add(), left=ast.Var(name=".Vx.0"), right=ast.Var(name=".Vy.1"))
 
     def test_assignment_with_var_lvalue_resolves_both_sides(self) -> None:
         """An assignment whose lvalue is a ``Var`` resolves both lvalue and rvalue."""
         analyser = self._analyser_with("x")
         result = analyser.resolve_exp(ast.Assignment(lvalue=ast.Var(name="x"), rvalue=ast.Constant(value=10)))
-        assert result == ast.Assignment(lvalue=ast.Var(name="x.0"), rvalue=ast.Constant(value=10))
+        assert result == ast.Assignment(lvalue=ast.Var(name=".Vx.0"), rvalue=ast.Constant(value=10))
 
     def test_assignment_with_non_var_lvalue_raises(self) -> None:
         """An assignment whose lvalue is not a ``Var`` raises ``SemanticError``."""
@@ -201,7 +201,7 @@ class TestResolveStatement:
             ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
         )
         resolved = _resolved_body(body)
-        assert resolved[1] == ast.S(statement=ast.Return(exp=ast.Var(name="x.0")))
+        assert resolved[1] == ast.S(statement=ast.Return(exp=ast.Var(name=".Vx.0")))
 
     def test_expression_statement_var_is_renamed(self) -> None:
         """An expression statement containing a variable reference is resolved."""
@@ -210,7 +210,7 @@ class TestResolveStatement:
             ast.S(statement=ast.Expression(exp=ast.Var(name="x"))),
         )
         resolved = _resolved_body(body)
-        assert resolved[1] == ast.S(statement=ast.Expression(exp=ast.Var(name="x.0")))
+        assert resolved[1] == ast.S(statement=ast.Expression(exp=ast.Var(name=".Vx.0")))
 
     def test_null_statement_passes_through(self) -> None:
         """A ``Null`` statement contains no expressions and is returned unchanged."""
@@ -240,7 +240,7 @@ class TestResolveProgram:
         """A declared variable's name is replaced by its unique internal identifier."""
         body = (ast.D(declaration=ast.Declaration(name="x", init=None)),)
         resolved = _resolved_body(body)
-        assert resolved[0] == ast.D(declaration=ast.Declaration(name="x.0", init=None))
+        assert resolved[0] == ast.D(declaration=ast.Declaration(name=".Vx.0", init=None))
 
     def test_declaration_and_use_renamed_consistently(self) -> None:
         """The same unique name is used in both the declaration and its subsequent reference."""
@@ -253,8 +253,8 @@ class TestResolveProgram:
         ret = resolved[1]
         assert isinstance(decl, ast.D)
         assert isinstance(ret, ast.S)
-        assert decl.declaration.name == "x.0"
-        assert ret.statement == ast.Return(exp=ast.Var(name="x.0"))
+        assert decl.declaration.name == ".Vx.0"
+        assert ret.statement == ast.Return(exp=ast.Var(name=".Vx.0"))
 
     def test_assignment_expression_in_statement_resolves(self) -> None:
         """``x = 10;`` after ``int x;`` resolves the lvalue to the unique name."""
@@ -273,7 +273,7 @@ class TestResolveProgram:
         assert resolved[1] == ast.S(
             statement=ast.Expression(
                 exp=ast.Assignment(
-                    lvalue=ast.Var(name="x.0"),
+                    lvalue=ast.Var(name=".Vx.0"),
                     rvalue=ast.Constant(value=10),
                 )
             )
@@ -319,16 +319,16 @@ class TestCounterIsolation:
     """Each ``SemanticAnalyser`` instance starts its counter from zero."""
 
     def test_two_instances_both_produce_zero_suffix(self) -> None:
-        """Independent instances assign ``.0`` to their first declaration."""
+        """Independent instances both produce ``.Vx.0`` for their first declaration of ``x``."""
         r1 = SemanticAnalyser().resolve_declaration(ast.Declaration(name="x", init=None))
         r2 = SemanticAnalyser().resolve_declaration(ast.Declaration(name="x", init=None))
-        assert r1.name == "x.0"
-        assert r2.name == "x.0"
+        assert r1.name == ".Vx.0"
+        assert r2.name == ".Vx.0"
 
     def test_second_call_on_same_instance_increments(self) -> None:
         """A single instance increments its counter across consecutive declarations."""
         analyser = SemanticAnalyser()
         r1 = analyser.resolve_declaration(ast.Declaration(name="a", init=None))
         r2 = analyser.resolve_declaration(ast.Declaration(name="b", init=None))
-        assert r1.name == "a.0"
-        assert r2.name == "b.1"
+        assert r1.name == ".Va.0"
+        assert r2.name == ".Vb.1"

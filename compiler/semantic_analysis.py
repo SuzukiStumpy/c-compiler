@@ -46,18 +46,18 @@ class SemanticAnalyser:
     def _make_unique(self, name: str) -> str:
         """Generate a unique internal name for a source-level variable.
 
-        Appends the next counter value as a suffix to ``name``, producing
-        identifiers of the form ``x.0``, ``x.1``, etc.  These names are
-        guaranteed not to collide with any valid C identifier.
+        Produces identifiers of the form ``.Vx.0``, ``.Vx.1``, etc.  The
+        leading ``.V`` prefix ensures the name cannot collide with any valid C
+        identifier (C identifiers may not begin with a dot).
 
         Args:
             name: The source-level variable name to uniquify.
 
         Returns:
-            A string of the form ``"<name>.<n>"`` where ``<n>`` is the next
+            A string of the form ``".V<name>.<n>"`` where ``<n>`` is the next
             value drawn from ``_counter``.
         """
-        return f"{name}.{next(self._counter)}"
+        return f".V{name}.{next(self._counter)}"
 
     def resolve_declaration(self, declaration: ast.Declaration) -> ast.Declaration:
         """Resolve a variable declaration against the current symbol table.
