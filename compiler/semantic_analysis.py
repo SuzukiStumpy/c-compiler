@@ -65,11 +65,16 @@ class SemanticAnalyser:
         Verifies that ``declaration.name`` has not already been declared in the
         current scope, assigns it a fresh unique internal name, records the
         mapping in ``_variable_map``, and returns a new ``Declaration`` node
-        whose ``name`` field holds the unique internal name.  If
-        ``declaration.init`` is present every variable reference within the
-        initialiser expression is resolved *before* the new binding is added,
-        which correctly rejects self-referential initialisers such as
-        ``int x = x;``.
+        whose ``name`` field holds the unique internal name.
+
+        The binding is added to ``_variable_map`` *before* the initialiser is
+        resolved.  This matches the C standard (C11 §6.2.1p7), under which the
+        scope of a declared identifier begins immediately after its declarator —
+        before the ``=`` initialiser — so constructs such as
+        ``int a = 0 && a;`` are valid (the right-hand side of ``&&`` is never
+        evaluated when the left is zero).  A self-referential initialiser such
+        as ``int x = x;`` is accepted at this stage; it is undefined behaviour
+        at runtime, but not a constraint violation.
 
         Args:
             declaration: The ``Declaration`` AST node to resolve.  Its ``name``
@@ -90,8 +95,8 @@ class SemanticAnalyser:
             raise SemanticError(f"Duplicate variable declaration: {declaration.name}!")
 
         unique_name = self._make_unique(declaration.name)
-        init = self.resolve_exp(declaration.init) if declaration.init is not None else None
         self._variable_map[declaration.name] = unique_name
+        init = self.resolve_exp(declaration.init) if declaration.init is not None else None
 
         return ast.Declaration(unique_name, init)
 

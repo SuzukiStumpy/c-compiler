@@ -108,7 +108,7 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
             click.echo(pretty_print(program))
 
     if Stage.VALIDATE in stages:
-        program = resolve(program)
+        program = resolve(program)  # type: ignore[bad-argument-type]
         if Stage.TACKY not in stages:
             click.echo(pretty_print(program))
 

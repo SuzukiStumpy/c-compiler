@@ -176,6 +176,9 @@ class _TacGenerator:
         instructions: list[tac.Instruction] = []
         for item in function.body:
             instructions.extend(self.translate_block_item(item))
+
+        # Guard instruction for functions that don't supply a return value
+        instructions.append(tac.Return(tac.Constant(0)))
         return tac.Function(name=function.name, body=tuple(instructions))
 
     def translate_block_item(self, item: ast.BlockItem) -> list[tac.Instruction]:
@@ -193,8 +196,11 @@ class _TacGenerator:
         match item:
             case ast.S(statement=stmt):
                 return self.translate_statement(stmt)
-            case ast.D():
-                raise CodeGenerationError("variable declarations are not yet supported in TAC generation")
+            case ast.D(declaration=ast.Declaration(name=name, init=init)):
+                if init is None:
+                    return []
+                val, instrs = self.translate_exp(init)
+                return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 
@@ -214,6 +220,11 @@ class _TacGenerator:
             case ast.Return(exp=exp):
                 val, extra = self.translate_exp(exp)
                 return [*extra, tac.Return(val=val)]
+            case ast.Expression(exp=exp):
+                _, instr = self.translate_exp(exp)
+                return instr
+            case ast.Null():
+                return []
             case _:
                 raise CodeGenerationError(f"unsupported statement type: {type(stmt).__name__}")
 
@@ -285,5 +296,11 @@ class _TacGenerator:
                 dst = self._make_temp()
                 binary = tac.Binary(operator=_translate_binary_op(op), src1=src1, src2=src2, dst=dst)
                 return dst, [*left_instrs, *right_instrs, binary]
+            case ast.Var(name=name):
+                return tac.Var(value=name), []
+            case ast.Assignment(lvalue=ast.Var(name=name), rvalue=rvalue):
+                val, instrs = self.translate_exp(rvalue)
+                dst = tac.Var(value=name)
+                return dst, [*instrs, tac.Copy(src=val, dst=dst)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

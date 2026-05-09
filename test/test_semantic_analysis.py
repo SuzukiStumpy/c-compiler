@@ -103,11 +103,26 @@ class TestResolveDeclaration:
         with pytest.raises(SemanticError, match="Duplicate"):
             analyser.resolve_declaration(ast.Declaration(name="x", init=None))
 
-    def test_self_referential_init_raises(self) -> None:
-        """``int x = x;`` raises ``SemanticError`` because ``x`` is not yet in scope."""
+    def test_self_referential_init_is_accepted(self) -> None:
+        """``int x = x;`` is accepted: C scoping places ``x`` in scope before the initialiser.
+
+        Reading ``x`` before it is initialised is undefined behaviour at runtime,
+        but is not a constraint violation and must not be rejected by the analyser.
+        """
         analyser = SemanticAnalyser()
-        with pytest.raises(SemanticError, match="Undeclared"):
-            analyser.resolve_declaration(ast.Declaration(name="x", init=ast.Var(name="x")))
+        result = analyser.resolve_declaration(ast.Declaration(name="x", init=ast.Var(name="x")))
+        assert result.name == ".Vx.0"
+        assert result.init == ast.Var(name=".Vx.0")
+
+    def test_short_circuit_init_referencing_own_variable_is_accepted(self) -> None:
+        """``int a = 0 && a;`` is accepted: ``a`` is in scope and the right side is never evaluated."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_declaration(
+            ast.Declaration(
+                name="a", init=ast.Binary(operator=ast.And(), left=ast.Constant(value=0), right=ast.Var(name="a"))
+            )
+        )
+        assert result.name == ".Va.0"
 
 
 # ---------------------------------------------------------------------------
