@@ -58,6 +58,19 @@ The translation follows this mapping:
     ast.Goto(target)           → [Jump(target)]
     ast.Label(name, stmt)      → [Label(name)] + <emit(stmt)>
     ast.Compound(body)         → <emit(item_0)> + <emit(item_1)> + ...
+    ast.While(cond,body,id)     → [continue_<id>, <emit(cond)>,
+                                  JumpIfZero(cond_val, break_<id>),
+                                  <emit(body)>, Jump(continue_<id>), break_<id>]
+    ast.DoWhile(body,cond,id)  → [start_<id>, <emit(body)>, continue_<id>,
+                                  <emit(cond)>,
+                                  JumpIfNotZero(cond_val, start_<id>), break_<id>]
+    ast.For(init,cond,post,    → <emit(init)>
+            body,id)             + [start_<id>, <emit(cond)>,
+                                    JumpIfZero(cond_val, break_<id>),
+                                    <emit(body)>, continue_<id>,
+                                    <emit(post)>, Jump(start_<id>), break_<id>]
+    ast.Break(target)          → [Jump("break_"+ target)]
+    ast.Continue(target)       → [Jump("continue_" + target)]
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -163,9 +176,9 @@ def _translate_unary_op(op: ast.UnaryOperator) -> tac.UnaryOperator:
 class _TacGenerator:
     """Stateful TAC generator for a single function.
 
-    Maintains a counter used to assign unique names to temporary variables.
-    Instantiate once per function to ensure fresh temporaries for each
-    translation unit.
+    Maintains a temporary-variable counter and a label counter, both used to
+    assign unique names throughout the translation.  Instantiate once per
+    function to ensure fresh temporaries and labels for each translation unit.
     """
 
     def __init__(self) -> None:
@@ -182,10 +195,13 @@ class _TacGenerator:
         return tac.Var(value=f"tmp.{next(self._counter)}")
 
     def _make_label(self, base: str) -> tac.Label:
-        """Create a fresh label and avance the counter.
+        """Create a fresh label and advance the counter.
+
+        Args:
+            base: The prefix for the label name.
 
         Returns:
-            A ``tac.Label`` named ``${base}.<n>`` where ``n`` is the next counter value.
+            A ``tac.Label`` named ``<base>.<n>`` where ``n`` is the next counter value.
         """
         return tac.Label(name=f"{base}.{next(self._label_counter)}")
 
@@ -253,6 +269,16 @@ class _TacGenerator:
     def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:
         """Translate a single AST statement into a sequence of TAC instructions.
 
+        Handles all statement forms supported by the compiler: ``Return``,
+        ``Expression``, ``Null``, ``If``, ``Goto``, ``Label``, ``Compound``,
+        ``Break``, ``Continue``, ``While``, ``DoWhile``, and ``For``.
+
+        Loop constructs use the identifier already assigned by the semantic
+        analysis stage to derive consistent ``start_<id>``, ``continue_<id>``,
+        and ``break_<id>`` label names.  ``Break`` and ``Continue`` statements
+        carry those same identifiers and translate to unconditional jumps to the
+        corresponding label.
+
         Args:
             stmt: The statement node to translate.
 
@@ -299,8 +325,120 @@ class _TacGenerator:
                 return [tac.Label(name=name), *self.translate_statement(inner)]
             case ast.Compound(body=body):
                 return self.translate_block(body)
+            case ast.Break(identifier=identifier):
+                return [tac.Jump(f"break_{identifier}")]
+            case ast.Continue(identifier=identifier):
+                return [tac.Jump(f"continue_{identifier}")]
+            case ast.DoWhile(body=body, condition=condition, identifier=identifier):
+                cond_val, cond_instrs = self.translate_exp(condition)
+                label_start = tac.Label(f"start_{identifier}")
+                label_continue = tac.Label(f"continue_{identifier}")
+                label_break = tac.Label(f"break_{identifier}")
+                return [
+                    label_start,
+                    *self.translate_statement(body),
+                    label_continue,
+                    *cond_instrs,
+                    tac.JumpIfNotZero(condition=cond_val, target=label_start.name),
+                    label_break,
+                ]
+            case ast.While(condition=condition, body=body, identifier=identifier):
+                cond_val, cond_instrs = self.translate_exp(condition)
+                label_continue = tac.Label(f"continue_{identifier}")
+                label_break = tac.Label(f"break_{identifier}")
+                return [
+                    label_continue,
+                    *cond_instrs,
+                    tac.JumpIfZero(condition=cond_val, target=label_break.name),
+                    *self.translate_statement(body),
+                    tac.Jump(target=label_continue.name),
+                    label_break,
+                ]
+            case ast.For(init=init, condition=condition, post=post, body=body, identifier=identifier):
+                init_instrs = self._translate_for_init(init)
+                cond_val, cond_instrs = self._translate_optional_exp(condition)
+                _, post_instrs = self._translate_optional_exp(post)
+                label_start = tac.Label(f"start_{identifier}")
+                label_break = tac.Label(f"break_{identifier}")
+                label_continue = tac.Label(f"continue_{identifier}")
+                # When no condition is present the loop is unconditional; omit
+                # the guard entirely rather than emitting JumpIfZero(Constant(1)).
+                cond_guard = (
+                    []
+                    if condition is None
+                    else [*cond_instrs, tac.JumpIfZero(condition=cond_val, target=label_break.name)]
+                )
+                return [
+                    *init_instrs,
+                    label_start,
+                    *cond_guard,
+                    *self.translate_statement(body),
+                    label_continue,
+                    *post_instrs,
+                    tac.Jump(target=label_start.name),
+                    label_break,
+                ]
             case _:
                 raise CodeGenerationError(f"unsupported statement type: {type(stmt).__name__}")
+
+    def _translate_for_init(self, init: ast.ForInit) -> list[tac.Instruction]:
+        """Translate the initialiser clause of a ``for`` loop into TAC instructions.
+
+        An ``InitExp`` clause is treated as a plain expression statement: its
+        instructions are emitted and the result value is discarded.  An absent
+        expression (``InitExp(exp=None)``) produces no instructions.
+
+        An ``InitDecl`` clause is treated identically to a top-level declaration:
+        if the declaration has an initialiser the expression is evaluated and
+        copied into the variable; if not, no instructions are emitted.
+
+        Args:
+            init: The ``ForInit`` node — either an ``InitExp`` or an ``InitDecl``.
+
+        Returns:
+            A flat list of ``tac.Instruction`` nodes that implement the
+            initialiser.  The caller is responsible for emitting these before
+            the loop's start label.
+
+        Raises:
+            CodeGenerationError: If the ``ForInit`` variant is not supported.
+        """
+        match init:
+            case ast.InitExp(exp=exp):
+                if exp is None:
+                    return []
+                _, instrs = self.translate_exp(exp)
+                return instrs
+            case ast.InitDecl(declaration=ast.Declaration(name=name, init=decl_init)):
+                if decl_init is None:
+                    return []
+                val, instrs = self.translate_exp(decl_init)
+                return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
+            case _:
+                raise CodeGenerationError(f"unsupported for-init type: {type(init).__name__}")
+
+    def _translate_optional_exp(self, exp: ast.Exp | None) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Translate an optional expression, substituting a non-zero constant when absent.
+
+        Used for the condition and post-expression slots of a ``for`` loop, both
+        of which may be omitted.  An absent condition must be treated as always
+        true so that ``for (;;)`` loops indefinitely; returning ``Constant(1)``
+        ensures the ``JumpIfZero`` that guards the loop body never fires.  An
+        absent post expression simply produces no instructions; the returned
+        value is ignored by the caller in that case.
+
+        Args:
+            exp: The expression to translate, or ``None`` if the slot is absent.
+
+        Returns:
+            A tuple ``(val, instructions)`` where ``instructions`` must be
+            emitted before ``val`` is used.  When ``exp`` is ``None``, returns
+            ``(Constant(1), [])`` so that a missing condition is unconditionally
+            true.
+        """
+        if exp is None:
+            return tac.Constant(1), []
+        return self.translate_exp(exp)
 
     def translate_exp(self, exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:
         """Translate an AST expression into a TAC value and any preceding instructions.
