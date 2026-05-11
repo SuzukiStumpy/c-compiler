@@ -1054,3 +1054,254 @@ class TestResolveCompound:
         assert len({outer_name, mid_name, inner_name}) == 3
         # The return inside the innermost block uses the innermost binding.
         assert inner_compound.body[1] == ast.S(statement=ast.Return(exp=ast.Var(name=inner_name)))
+
+
+# ---------------------------------------------------------------------------
+# Loop identifier assignment
+# ---------------------------------------------------------------------------
+
+
+class TestLoopIdentifiers:
+    """Loop constructs are assigned unique identifiers; Break/Continue are tagged with their enclosing loop's id."""
+
+    # ------------------------------------------------------------------
+    # Identifier format
+    # ------------------------------------------------------------------
+
+    def test_while_loop_identifier_uses_while_prefix(self) -> None:
+        """A resolved ``While`` node carries an identifier beginning with ``.L.while.``."""
+        body = (ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Null())),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        assert loop.identifier.startswith(".L.while.")
+
+    def test_do_while_loop_identifier_uses_do_prefix(self) -> None:
+        """A resolved ``DoWhile`` node carries an identifier beginning with ``.L.do.``."""
+        body = (ast.S(statement=ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=1))),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.DoWhile)
+        assert loop.identifier.startswith(".L.do.")
+
+    def test_for_loop_identifier_uses_for_prefix(self) -> None:
+        """A resolved ``For`` node carries an identifier beginning with ``.L.for.``."""
+        body = (ast.S(statement=ast.For(init=ast.InitExp(exp=None), condition=None, post=None, body=ast.Null())),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.For)
+        assert loop.identifier.startswith(".L.for.")
+
+    # ------------------------------------------------------------------
+    # Loop counter independence
+    # ------------------------------------------------------------------
+
+    def test_loop_counter_independent_of_variable_counter(self) -> None:
+        """The first loop's identifier ends in ``.0`` regardless of how many variables were declared first."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="a", init=None)),
+            ast.D(declaration=ast.Declaration(name="b", init=None)),
+            ast.D(declaration=ast.Declaration(name="c", init=None)),
+            ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Null())),
+        )
+        resolved = _resolved_body(body)
+        loop = resolved[3].statement
+        assert isinstance(loop, ast.While)
+        assert loop.identifier == ".L.while.0"
+
+    # ------------------------------------------------------------------
+    # Break and Continue tagging — each loop type
+    # ------------------------------------------------------------------
+
+    def test_break_inside_while_tagged_with_loop_identifier(self) -> None:
+        """A ``Break`` directly inside a ``While`` body receives the loop's identifier."""
+        body = (ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Break())),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        assert loop.body == ast.Break(loop.identifier)
+
+    def test_continue_inside_while_tagged_with_loop_identifier(self) -> None:
+        """A ``Continue`` directly inside a ``While`` body receives the loop's identifier."""
+        body = (ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Continue())),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        assert loop.body == ast.Continue(loop.identifier)
+
+    def test_break_inside_do_while_tagged_with_loop_identifier(self) -> None:
+        """A ``Break`` inside a ``DoWhile`` body receives the loop's identifier."""
+        body = (ast.S(statement=ast.DoWhile(body=ast.Break(), condition=ast.Constant(value=1))),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.DoWhile)
+        assert loop.body == ast.Break(loop.identifier)
+
+    def test_continue_inside_do_while_tagged_with_loop_identifier(self) -> None:
+        """A ``Continue`` inside a ``DoWhile`` body receives the loop's identifier."""
+        body = (ast.S(statement=ast.DoWhile(body=ast.Continue(), condition=ast.Constant(value=1))),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.DoWhile)
+        assert loop.body == ast.Continue(loop.identifier)
+
+    def test_break_inside_for_tagged_with_loop_identifier(self) -> None:
+        """A ``Break`` inside a ``For`` body receives the loop's identifier."""
+        body = (ast.S(statement=ast.For(init=ast.InitExp(exp=None), condition=None, post=None, body=ast.Break())),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.For)
+        assert loop.body == ast.Break(loop.identifier)
+
+    def test_continue_inside_for_tagged_with_loop_identifier(self) -> None:
+        """A ``Continue`` inside a ``For`` body receives the loop's identifier."""
+        body = (ast.S(statement=ast.For(init=ast.InitExp(exp=None), condition=None, post=None, body=ast.Continue())),)
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.For)
+        assert loop.body == ast.Continue(loop.identifier)
+
+    def test_break_and_continue_in_same_loop_share_identifier(self) -> None:
+        """Both ``Break`` and ``Continue`` inside the same loop carry identical identifiers."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(statement=ast.Break()),
+                            ast.S(statement=ast.Continue()),
+                        )
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        compound = loop.body
+        assert isinstance(compound, ast.Compound)
+        break_id = compound.body[0].statement.identifier
+        continue_id = compound.body[1].statement.identifier
+        assert break_id == loop.identifier
+        assert continue_id == loop.identifier
+
+    # ------------------------------------------------------------------
+    # Sequential and nested loops
+    # ------------------------------------------------------------------
+
+    def test_sequential_loops_receive_distinct_identifiers(self) -> None:
+        """Two consecutive loops in the same function body each get a distinct identifier."""
+        body = (
+            ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Null())),
+            ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Null())),
+        )
+        resolved = _resolved_body(body)
+        first = resolved[0].statement
+        second = resolved[1].statement
+        assert isinstance(first, ast.While)
+        assert isinstance(second, ast.While)
+        assert first.identifier != second.identifier
+
+    def test_nested_loops_receive_distinct_identifiers(self) -> None:
+        """An inner loop and its enclosing outer loop are assigned different identifiers."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.While(condition=ast.Constant(value=1), body=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer = resolved[0].statement
+        assert isinstance(outer, ast.While)
+        inner = outer.body
+        assert isinstance(inner, ast.While)
+        assert outer.identifier != inner.identifier
+
+    def test_break_in_inner_loop_tagged_with_inner_identifier(self) -> None:
+        """A ``Break`` inside an inner loop is tagged with the inner loop's identifier, not the outer's."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.While(condition=ast.Constant(value=1), body=ast.Break()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer = resolved[0].statement
+        assert isinstance(outer, ast.While)
+        inner = outer.body
+        assert isinstance(inner, ast.While)
+        assert inner.body == ast.Break(inner.identifier)
+        assert inner.body != ast.Break(outer.identifier)
+
+    def test_break_after_inner_loop_tagged_with_outer_identifier(self) -> None:
+        """After an inner loop exits, a ``Break`` in the outer loop body uses the outer identifier."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(statement=ast.While(condition=ast.Constant(value=1), body=ast.Null())),
+                            ast.S(statement=ast.Break()),
+                        )
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer = resolved[0].statement
+        assert isinstance(outer, ast.While)
+        compound = outer.body
+        assert isinstance(compound, ast.Compound)
+        break_stmt = compound.body[1].statement
+        assert isinstance(break_stmt, ast.Break)
+        assert break_stmt.identifier == outer.identifier
+
+    # ------------------------------------------------------------------
+    # Error cases
+    # ------------------------------------------------------------------
+
+    def test_break_outside_any_loop_raises(self) -> None:
+        """A ``Break`` at function scope (not inside any loop) raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Break()),)
+        with pytest.raises(SemanticError, match="not within a loop"):
+            resolve(_program(body))
+
+    def test_continue_outside_any_loop_raises(self) -> None:
+        """A ``Continue`` at function scope (not inside any loop) raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Continue()),)
+        with pytest.raises(SemanticError, match="not within a loop"):
+            resolve(_program(body))
+
+    def test_break_inside_if_but_outside_loop_raises(self) -> None:
+        """A ``Break`` nested inside an ``If`` that is not itself inside a loop raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Break(),
+                    else_=None,
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="not within a loop"):
+            resolve(_program(body))
+
+    def test_continue_inside_if_but_outside_loop_raises(self) -> None:
+        """A ``Continue`` nested inside an ``If`` that is not itself inside a loop raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=1),
+                    then=ast.Continue(),
+                    else_=None,
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="not within a loop"):
+            resolve(_program(body))

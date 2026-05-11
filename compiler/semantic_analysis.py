@@ -44,13 +44,18 @@ class SemanticAnalyser:
     """Resolves variable references across a single AST program.
 
     Each instance owns a fresh counter and should be used for exactly one
-    ``resolve_program`` call.  Constructing a new instance per program
+    ``_resolve_program`` call.  Constructing a new instance per program
     guarantees that unique suffixes start from zero regardless of how many
     programs are analysed within the same process, which keeps test output
     deterministic.
 
     Attributes:
-        _counter: Monotonically increasing integer source for unique suffixes.
+        _counter: Monotonically increasing integer source for unique variable
+            name suffixes.
+        _loop_counter: Monotonically increasing integer source for unique loop
+            label suffixes, kept separate from ``_counter`` so that loop
+            identifiers are predictable in tests regardless of how many
+            variables have been declared.
         _variable_map: Mapping from source-level variable names to
             ``VariableBinding`` values.  Each binding records both the unique
             internal name and whether it was declared in the current block.
@@ -61,13 +66,22 @@ class SemanticAnalyser:
         _label_set: Set of all label names declared in the function currently
             being analysed.  Populated by a first pass before resolution begins
             so that forward ``goto`` targets can be validated.
+        _loop_stack: Stack of loop identifiers for the loops currently
+            enclosing the statement being resolved.  The top of the stack
+            is the identifier of the immediately enclosing loop and is
+            attached to any ``Break`` or ``Continue`` encountered during
+            resolution.  An empty stack indicates that the current statement
+            is not within any loop; a ``Break`` or ``Continue`` in that
+            context is a semantic error.
     """
 
     def __init__(self) -> None:
-        """Initialise the analyser with a fresh counter and an empty symbol table."""
+        """Initialise the analyser with fresh counters and an empty symbol table."""
         self._counter: count[int] = count()
+        self._loop_counter: count[int] = count()
         self._variable_map: dict[str, VariableBinding] = {}
         self._label_set: set[str] = set()
+        self._loop_stack: list[str] = []
 
     def _make_unique(self, name: str) -> str:
         """Generate a unique internal name for a source-level variable.
@@ -85,12 +99,30 @@ class SemanticAnalyser:
         """
         return f".V{name}.{next(self._counter)}"
 
+    def _make_loop_label(self, kind: str) -> str:
+        """Generate a unique identifier for a loop construct.
+
+        Produces identifiers of the form ``.L.while.0``, ``.L.for.1``,
+        ``.L.do.2``, etc.  The ``.L.`` prefix distinguishes loop labels from
+        the ``.V`` prefix used for renamed variables.  The ``kind`` segment
+        names the construct for readability in TAC and assembly output.
+
+        Args:
+            kind: A short string identifying the loop type, e.g. ``"while"``,
+                ``"for"``, or ``"do"``.
+
+        Returns:
+            A string of the form ``".L.<kind>.<n>"`` where ``<n>`` is the next
+            value drawn from ``_loop_counter``.
+        """
+        return f".L.{kind}.{next(self._loop_counter)}"
+
     def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
         """Recursively collect label names from a statement into ``_label_set``.
 
         Raises ``SemanticError`` immediately upon finding a duplicate label name.
-        Recurses into ``If``, ``Label``, and ``Compound`` nodes so that labels
-        nested at any depth are captured.
+        Recurses into ``If``, ``Label``, ``Compound``, and all loop body nodes
+        so that labels nested at any depth are captured.
 
         Args:
             statement: The statement node to walk.
@@ -114,6 +146,10 @@ class SemanticAnalyser:
                     match item:
                         case ast.S(statement=inner_stmt):
                             self._collect_labels_in_statement(inner_stmt)
+            case ast.While(body=loop_body) | ast.DoWhile(body=loop_body):
+                self._collect_labels_in_statement(loop_body)
+            case ast.For(body=loop_body):
+                self._collect_labels_in_statement(loop_body)
             case _:
                 pass
 
@@ -182,13 +218,29 @@ class SemanticAnalyser:
 
         return ast.Declaration(unique_name, init)
 
+    def _enter_scope(self) -> dict[str, VariableBinding]:
+        """Open a new nested scope and return a snapshot of the current bindings.
+
+        Saves a copy of ``_variable_map``, then marks every existing binding as
+        ``from_current_block=False`` so that declarations in the new scope may
+        shadow outer names without being treated as same-block duplicates.
+
+        Returns:
+            A copy of ``_variable_map`` as it stood before entering the scope.
+            Assign this value back to ``self._variable_map`` once the nested
+            scope has been fully processed to restore the enclosing bindings.
+        """
+        saved = dict(self._variable_map)
+        self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
+        return saved
+
     def _resolve_block(self, body: ast.Block) -> ast.Block:
         """Resolve a sequence of block items in a new nested scope.
 
-        Saves the current ``_variable_map``, marks all inherited bindings as
-        ``from_current_block=False``, processes ``body``, then restores the map
-        on exit.  Any variable declared inside ``body`` is invisible after this
-        call returns; outer-scope bindings remain accessible throughout.
+        Opens a nested scope via ``_enter_scope``, processes ``body``, then
+        restores the enclosing bindings.  Any variable declared inside ``body``
+        is invisible after this call returns; outer-scope bindings remain
+        accessible throughout.
 
         Args:
             body: The ordered sequence of block items to resolve.
@@ -200,8 +252,7 @@ class SemanticAnalyser:
             SemanticError: If any block item within ``body`` contains a
                 semantic violation.
         """
-        saved_map = dict(self._variable_map)
-        self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
+        saved_map = self._enter_scope()
         result = tuple(self._resolve_block_item(item) for item in body)
         self._variable_map = saved_map
         return result
@@ -250,21 +301,26 @@ class SemanticAnalyser:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
     def _resolve_statement(self, statement: ast.Statement) -> ast.Statement:
-        """Resolve all variable references within a statement.
+        """Resolve all variable references within a statement and assign loop identifiers.
 
         Recursively resolves any expressions contained in the statement,
         returning a new statement node with all ``ast.Var`` references rewritten
-        to their unique internal names.
+        to their unique internal names.  Additionally, each loop construct
+        (``While``, ``DoWhile``, ``For``) is assigned a fresh unique identifier
+        via ``_make_loop_label``, and every ``Break`` or ``Continue`` encountered
+        within the loop body is tagged with that same identifier.
 
         Args:
             statement: The statement node to resolve.
 
         Returns:
-            A new statement node with all variable references resolved.
+            A new statement node with all variable references resolved and all
+            loop-control statements tagged with their enclosing loop's identifier.
 
         Raises:
             SemanticError: If any expression within the statement contains an
-                undeclared variable or an invalid lvalue.
+                undeclared variable or an invalid lvalue, or if a ``Break`` or
+                ``Continue`` appears outside any enclosing loop.
         """
         match statement:
             case ast.Compound(body=block):
@@ -275,22 +331,100 @@ class SemanticAnalyser:
                 return ast.Expression(self.resolve_exp(exp))
             case ast.Null():
                 return statement
+            case ast.Break():
+                if not self._loop_stack:
+                    raise SemanticError("'break' statement not within a loop.")
+                return ast.Break(self._loop_stack[-1])
+            case ast.Continue():
+                if not self._loop_stack:
+                    raise SemanticError("'continue' statement not within a loop.")
+                return ast.Continue(self._loop_stack[-1])
             case ast.If(condition=cond, then=then_stmt, else_=None):
                 return ast.If(self.resolve_exp(cond), self._resolve_statement(then_stmt), None)
             case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
                 return ast.If(
                     self.resolve_exp(cond), self._resolve_statement(then_stmt), self._resolve_statement(else_stmt)
                 )
+            case ast.While(condition=condition, body=body):
+                label = self._make_loop_label("while")
+                self._loop_stack.append(label)
+                result = ast.While(self.resolve_exp(condition), self._resolve_statement(body), label)
+                self._loop_stack.pop()
+                return result
+            case ast.DoWhile(body=body, condition=condition):
+                label = self._make_loop_label("do")
+                self._loop_stack.append(label)
+                result = ast.DoWhile(self._resolve_statement(body), self.resolve_exp(condition), label)
+                self._loop_stack.pop()
+                return result
+            case ast.For(init=init, condition=condition, post=post, body=body):
+                saved_variable_map = self._enter_scope()
+                label = self._make_loop_label("for")
+                self._loop_stack.append(label)
+                init = self._resolve_for_init(init)
+                condition = self._resolve_optional_exp(condition)
+                post = self._resolve_optional_exp(post)
+                body = self._resolve_statement(body)
+                self._loop_stack.pop()
+                self._variable_map = saved_variable_map
+                return ast.For(init, condition, post, body, label)
             case ast.Goto(target=target):
                 if target not in self._label_set:
                     raise SemanticError(f"goto targets undefined label '{target}'.")
                 return statement
             case ast.Label(name=name, statement=inner):
                 return ast.Label(name, self._resolve_statement(inner))
-            case ast.Compound(body=body):
-                return ast.Compound(self._resolve_block(body))
             case _:
                 raise SemanticError("Unhandled statement type in semantic analyser")
+
+    def _resolve_for_init(self, init: ast.ForInit) -> ast.ForInit:
+        """Resolve the initialiser clause of a ``for`` loop.
+
+        Dispatches to ``_resolve_optional_exp`` for an expression initialiser
+        (``InitExp``) and to ``resolve_declaration`` for a declaration
+        initialiser (``InitDecl``).
+
+        Args:
+            init: The ``ForInit`` node from the parser — either an ``InitExp``
+                wrapping an optional expression, or an ``InitDecl`` wrapping a
+                variable declaration.
+
+        Returns:
+            A new ``ForInit`` node with all variable references resolved.
+
+        Raises:
+            SemanticError: If a declaration within ``init`` duplicates a name
+                already declared in the same scope, or if an expression within
+                ``init`` contains an undeclared variable or an invalid lvalue.
+        """
+        match init:
+            case ast.InitExp(exp=exp):
+                return ast.InitExp(self._resolve_optional_exp(exp))
+            case ast.InitDecl(declaration=declaration):
+                return ast.InitDecl(self.resolve_declaration(declaration))
+            case _:
+                raise SemanticError("Unhandled for-init type in semantic analyser")
+
+    def _resolve_optional_exp(self, exp: ast.Exp | None) -> ast.Exp | None:
+        """Resolve an optional expression, returning ``None`` when absent.
+
+        A convenience wrapper around ``resolve_exp`` for contexts where an
+        expression is syntactically optional, such as the condition and post
+        expressions of a ``for`` loop.
+
+        Args:
+            exp: The expression to resolve, or ``None`` if absent.
+
+        Returns:
+            The resolved expression, or ``None`` if ``exp`` is ``None``.
+
+        Raises:
+            SemanticError: If ``exp`` is not ``None`` and contains an
+                undeclared variable or an invalid lvalue.
+        """
+        if exp is not None:
+            return self.resolve_exp(exp)
+        return None
 
     def _resolve_block_item(self, item: ast.BlockItem) -> ast.BlockItem:
         """Resolve a single block item (statement or declaration).
@@ -333,6 +467,7 @@ class SemanticAnalyser:
         """
         self._variable_map = {}
         self._label_set = set()
+        self._loop_stack = []
         self._collect_labels(function.body)
         return ast.Function(
             return_type=function.return_type,
@@ -341,7 +476,7 @@ class SemanticAnalyser:
             body=tuple(self._resolve_block_item(item) for item in function.body),
         )
 
-    def resolve_program(self, program: ast.Program) -> ast.Program:
+    def _resolve_program(self, program: ast.Program) -> ast.Program:
         """Perform semantic analysis on a parsed program.
 
         Resolves every function in the program in order, returning a new
@@ -382,4 +517,4 @@ def resolve(program: ast.Program) -> ast.Program:
     Raises:
         SemanticError: If the program contains any semantic violation.
     """
-    return SemanticAnalyser().resolve_program(program)
+    return SemanticAnalyser()._resolve_program(program)
