@@ -14,6 +14,11 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("IF", r"if\b"),
     ("ELSE", r"else\b"),
     ("GOTO", r"goto\b"),
+    ("DO", r"do\b"),
+    ("WHILE", r"while\b"),
+    ("FOR", r"for\b"),
+    ("BREAK", r"break\b"),
+    ("CONTINUE", r"continue\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("NUMBER", r"\d+\b"),

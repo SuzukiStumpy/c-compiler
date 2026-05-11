@@ -20,6 +20,11 @@ class TokenType(Enum):
     IF = auto()
     ELSE = auto()
     GOTO = auto()
+    DO = auto()
+    WHILE = auto()
+    FOR = auto()
+    BREAK = auto()
+    CONTINUE = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
