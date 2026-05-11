@@ -57,6 +57,7 @@ The translation follows this mapping:
                                  + [end_lbl]
     ast.Goto(target)           → [Jump(target)]
     ast.Label(name, stmt)      → [Label(name)] + <emit(stmt)>
+    ast.Compound(body)         → <emit(item_0)> + <emit(item_1)> + ...
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -200,15 +201,33 @@ class _TacGenerator:
         Raises:
             CodeGenerationError: If any block item in the body cannot be translated.
         """
-        instructions: list[tac.Instruction] = []
-        for item in function.body:
-            instructions.extend(self.translate_block_item(item))
-
+        instructions = self.translate_block(function.body)
         # Guard instruction for functions that don't supply a return value
         instructions.append(tac.Return(tac.Constant(0)))
         return tac.Function(name=function.name, body=tuple(instructions))
 
-    def translate_block_item(self, item: ast.BlockItem) -> list[tac.Instruction]:
+    def translate_block(self, block: ast.Block) -> list[tac.Instruction]:
+        """Translate a sequence of block items into a flat list of TAC instructions.
+
+        Iterates over every item in ``block`` and concatenates the instruction
+        sequences produced by ``_translate_block_item``.  Used both for function
+        bodies and for ``Compound`` statement bodies.
+
+        Args:
+            block: The ordered sequence of block items to translate.
+
+        Returns:
+            A list of ``tac.Instruction`` nodes equivalent to the entire block.
+
+        Raises:
+            CodeGenerationError: If any block item variant is not supported.
+        """
+        instructions: list[tac.Instruction] = []
+        for item in block:
+            instructions.extend(self._translate_block_item(item))
+        return instructions
+
+    def _translate_block_item(self, item: ast.BlockItem) -> list[tac.Instruction]:
         """Translate a single block item into a sequence of TAC instructions.
 
         Args:
@@ -278,6 +297,8 @@ class _TacGenerator:
                 return [tac.Jump(target=target)]
             case ast.Label(name=name, statement=inner):
                 return [tac.Label(name=name), *self.translate_statement(inner)]
+            case ast.Compound(body=body):
+                return self.translate_block(body)
             case _:
                 raise CodeGenerationError(f"unsupported statement type: {type(stmt).__name__}")
 
