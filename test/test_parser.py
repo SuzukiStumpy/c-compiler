@@ -7,12 +7,18 @@ Covers the full range of constructs supported by the current grammar:
     block_item          ::= statement | declaration
     block               ::= "{" {block_item} "}"
     declaration         ::= "int" identifier [ "=" exp ] ";"
+    for_init            ::= declaration | [exp] ";"
     statement           ::= "return" exp ";"
                           | exp ";"
                           | "if" "(" exp ")" statement ["else" statement]
                           | "goto" identifier ";"
                           | identifier ":" statement
                           | block
+                          | "break" ";"
+                          | "continue" ";"
+                          | "while" "(" exp ")" statement
+                          | "do" statement "while" "(" exp ")" ";"
+                          | "for" "(" for_init [exp] ";" [exp] ")" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -36,14 +42,20 @@ from compiler.parser import parse
 from compiler.syntax.ast import (
     Block,
     BlockItem,
+    Break,
     Compound,
     Constant,
+    Continue,
     D,
     Declaration,
+    DoWhile,
     Expression,
+    For,
     Function,
     Goto,
     If,
+    InitDecl,
+    InitExp,
     IntType,
     Label,
     Null,
@@ -52,6 +64,7 @@ from compiler.syntax.ast import (
     Return,
     S,
     Statement,
+    While,
 )
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
@@ -144,6 +157,11 @@ _GEQ = _tok(TokenType.GEQ, ">=")
 _IF = _tok(TokenType.IF, "if")
 _ELSE = _tok(TokenType.ELSE, "else")
 _GOTO = _tok(TokenType.GOTO, "goto")
+_BREAK = _tok(TokenType.BREAK, "break")
+_CONTINUE = _tok(TokenType.CONTINUE, "continue")
+_WHILE = _tok(TokenType.WHILE, "while")
+_DO = _tok(TokenType.DO, "do")
+_FOR = _tok(TokenType.FOR, "for")
 _ASSIGNMENT = _tok(TokenType.ASSIGNMENT, "=")
 _QUERY = _tok(TokenType.QUERY, "?")
 _COLON = _tok(TokenType.COLON, ":")
@@ -1155,3 +1173,421 @@ class TestCompoundStatements:
         # Block is a type alias — verify the runtime type satisfies it
         b: Block = result.body
         assert b == (S(statement=Return(exp=Constant(0))),)
+
+
+# ---------------------------------------------------------------------------
+# Break and continue statements (_parse_statement → BREAK / CONTINUE cases)
+# ---------------------------------------------------------------------------
+
+
+class TestBreakContinueStatements:
+    """Parser correctly builds ``Break`` and ``Continue`` nodes."""
+
+    def test_break_produces_break_node(self) -> None:
+        """``break;`` → ``Break()``."""
+        assert _parsed_stmt(_BREAK, _SEMICOLON) == Break()
+
+    def test_continue_produces_continue_node(self) -> None:
+        """``continue;`` → ``Continue()``."""
+        assert _parsed_stmt(_CONTINUE, _SEMICOLON) == Continue()
+
+    def test_break_missing_semicolon_raises_parse_error(self) -> None:
+        """``break`` without a trailing semicolon raises ``ParseError``."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _BREAK, _RBRACE]
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
+            parse(tokens)
+
+    def test_continue_missing_semicolon_raises_parse_error(self) -> None:
+        """``continue`` without a trailing semicolon raises ``ParseError``."""
+        tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _CONTINUE, _RBRACE]
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# While statements (_parse_statement → WHILE case)
+# ---------------------------------------------------------------------------
+
+
+class TestWhileStatements:
+    """Parser correctly builds ``While`` nodes for while loops."""
+
+    def test_while_with_constant_condition(self) -> None:
+        """``while (1) return 0;`` → ``While(condition=Constant(1), body=Return(Constant(0)))``."""
+        result = _parsed_stmt(_WHILE, _LPAREN, _number("1"), _RPAREN, _RETURN, _number("0"), _SEMICOLON)
+        assert result == While(condition=Constant(1), body=Return(exp=Constant(0)))
+
+    def test_while_with_compound_body(self) -> None:
+        """``while (1) {}`` → ``While`` with an empty ``Compound`` body."""
+        result = _parsed_stmt(_WHILE, _LPAREN, _number("1"), _RPAREN, _LBRACE, _RBRACE)
+        assert result == While(condition=Constant(1), body=Compound(body=()))
+
+    def test_while_body_is_null_statement(self) -> None:
+        """``while (1) ;`` → ``While`` whose body is a ``Null`` statement."""
+        result = _parsed_stmt(_WHILE, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
+        assert result == While(condition=Constant(1), body=Null())
+
+    def test_while_condition_is_arbitrary_expression(self) -> None:
+        """``while (a < 10) ;`` — comparison expression as condition."""
+        result = _parsed_stmt(_WHILE, _LPAREN, _ident("a"), _LT, _number("10"), _RPAREN, _SEMICOLON)
+        assert result == While(condition=Binary(LessThan(), Var("a"), Constant(10)), body=Null())
+
+    def test_while_missing_lparen_raises_parse_error(self) -> None:
+        """``while 1) ;`` — missing opening parenthesis raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _WHILE,
+            _number("1"),
+            _RPAREN,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected LPAREN"):
+            parse(tokens)
+
+    def test_while_missing_rparen_raises_parse_error(self) -> None:
+        """``while (1 ;`` — missing closing parenthesis raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _WHILE,
+            _LPAREN,
+            _number("1"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected RPAREN"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Do/while statements (_parse_statement → DO case)
+# ---------------------------------------------------------------------------
+
+
+class TestDoWhileStatements:
+    """Parser correctly builds ``DoWhile`` nodes for do/while loops."""
+
+    def test_do_while_basic(self) -> None:
+        """``do return 0; while (1);`` → ``DoWhile(body=Return(Constant(0)), condition=Constant(1))``."""
+        result = _parsed_stmt(
+            _DO, _RETURN, _number("0"), _SEMICOLON, _WHILE, _LPAREN, _number("1"), _RPAREN, _SEMICOLON
+        )
+        assert result == DoWhile(body=Return(exp=Constant(0)), condition=Constant(1))
+
+    def test_do_while_with_compound_body(self) -> None:
+        """``do {} while (1);`` → ``DoWhile`` with an empty ``Compound`` body."""
+        result = _parsed_stmt(_DO, _LBRACE, _RBRACE, _WHILE, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
+        assert result == DoWhile(body=Compound(body=()), condition=Constant(1))
+
+    def test_do_while_condition_is_arbitrary_expression(self) -> None:
+        """``do ; while (a < 10);`` — comparison expression as condition."""
+        result = _parsed_stmt(_DO, _SEMICOLON, _WHILE, _LPAREN, _ident("a"), _LT, _number("10"), _RPAREN, _SEMICOLON)
+        assert result == DoWhile(body=Null(), condition=Binary(LessThan(), Var("a"), Constant(10)))
+
+    def test_do_while_missing_while_keyword_raises_parse_error(self) -> None:
+        """``do ; (1);`` — absent ``while`` keyword raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _DO,
+            _SEMICOLON,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected WHILE"):
+            parse(tokens)
+
+    def test_do_while_missing_closing_paren_raises_parse_error(self) -> None:
+        """``do ; while (1;`` — missing ``)`` after condition raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _DO,
+            _SEMICOLON,
+            _WHILE,
+            _LPAREN,
+            _number("1"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected RPAREN"):
+            parse(tokens)
+
+    def test_do_while_missing_trailing_semicolon_raises_parse_error(self) -> None:
+        """``do ; while (1)`` — missing trailing ``;`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _DO,
+            _SEMICOLON,
+            _WHILE,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# For statements (_parse_statement → FOR case)
+# ---------------------------------------------------------------------------
+
+
+class TestForStatements:
+    """Parser correctly builds ``For`` nodes for all for-loop clause combinations."""
+
+    def test_for_with_declaration_init(self) -> None:
+        """``for (int i = 0; i < 10; i++) return 0;`` — declaration init clause."""
+        result = _parsed_stmt(
+            _FOR,
+            _LPAREN,
+            _INT,
+            _ident("i"),
+            _ASSIGNMENT,
+            _number("0"),
+            _SEMICOLON,
+            _ident("i"),
+            _LT,
+            _number("10"),
+            _SEMICOLON,
+            _ident("i"),
+            _INCREMENT,
+            _RPAREN,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+        )
+        assert result == For(
+            init=InitDecl(declaration=Declaration(name="i", init=Constant(0))),
+            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            post=Unary(PostIncrement(), Var("i")),
+            body=Return(exp=Constant(0)),
+        )
+
+    def test_for_with_expression_init(self) -> None:
+        """``for (i = 0; i < 10; i++) ;`` — expression init clause."""
+        result = _parsed_stmt(
+            _FOR,
+            _LPAREN,
+            _ident("i"),
+            _ASSIGNMENT,
+            _number("0"),
+            _SEMICOLON,
+            _ident("i"),
+            _LT,
+            _number("10"),
+            _SEMICOLON,
+            _ident("i"),
+            _INCREMENT,
+            _RPAREN,
+            _SEMICOLON,
+        )
+        assert result == For(
+            init=InitExp(exp=Assignment(lvalue=Var("i"), rvalue=Constant(0))),
+            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            post=Unary(PostIncrement(), Var("i")),
+            body=Null(),
+        )
+
+    def test_for_with_empty_init(self) -> None:
+        """``for (; i < 10; i++) ;`` — absent init clause yields ``InitExp(exp=None)``."""
+        result = _parsed_stmt(
+            _FOR,
+            _LPAREN,
+            _SEMICOLON,
+            _ident("i"),
+            _LT,
+            _number("10"),
+            _SEMICOLON,
+            _ident("i"),
+            _INCREMENT,
+            _RPAREN,
+            _SEMICOLON,
+        )
+        assert result == For(
+            init=InitExp(exp=None),
+            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            post=Unary(PostIncrement(), Var("i")),
+            body=Null(),
+        )
+
+    def test_for_with_no_condition(self) -> None:
+        """``for (int i = 0;; i++) ;`` — absent condition yields ``condition=None``."""
+        result = _parsed_stmt(
+            _FOR,
+            _LPAREN,
+            _INT,
+            _ident("i"),
+            _ASSIGNMENT,
+            _number("0"),
+            _SEMICOLON,
+            _SEMICOLON,
+            _ident("i"),
+            _INCREMENT,
+            _RPAREN,
+            _SEMICOLON,
+        )
+        assert result == For(
+            init=InitDecl(declaration=Declaration(name="i", init=Constant(0))),
+            condition=None,
+            post=Unary(PostIncrement(), Var("i")),
+            body=Null(),
+        )
+
+    def test_for_with_no_post(self) -> None:
+        """``for (int i = 0; i < 10;) ;`` — absent post clause yields ``post=None``."""
+        result = _parsed_stmt(
+            _FOR,
+            _LPAREN,
+            _INT,
+            _ident("i"),
+            _ASSIGNMENT,
+            _number("0"),
+            _SEMICOLON,
+            _ident("i"),
+            _LT,
+            _number("10"),
+            _SEMICOLON,
+            _RPAREN,
+            _SEMICOLON,
+        )
+        assert result == For(
+            init=InitDecl(declaration=Declaration(name="i", init=Constant(0))),
+            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            post=None,
+            body=Null(),
+        )
+
+    def test_for_all_clauses_absent(self) -> None:
+        """``for (;;) ;`` — all optional clauses absent."""
+        result = _parsed_stmt(_FOR, _LPAREN, _SEMICOLON, _SEMICOLON, _RPAREN, _SEMICOLON)
+        assert result == For(
+            init=InitExp(exp=None),
+            condition=None,
+            post=None,
+            body=Null(),
+        )
+
+    def test_for_body_is_compound(self) -> None:
+        """``for (;;) { return 0; }`` — compound statement as the loop body."""
+        result = _parsed_stmt(
+            _FOR,
+            _LPAREN,
+            _SEMICOLON,
+            _SEMICOLON,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        )
+        assert result == For(
+            init=InitExp(exp=None),
+            condition=None,
+            post=None,
+            body=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+        )
+
+    def test_for_missing_lparen_raises_parse_error(self) -> None:
+        """``for ;; ) ;`` — missing ``(`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _SEMICOLON,
+            _SEMICOLON,
+            _RPAREN,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected LPAREN"):
+            parse(tokens)
+
+    def test_for_missing_first_semicolon_raises_parse_error(self) -> None:
+        """``for (i) ;`` — init clause expression not terminated with ``;`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _LPAREN,
+            _ident("i"),
+            _RPAREN,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
+            parse(tokens)
+
+    def test_for_missing_second_semicolon_raises_parse_error(self) -> None:
+        """``for (; i) ;`` — condition expression not terminated with ``;`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _LPAREN,
+            _SEMICOLON,
+            _ident("i"),
+            _RPAREN,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
+            parse(tokens)
+
+    def test_for_missing_rparen_raises_parse_error(self) -> None:
+        """``for (;;`` — missing ``)`` after post expression raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _LPAREN,
+            _SEMICOLON,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError):
+            parse(tokens)

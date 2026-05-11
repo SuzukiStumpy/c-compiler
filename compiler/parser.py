@@ -8,12 +8,18 @@ which are handled by precedence climbing.  The grammar is:
     block               ::= "{" {block_item} "}"
     block_item          ::= statement | declaration
     declaration         ::= "int" identifier [ "=" exp ] ";"
+    for_init            ::= declaration | exp ";"
     statement           ::= "return" exp ";"
                           | exp ";"
                           | "if" "(" exp ")" statement ["else" statement]
                           | "goto" identifier ";"
                           | identifier ":" statement
                           | block
+                          | "break" ";"
+                          | "continue" ";"
+                          | "while" "(" exp ")" statement
+                          | "do" statement "while" "(" exp ")" ";"
+                          | "for" "(" for_init [exp] ";" [exp] ")" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -48,21 +54,28 @@ from compiler.syntax.ast import (
     BitwiseXor,
     Block,
     BlockItem,
+    Break,
     Complement,
     Compound,
     Conditional,
     Constant,
+    Continue,
     D,
     Declaration,
     Divide,
+    DoWhile,
     Equal,
     Exp,
     Expression,
+    For,
+    ForInit,
     Function,
     Goto,
     GreaterOrEqual,
     GreaterThan,
     If,
+    InitDecl,
+    InitExp,
     IntType,
     Label,
     LeftShift,
@@ -90,6 +103,7 @@ from compiler.syntax.ast import (
     Unary,
     UnaryOperator,
     Var,
+    While,
 )
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
@@ -523,6 +537,57 @@ class Parser:
         self._expect(TokenType.SEMICOLON)
         return Declaration(name=name_token.value, init=init)
 
+    def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
+        """Parse an optional expression and consume its terminating token.
+
+        If the very next token already matches ``terminator``, that token is
+        consumed immediately and ``None`` is returned.  Otherwise an expression
+        is parsed, ``terminator`` is consumed, and the expression is returned.
+
+        Args:
+            terminator: The token type that ends this clause (e.g.
+                ``TokenType.SEMICOLON`` or ``TokenType.RPAREN``).
+
+        Returns:
+            The parsed ``Exp`` node, or ``None`` when no expression was present.
+
+        Raises:
+            ParseError: If an expression is present but malformed, or if
+                ``terminator`` is absent after the expression.
+        """
+        if self._match(terminator):
+            self._consume()
+            return None
+
+        exp = self._parse_exp()
+        self._expect(terminator)
+        return exp
+
+    def _parse_for_init(self) -> ForInit:
+        """Parse the initialiser clause of a ``for`` loop.
+
+        Grammar::
+
+            for_init ::= declaration | [exp] ";"
+
+        Dispatches on the next token: an ``int`` keyword begins a full variable
+        declaration (which already consumes its own trailing semicolon);
+        anything else delegates to ``_parse_optional_exp`` to handle an
+        expression-or-empty clause followed by ``;``.
+
+        Returns:
+            An ``InitDecl`` node wrapping the parsed declaration, or an
+            ``InitExp`` node whose ``exp`` field is ``None`` when the clause
+            is absent.
+
+        Raises:
+            ParseError: If the optional expression is malformed, or if the
+                trailing ``;`` is missing.
+        """
+        if self._match(TokenType.INT):
+            return InitDecl(self._parse_declaration())
+        return InitExp(self._parse_optional_exp(TokenType.SEMICOLON))
+
     def _parse_statement(self) -> Statement:
         """Parse a single statement.
 
@@ -534,6 +599,11 @@ class Parser:
                         | "goto" identifier ";"
                         | identifier ":" statement
                         | block
+                        | "break" ";"
+                        | "continue" ";"
+                        | "while" "(" exp ")" statement
+                        | "do" statement "while" "(" exp ")" ";"
+                        | "for" "(" for_init [exp] ";" [exp] ")" statement
                         | ";"
 
         A labeled statement is detected via one token of lookahead before the
@@ -559,6 +629,38 @@ class Parser:
         match token.type:
             case TokenType.LBRACE:
                 return Compound(body=self._parse_block())
+            case TokenType.BREAK:
+                self._consume()
+                self._expect(TokenType.SEMICOLON)
+                return Break()
+            case TokenType.CONTINUE:
+                self._consume()
+                self._expect(TokenType.SEMICOLON)
+                return Continue()
+            case TokenType.WHILE:
+                self._consume()
+                self._expect(TokenType.LPAREN)
+                test = self._parse_exp()
+                self._expect(TokenType.RPAREN)
+                body = self._parse_statement()
+                return While(test, body)
+            case TokenType.DO:
+                self._consume()
+                body = self._parse_statement()
+                self._expect(TokenType.WHILE)
+                self._expect(TokenType.LPAREN)
+                test = self._parse_exp()
+                self._expect(TokenType.RPAREN)
+                self._expect(TokenType.SEMICOLON)
+                return DoWhile(body, test)
+            case TokenType.FOR:
+                self._consume()
+                self._expect(TokenType.LPAREN)
+                init = self._parse_for_init()
+                cond = self._parse_optional_exp(TokenType.SEMICOLON)
+                post = self._parse_optional_exp(TokenType.RPAREN)
+                body = self._parse_statement()
+                return For(init, cond, post, body)
             case TokenType.RETURN:
                 return self._parse_return()
             case TokenType.SEMICOLON:
