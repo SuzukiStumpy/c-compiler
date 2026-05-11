@@ -21,6 +21,7 @@ The compiler currently handles:
 - Expression statements (expressions evaluated for side effects)
 - `if` / `else` statements
 - `goto` and labeled statements
+- Compound (block) statements with nested variable scoping (`{ ... }`)
 
 ## Prerequisites
 

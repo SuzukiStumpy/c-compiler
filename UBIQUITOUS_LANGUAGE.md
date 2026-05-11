@@ -102,8 +102,10 @@
 | **Symbol table** | The per-function mapping from source-level variable names to their unique internal names, maintained during variable resolution | Name table, scope map |
 | **Unique internal name** | The compiler-generated identifier of the form `.V<name>.<n>` assigned to each declared variable; the leading `.V` prefix prevents collisions with any valid C identifier | Mangled name, renamed variable |
 | **Initialiser** | The optional expression whose value is stored into a variable at the point of declaration | Initial value, init expression |
-| **Scope** | The region of a function body in which a declared variable is visible; currently limited to the entire function body (no nested block scopes) | — |
-| **Duplicate declaration** | A semantic error raised when a variable name is declared more than once within the same scope | Redeclaration |
+| **Scope** | The region of a function body in which a declared variable is visible; each compound statement introduces a new nested scope, so a variable is visible from its declaration to the closing brace of the block that contains it | — |
+| **Block scope** | The scope introduced by a single compound statement; variables declared within a block are invisible outside it | — |
+| **Variable shadowing** | The act of declaring a variable in an inner block with the same source-level name as a variable in an enclosing block; the inner declaration creates a fresh unique internal name and takes precedence for the duration of the inner block, after which the outer binding is restored | Name shadowing |
+| **Duplicate declaration** | A semantic error raised when a variable name is declared more than once within the *same* block (same scope level); re-declaring the same name in an inner block is not an error — it is variable shadowing | Redeclaration |
 | **Undeclared variable** | A semantic error raised when a variable is referenced before any declaration is in scope | Undefined variable |
 
 ## Operators
@@ -218,7 +220,7 @@ Three-address code is the intermediate representation produced by TAC generation
 - A **source position** references the original **C source file**, not the **preprocessed file**, via **linemarkers**.
 - A **keyword** is a **token** whose **token type** has a distinct enum member (e.g. `RETURN`) — it is never classified as an **identifier**.
 - A **lexer error** carries a **source position** and an **error context** drawn from the original **C source file**.
-- **Semantic analysis** maintains a **symbol table** for each function; a **semantic error** is raised on a **duplicate declaration** or an **undeclared variable**.
+- **Semantic analysis** maintains a **symbol table** for each function; a **semantic error** is raised on a **duplicate declaration** or an **undeclared variable**.  Each **compound statement** introduces a new **block scope**: outer bindings remain accessible but are marked as inherited; a new declaration of the same name is **variable shadowing**, not a **duplicate declaration**.
 - A **TAC function** body is a sequence of **TAC instructions**; each instruction operates on **TAC values** (constants and named variables).
 - **Temporary variables** are created during **instruction flattening** and do not correspond to any source-level name.
 - **Short-circuit evaluation** for `&&` and `||` is implemented in TAC using **JumpIfZero** and **JumpIfNotZero** instructions targeting generated **labels**.
@@ -239,7 +241,7 @@ Three-address code is the intermediate representation produced by TAC generation
 
 > **Dev:** "If I write `int x = x;`, does the **semantic analyser** reject it?"
 
-> **Domain expert:** "No. The **scope** of `x` begins at its declarator, before the `=`, so the `x` on the right-hand side is the *same* `x` (a **self-referential initialiser**). It is undefined behaviour at runtime but not a **semantic error** — the **symbol table** already contains `x` when the **initialiser** is resolved."
+> **Domain expert:** "No. The **scope** of `x` begins at its declarator, before the `=` (C11 §6.2.1), so the `x` on the right-hand side is the *same* `x` (a **self-referential initialiser**). It is undefined behaviour at runtime but not a **semantic error** — the **symbol table** already contains `x` when the **initialiser** is resolved. The same rule applies inside a nested **block scope**: `int x = x;` inside a compound statement where an outer `x` exists creates a new inner binding first, so the initialiser sees the new binding, not the outer one — a subtle consequence of **variable shadowing**."
 
 > **Dev:** "How does `a && b` get represented in the TAC?"
 
