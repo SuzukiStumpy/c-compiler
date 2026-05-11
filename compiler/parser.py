@@ -4,7 +4,8 @@ The parser uses recursive descent for all constructs except binary expressions,
 which are handled by precedence climbing.  The grammar is:
 
     program             ::= function
-    function            ::= "int" identifier "(" "void" ")" "{" block_item* "}"
+    function            ::= "int" identifier "(" "void" ")" block
+    block               ::= "{" {block_item} "}"
     block_item          ::= statement | declaration
     declaration         ::= "int" identifier [ "=" exp ] ";"
     statement           ::= "return" exp ";"
@@ -12,6 +13,7 @@ which are handled by precedence climbing.  The grammar is:
                           | "if" "(" exp ")" statement ["else" statement]
                           | "goto" identifier ";"
                           | identifier ":" statement
+                          | block
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -46,6 +48,7 @@ from compiler.syntax.ast import (
     BitwiseXor,
     BlockItem,
     Complement,
+    Compound,
     Conditional,
     Constant,
     D,
@@ -403,9 +406,7 @@ class Parser:
         self._expect(TokenType.LPAREN)
         params = self._parse_params()
         self._expect(TokenType.RPAREN)
-        self._expect(TokenType.LBRACE)
-        body = self._parse_body()
-        self._expect(TokenType.RBRACE)
+        body = self._parse_block()
         return Function(
             return_type=return_type,
             name=name_token.value,
@@ -455,8 +456,8 @@ class Parser:
         name_token = self._expect(TokenType.IDENTIFIER)
         return Parameter(param_type=param_type, name=name_token.value)
 
-    def _parse_body(self) -> tuple[BlockItem, ...]:
-        """Parse the block-item sequence forming a function body.
+    def _parse_block(self) -> tuple[BlockItem, ...]:
+        """Parse the block-item sequence forming a function body or compound statement.
 
         Consumes block items (statements and declarations interleaved) until a
         ``RBRACE`` is reached.
@@ -468,6 +469,8 @@ class Parser:
             ParseError: If the stream ends before ``}`` is found, or if any
                 block item is malformed.
         """
+        self._expect(TokenType.LBRACE)
+
         items: list[BlockItem] = []
         while True:
             token = self._peek()
@@ -476,6 +479,9 @@ class Parser:
             if token.type == TokenType.RBRACE:
                 break
             items.append(self._parse_block_item())
+
+        # Eat the final RBRACE before we return
+        self._consume()
         return tuple(items)
 
     def _parse_block_item(self) -> BlockItem:
@@ -529,6 +535,7 @@ class Parser:
                         | "if" "(" exp ")" statement ["else" statement]
                         | "goto" identifier ";"
                         | identifier ":" statement
+                        | block
                         | ";"
 
         A labeled statement is detected via one token of lookahead before the
@@ -552,6 +559,8 @@ class Parser:
             return Label(name=name_token.value, statement=self._parse_statement())
 
         match token.type:
+            case TokenType.LBRACE:
+                return Compound(body=self._parse_block())
             case TokenType.RETURN:
                 return self._parse_return()
             case TokenType.SEMICOLON:

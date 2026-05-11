@@ -60,6 +60,29 @@ class D(BlockItem):
     declaration: Declaration
 
 
+"""Define a simple type alias for a compound statement.
+
+A block is a simple wrapper for several BlockItems.  In the C source this
+is represented by braces wrapping a block of code.  For example:
+    {
+        int a;
+        b = a + 5;
+    }
+"""
+Block = tuple[BlockItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Compound(Statement):
+    """Represent a statement which is a block.
+
+    Attributes:
+        block: Block
+    """
+
+    body: Block
+
+
 @dataclass(frozen=True, slots=True)
 class Parameter:
     """A single function parameter declaration.

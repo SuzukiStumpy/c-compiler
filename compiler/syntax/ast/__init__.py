@@ -6,13 +6,14 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
 
     program             = Program(function_definition+)
     function_definition = Function(type return_type, identifier name,
-                                   parameter* params, block_item* body)
+                                   parameter* params, block body)
     parameter           = Parameter(type param_type, identifier name)
     statement           = Return(exp)
                         | Expression(exp)
                         | If(exp condition, statement then, statement? else_)
                         | Goto(identifier target)
                         | Label(identifier name, statement)
+                        | Compound(block)
                         | Null
     declaration         = Declaration(identifier name, exp? init)
     exp                 = Constant(int)
@@ -29,6 +30,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | And | Or | Equal | NotEqual | LessThan | LessOrEqual
                         | GreaterThan | GreaterOrEqual
     type                = IntType
+    block               = Block(block_item*)
     block_item          = S(statement) | D(declaration)
 
 Nodes are organised into submodules by logical role:
@@ -55,7 +57,7 @@ variant is a concrete frozen dataclass subclassing the appropriate base. All
 nodes are immutable — once constructed an AST node cannot be modified.
 """
 
-from compiler.syntax.ast.declarations import BlockItem, D, Declaration, Function, Parameter, Program, S
+from compiler.syntax.ast.declarations import Block, BlockItem, Compound, D, Declaration, Function, Parameter, Program, S
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Constant, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
@@ -91,6 +93,8 @@ from compiler.syntax.ast.statements import Expression, Goto, If, Label, Null, Re
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "Block",
+    "Compound",
     "Goto",
     "Label",
     "Conditional",
