@@ -29,7 +29,7 @@
 | **Token** | A single classified unit of source text produced by the lexer, carrying type, value, and source position | Lexeme |
 | **Token type** | The classification of a token (e.g. `RETURN`, `IDENTIFIER`, `LPAREN`) | Token kind, token class |
 | **Token value** | The exact substring of source text matched by the token | Lexeme, matched text |
-| **Keyword** | A token whose type corresponds to a reserved C word (`int`, `void`, `return`) | Reserved word |
+| **Keyword** | A token whose type corresponds to a reserved C word (`int`, `void`, `return`, `if`, `else`, `goto`, `do`, `while`, `for`, `break`, `continue`) | Reserved word |
 | **Identifier** | A token representing a user-defined name that is not a keyword | Name, symbol |
 | **Integer constant** | A token representing a numeric literal composed of decimal digits | Number, numeric constant, literal |
 | **Token stream** | The ordered list of tokens produced by the lexer for a given preprocessed file | Token list, token sequence |

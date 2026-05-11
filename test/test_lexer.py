@@ -208,6 +208,41 @@ def test_rshift_assign_is_single_token(preprocess_c_file: Preprocessor) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Loop keywords
+# ---------------------------------------------------------------------------
+
+
+def test_while_keyword_produces_while_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/loops.c"))
+    while_token = next(t for t in tokens if t.value == "while")
+    assert while_token.type == TokenType.WHILE
+
+
+def test_do_keyword_produces_do_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/loops.c"))
+    do_token = next(t for t in tokens if t.value == "do")
+    assert do_token.type == TokenType.DO
+
+
+def test_for_keyword_produces_for_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/loops.c"))
+    for_token = next(t for t in tokens if t.value == "for")
+    assert for_token.type == TokenType.FOR
+
+
+def test_break_keyword_produces_break_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/loops.c"))
+    break_token = next(t for t in tokens if t.value == "break")
+    assert break_token.type == TokenType.BREAK
+
+
+def test_continue_keyword_produces_continue_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/loops.c"))
+    continue_token = next(t for t in tokens if t.value == "continue")
+    assert continue_token.type == TokenType.CONTINUE
+
+
+# ---------------------------------------------------------------------------
 # Goto and labeled statements
 # ---------------------------------------------------------------------------
 
