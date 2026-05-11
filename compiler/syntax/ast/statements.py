@@ -2,8 +2,7 @@
 
 Defines the ``Statement`` abstract base class and its concrete variants. Each
 statement form supported by the compiler is represented as a subclass of
-``Statement``. New statement types (if, while, for, assignments, etc.) are
-added here as language support is extended.
+``Statement``.
 """
 
 from abc import ABC
@@ -35,10 +34,10 @@ class Return(Statement):
 
 @dataclass(frozen=True, slots=True)
 class Expression(Statement):
-    """An expression statement (ie: an expression which doesn't return a value)
+    """An expression statement (an expression evaluated for its side effects).
 
     Attributes:
-        exp: The expression contained within the statement
+        exp: The expression contained within the statement.
     """
 
     exp: Exp
@@ -46,17 +45,18 @@ class Expression(Statement):
 
 @dataclass(frozen=True, slots=True)
 class Null(Statement):
-    """An empty statement for when a placeholder is needed in the source."""
+    """An empty statement; used as a placeholder where a statement is syntactically required."""
 
 
 @dataclass(frozen=True, slots=True)
 class If(Statement):
-    """An if statement along with optional else clause
+    """An ``if`` statement with an optional ``else`` clause.
 
     Attributes:
-        condition: The condition to check
-        then: the statement to execute if the condition is truthy
-        else_: the statement to execute if the condition is falsy
+        condition: The condition to evaluate.
+        then: The statement executed when ``condition`` is truthy.
+        else_: The statement executed when ``condition`` is falsy, or ``None``
+            if there is no ``else`` branch.
     """
 
     condition: Exp
@@ -66,11 +66,11 @@ class If(Statement):
 
 @dataclass(frozen=True, slots=True)
 class Goto(Statement):
-    """A goto statement - sends program flow directly to the statement
-    identifed by the specified label within the current function scope.
+    """A ``goto`` statement; transfers control unconditionally to a named label
+    within the current function scope.
 
     Attributes:
-        target: The label that we are targeting.
+        target: The identifier of the target label.
     """
 
     target: str
@@ -88,3 +88,65 @@ class Label(Statement):
 
     name: str
     statement: Statement
+
+
+@dataclass(frozen=True, slots=True)
+class Break(Statement):
+    """A ``break`` statement; transfers control to just after the enclosing loop.
+
+    Attributes:
+        identifier: The identifier of the enclosing loop, assigned during the
+            loop-labelling pass of semantic analysis.
+    """
+
+    identifier: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Continue(Statement):
+    """A ``continue`` statement; transfers control to the update expression of the enclosing loop.
+
+    Attributes:
+        identifier: The identifier of the enclosing loop, assigned during the
+            loop-labelling pass of semantic analysis.
+    """
+
+    identifier: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class While(Statement):
+    """A ``while`` loop.
+
+    The condition is tested before each iteration; the body executes only while
+    the condition is truthy.
+
+    Attributes:
+        condition: The expression tested before each iteration.
+        body: The statement executed on each iteration.
+        identifier: The unique identifier for this loop, assigned during the
+            loop-labelling pass of semantic analysis.
+    """
+
+    condition: Exp
+    body: Statement
+    identifier: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DoWhile(Statement):
+    """A ``do``/``while`` loop.
+
+    The body is always executed at least once; the condition is tested after
+    each iteration and the loop continues while it is truthy.
+
+    Attributes:
+        body: The statement executed on each iteration.
+        condition: The expression tested after each iteration.
+        identifier: The unique identifier for this loop, assigned during the
+            loop-labelling pass of semantic analysis.
+    """
+
+    body: Statement
+    condition: Exp
+    identifier: str = ""

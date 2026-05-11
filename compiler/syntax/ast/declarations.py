@@ -1,9 +1,11 @@
 """Program structure nodes for the AST.
 
-Defines the top-level constructs of a C translation unit: ``Parameter``,
-``Function``, ``Program``, ``Declaration``, the ``BlockItem`` sum type
-(``S`` and ``D``) that composes statements and declarations into a block,
-the ``Block`` type alias, and the ``Compound`` statement node.
+Defines the top-level constructs of a C translation unit: ``Declaration``,
+the ``BlockItem`` sum type (``S`` and ``D``) that composes statements and
+declarations into a block, the ``Block`` type alias, the ``Compound``
+statement node, the ``ForInit`` sum type (``InitDecl`` and ``InitExp``) for
+``for``-loop initialisers, the ``For`` statement node, and the ``Parameter``,
+``Function``, and ``Program`` nodes.
 """
 
 from abc import ABC
@@ -94,22 +96,20 @@ class Function:
     """A function definition.
 
     Represents a complete C function including its return type, name, parameter
-    list, and body. The body is an ordered sequence of block items — statements
-    and declarations interleaved — executed when the function is called.
+    list, and body.
 
     Attributes:
         return_type: The declared return type of the function.
         name: The function name as it appears in the source.
         params: The ordered sequence of parameters. Empty for functions declared
             with ``void`` in the parameter list.
-        body: The ordered sequence of block items comprising the function body.
-            May be empty.
+        body: The block comprising the function body. May be empty.
     """
 
     return_type: Type
     name: str
     params: tuple[Parameter, ...]
-    body: tuple[BlockItem, ...]
+    body: Block
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,3 +127,63 @@ class Program:
     """
 
     functions: tuple[Function, ...]
+
+
+class ForInit(ABC):
+    """Abstract base for the initialiser clause of a ``for`` loop.
+
+    Consumers should use structural pattern matching (``match``/``case``) to
+    dispatch on the concrete variant: ``InitDecl`` for a declaration, or
+    ``InitExp`` for an expression (which may be ``None`` when the clause is
+    absent).
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class InitDecl(ForInit):
+    """A declaration used as the initialiser clause of a ``for`` loop.
+
+    Attributes:
+        declaration: The variable declaration that initialises the loop.
+    """
+
+    declaration: Declaration
+
+
+@dataclass(frozen=True, slots=True)
+class InitExp(ForInit):
+    """An expression used as the initialiser clause of a ``for`` loop.
+
+    ``exp`` is ``None`` when the ``for`` loop has no initialiser (``for (;;)``).
+
+    Attributes:
+        exp: The initialiser expression, or ``None`` if absent.
+    """
+
+    exp: Exp | None
+
+
+@dataclass(frozen=True, slots=True)
+class For(Statement):
+    """A ``for`` loop.
+
+    The initialiser runs exactly once before the first iteration. The loop body
+    executes while ``condition`` is truthy; after each iteration ``post`` is
+    evaluated if present.
+
+    Attributes:
+        init: The initialiser clause — either a declaration (``InitDecl``) or
+            an optional expression (``InitExp``).
+        condition: The loop condition tested before each iteration, or ``None``
+            for an unbounded loop.
+        post: The expression evaluated after each iteration, or ``None`` if absent.
+        body: The statement executed on each iteration.
+        identifier: The unique identifier for this loop, assigned during the
+            loop-labelling pass of semantic analysis.
+    """
+
+    init: ForInit
+    condition: Exp | None
+    post: Exp | None
+    body: Statement
+    identifier: str = ""

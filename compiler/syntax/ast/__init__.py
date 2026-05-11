@@ -14,8 +14,14 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | Goto(identifier target)
                         | Label(identifier name, statement)
                         | Compound(block)
+                        | Break(identifier)
+                        | Continue(identifier)
+                        | While(exp condition, statement body, identifier)
+                        | DoWhile(statement body, exp condition, identifier)
+                        | For(for_init init, exp? condition, exp? post, statement body, identifier)
                         | Null
     declaration         = Declaration(identifier name, exp? init)
+    for_init            = InitDecl(declaration) | InitExp(exp?)
     exp                 = Constant(int)
                         | Var(identifier)
                         | Unary(unary_operator, exp)
@@ -37,8 +43,11 @@ Nodes are organised into submodules by logical role:
 
     types        — C type nodes (Type, IntType)
     expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment, Conditional)
-    statements   — Statement nodes (Statement, Return, Expression, If, Null)
-    declarations — Program structure nodes (Parameter, Function, Program)
+    statements   — Statement nodes (Statement, Return, Expression, If, Null,
+                   Goto, Label, Break, Continue, While, DoWhile)
+    declarations — Program structure nodes (Declaration, BlockItem, S, D, Block,
+                   Compound, ForInit, InitDecl, InitExp, For,
+                   Parameter, Function, Program)
     operators    — Operators which act upon expressions
                    (Complement, Negate, Not,
                    PreIncrement, PreDecrement, PostIncrement, PostDecrement,
@@ -52,12 +61,27 @@ from ``compiler.syntax.ast`` without knowing which submodule a type lives in::
 
     from compiler.syntax.ast import Program, Function, Return, Constant, IntType
 
-Sum types (``Type``, ``Exp``, ``Statement``) are abstract base classes; each
-variant is a concrete frozen dataclass subclassing the appropriate base. All
-nodes are immutable — once constructed an AST node cannot be modified.
+Sum types (``Type``, ``Exp``, ``Statement``, ``BlockItem``, ``ForInit``) are
+abstract base classes; each variant is a concrete frozen dataclass subclassing
+the appropriate base. All nodes are immutable — once constructed an AST node
+cannot be modified.
 """
 
-from compiler.syntax.ast.declarations import Block, BlockItem, Compound, D, Declaration, Function, Parameter, Program, S
+from compiler.syntax.ast.declarations import (
+    Block,
+    BlockItem,
+    Compound,
+    D,
+    Declaration,
+    For,
+    ForInit,
+    Function,
+    InitDecl,
+    InitExp,
+    Parameter,
+    Program,
+    S,
+)
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Constant, Exp, Unary, Var
 from compiler.syntax.ast.operators import (
     Add,
@@ -89,10 +113,30 @@ from compiler.syntax.ast.operators import (
     UnaryOperator,
 )
 from compiler.syntax.ast.pretty_print import pretty_print
-from compiler.syntax.ast.statements import Expression, Goto, If, Label, Null, Return, Statement
+from compiler.syntax.ast.statements import (
+    Break,
+    Continue,
+    DoWhile,
+    Expression,
+    Goto,
+    If,
+    Label,
+    Null,
+    Return,
+    Statement,
+    While,
+)
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "Break",
+    "Continue",
+    "For",
+    "While",
+    "DoWhile",
+    "InitExp",
+    "InitDecl",
+    "ForInit",
     "Block",
     "Compound",
     "Goto",

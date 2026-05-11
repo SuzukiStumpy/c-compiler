@@ -4,7 +4,22 @@ Verifies that ``pretty_print`` produces correctly indented, human-readable
 output for the full range of AST node shapes.
 """
 
-from compiler.syntax.ast import Constant, Function, IntType, Parameter, Program, Return, pretty_print
+from compiler.syntax.ast import (
+    Break,
+    Constant,
+    Continue,
+    DoWhile,
+    For,
+    Function,
+    InitExp,
+    IntType,
+    Null,
+    Parameter,
+    Program,
+    Return,
+    While,
+    pretty_print,
+)
 
 
 def test_leaf_node_rendered_inline() -> None:
@@ -131,3 +146,64 @@ def test_multiple_statements_in_body() -> None:
     assert result.count("Return(") == 2
     assert result.count("Constant(value=1)") == 1
     assert result.count("Constant(value=2)") == 1
+
+
+# ---------------------------------------------------------------------------
+# Loop nodes
+# ---------------------------------------------------------------------------
+
+
+def test_break_renders_inline() -> None:
+    """``Break`` with an empty identifier renders on a single line."""
+    assert pretty_print(Break()) == 'Break(identifier="")'
+
+
+def test_break_with_identifier_renders_inline() -> None:
+    """``Break`` with a populated identifier renders on a single line."""
+    assert pretty_print(Break(identifier="loop_0")) == 'Break(identifier="loop_0")'
+
+
+def test_continue_renders_inline() -> None:
+    """``Continue`` with an empty identifier renders on a single line."""
+    assert pretty_print(Continue()) == 'Continue(identifier="")'
+
+
+def test_continue_with_identifier_renders_inline() -> None:
+    """``Continue`` with a populated identifier renders on a single line."""
+    assert pretty_print(Continue(identifier="loop_0")) == 'Continue(identifier="loop_0")'
+
+
+def test_while_with_simple_body_renders_inline() -> None:
+    """``While`` whose condition and body both render inline is itself inline."""
+    node = While(condition=Constant(value=1), body=Null())
+    assert pretty_print(node) == 'While(condition=Constant(value=1), body=Null(), identifier="")'
+
+
+def test_while_identifier_appears_in_output() -> None:
+    """A labelled ``While`` node includes its identifier in the rendered output."""
+    node = While(condition=Constant(value=1), body=Null(), identifier="loop_0")
+    assert 'identifier="loop_0"' in pretty_print(node)
+
+
+def test_dowhile_with_simple_body_renders_inline() -> None:
+    """``DoWhile`` whose body and condition both render inline is itself inline."""
+    node = DoWhile(body=Null(), condition=Constant(value=1))
+    assert pretty_print(node) == 'DoWhile(body=Null(), condition=Constant(value=1), identifier="")'
+
+
+def test_dowhile_identifier_appears_in_output() -> None:
+    """A labelled ``DoWhile`` node includes its identifier in the rendered output."""
+    node = DoWhile(body=Null(), condition=Constant(value=1), identifier="loop_1")
+    assert 'identifier="loop_1"' in pretty_print(node)
+
+
+def test_for_with_simple_fields_renders_inline() -> None:
+    """``For`` whose fields all render inline is itself inline."""
+    node = For(init=InitExp(exp=None), condition=None, post=None, body=Null())
+    assert pretty_print(node) == ('For(init=InitExp(exp=None), condition=None, post=None, body=Null(), identifier="")')
+
+
+def test_for_identifier_appears_in_output() -> None:
+    """A labelled ``For`` node includes its identifier in the rendered output."""
+    node = For(init=InitExp(exp=None), condition=None, post=None, body=Null(), identifier="loop_2")
+    assert 'identifier="loop_2"' in pretty_print(node)
