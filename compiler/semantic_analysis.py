@@ -18,9 +18,26 @@ Raises:
 """
 
 from itertools import count
+from typing import NamedTuple
 
 import compiler.syntax.ast as ast
 from compiler.utils.exceptions import SemanticError
+
+
+class VariableBinding(NamedTuple):
+    """A single entry in the variable map, recording a resolved name and its scope origin.
+
+    Attributes:
+        unique_name: The unique internal identifier assigned to the source-level variable
+            (e.g. ``".Vx.0"``).
+        from_current_block: ``True`` if this binding was declared in the block currently
+            being analysed; ``False`` if it was inherited from an enclosing scope.  Used
+            by ``resolve_declaration`` to distinguish shadowing (permitted) from a
+            same-block duplicate (an error).
+    """
+
+    unique_name: str
+    from_current_block: bool
 
 
 class SemanticAnalyser:
@@ -34,8 +51,13 @@ class SemanticAnalyser:
 
     Attributes:
         _counter: Monotonically increasing integer source for unique suffixes.
-        _variable_map: Mapping from source-level variable names to their unique
-            internal names for the function currently being analysed.
+        _variable_map: Mapping from source-level variable names to
+            ``VariableBinding`` values.  Each binding records both the unique
+            internal name and whether it was declared in the current block.
+            Outer-scope bindings are retained in the map with
+            ``from_current_block=False`` so that variable lookups can still
+            resolve them; when a compound block exits the map is restored to
+            its saved snapshot.
         _label_set: Set of all label names declared in the function currently
             being analysed.  Populated by a first pass before resolution begins
             so that forward ``goto`` targets can be validated.
@@ -44,7 +66,7 @@ class SemanticAnalyser:
     def __init__(self) -> None:
         """Initialise the analyser with a fresh counter and an empty symbol table."""
         self._counter: count[int] = count()
-        self._variable_map: dict[str, str] = {}
+        self._variable_map: dict[str, VariableBinding] = {}
         self._label_set: set[str] = set()
 
     def _make_unique(self, name: str) -> str:
@@ -67,8 +89,8 @@ class SemanticAnalyser:
         """Recursively collect label names from a statement into ``_label_set``.
 
         Raises ``SemanticError`` immediately upon finding a duplicate label name.
-        Recurses into compound statements (``If``, ``Label``) so that labels
-        nested inside branches are also captured.
+        Recurses into ``If``, ``Label``, and ``Compound`` nodes so that labels
+        nested at any depth are captured.
 
         Args:
             statement: The statement node to walk.
@@ -87,6 +109,11 @@ class SemanticAnalyser:
                 self._collect_labels_in_statement(then_stmt)
                 if else_stmt is not None:
                     self._collect_labels_in_statement(else_stmt)
+            case ast.Compound(body=body):
+                for item in body:
+                    match item:
+                        case ast.S(statement=inner_stmt):
+                            self._collect_labels_in_statement(inner_stmt)
             case _:
                 pass
 
@@ -112,9 +139,14 @@ class SemanticAnalyser:
         """Resolve a variable declaration against the current symbol table.
 
         Verifies that ``declaration.name`` has not already been declared in the
-        current scope, assigns it a fresh unique internal name, records the
-        mapping in ``_variable_map``, and returns a new ``Declaration`` node
-        whose ``name`` field holds the unique internal name.
+        *current* block (detected via the ``from_current_block`` flag on the
+        existing ``VariableBinding``), assigns it a fresh unique internal name,
+        records the mapping in ``_variable_map``, and returns a new
+        ``Declaration`` node whose ``name`` field holds the unique internal
+        name.  Declarations with the same source name in an *outer* block are
+        silently shadowed: the new binding overwrites the map entry for the
+        duration of the enclosing compound block, and the outer binding is
+        restored when that block exits.
 
         The binding is added to ``_variable_map`` *before* the initialiser is
         resolved.  This matches the C standard (C11 §6.2.1p7), under which the
@@ -136,18 +168,43 @@ class SemanticAnalyser:
             variable references within it use their unique internal names.
 
         Raises:
-            SemanticError: If ``declaration.name`` is already present in
-                ``_variable_map``, indicating a duplicate declaration in the
-                same scope.
+            SemanticError: If an existing ``VariableBinding`` for
+                ``declaration.name`` has ``from_current_block=True``, indicating
+                a duplicate declaration in the same block.
         """
-        if declaration.name in self._variable_map:
+        binding = self._variable_map.get(declaration.name)
+        if binding is not None and binding.from_current_block:
             raise SemanticError(f"Duplicate variable declaration: {declaration.name}!")
 
         unique_name = self._make_unique(declaration.name)
-        self._variable_map[declaration.name] = unique_name
+        self._variable_map[declaration.name] = VariableBinding(unique_name, from_current_block=True)
         init = self.resolve_exp(declaration.init) if declaration.init is not None else None
 
         return ast.Declaration(unique_name, init)
+
+    def _resolve_block(self, body: ast.Block) -> ast.Block:
+        """Resolve a sequence of block items in a new nested scope.
+
+        Saves the current ``_variable_map``, marks all inherited bindings as
+        ``from_current_block=False``, processes ``body``, then restores the map
+        on exit.  Any variable declared inside ``body`` is invisible after this
+        call returns; outer-scope bindings remain accessible throughout.
+
+        Args:
+            body: The ordered sequence of block items to resolve.
+
+        Returns:
+            A new tuple of resolved block items.
+
+        Raises:
+            SemanticError: If any block item within ``body`` contains a
+                semantic violation.
+        """
+        saved_map = dict(self._variable_map)
+        self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
+        result = tuple(self._resolve_block_item(item) for item in body)
+        self._variable_map = saved_map
+        return result
 
     def resolve_exp(self, e: ast.Exp) -> ast.Exp:
         """Resolve all variable references within an expression.
@@ -178,7 +235,7 @@ class SemanticAnalyser:
                 raise SemanticError("Invalid lvalue in assignment expression.")
             case ast.Var(name=name):
                 if name in self._variable_map:
-                    return ast.Var(self._variable_map[name])
+                    return ast.Var(self._variable_map[name].unique_name)
                 else:
                     raise SemanticError(f"Undeclared variable {name}!")
             case ast.Constant():
@@ -210,6 +267,8 @@ class SemanticAnalyser:
                 undeclared variable or an invalid lvalue.
         """
         match statement:
+            case ast.Compound(body=block):
+                return ast.Compound(self._resolve_block(block))
             case ast.Return(exp=exp):
                 return ast.Return(self.resolve_exp(exp))
             case ast.Expression(exp=exp):
@@ -228,6 +287,8 @@ class SemanticAnalyser:
                 return statement
             case ast.Label(name=name, statement=inner):
                 return ast.Label(name, self._resolve_statement(inner))
+            case ast.Compound(body=body):
+                return ast.Compound(self._resolve_block(body))
             case _:
                 raise SemanticError("Unhandled statement type in semantic analyser")
 

@@ -487,6 +487,30 @@ class TestResolveProgram:
         assert fn.return_type == ast.IntType()
         assert fn.params == ()
 
+    def test_variable_declarations_not_visible_across_functions(self) -> None:
+        """A variable declared in one function is not visible in a subsequent function.
+
+        ``_resolve_function`` resets the variable map to an empty scope before
+        processing each function; declarations from ``fn1`` must not leak into ``fn2``.
+        """
+        fn1 = ast.Function(
+            return_type=ast.IntType(),
+            name="fn1",
+            params=(),
+            body=(
+                ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=0))),
+                ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
+            ),
+        )
+        fn2 = ast.Function(
+            return_type=ast.IntType(),
+            name="fn2",
+            params=(),
+            body=(ast.S(statement=ast.Return(exp=ast.Var(name="x"))),),
+        )
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(ast.Program(functions=(fn1, fn2)))
+
 
 # ---------------------------------------------------------------------------
 # Counter isolation between analyser instances
@@ -655,3 +679,378 @@ class TestResolveLabeledStatement:
         program = ast.Program(functions=(_fn("foo"), _fn("bar")))
         resolved = resolve(program)
         assert len(resolved.functions) == 2
+
+
+# ---------------------------------------------------------------------------
+# Compound statement (block scoping)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCompound:
+    """``Compound`` statements introduce a new scope for variable declarations."""
+
+    def test_empty_compound_block_resolves(self) -> None:
+        """An empty compound block resolves to an empty ``Compound`` node."""
+        body = (ast.S(statement=ast.Compound(body=())),)
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Compound(body=()))
+
+    def test_inner_declaration_gets_unique_name(self) -> None:
+        """A variable declared inside a compound block receives a unique internal name."""
+        body = (
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.D(declaration=ast.Declaration(name="x", init=None)),
+                        ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
+                    )
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        compound = resolved[0].statement
+        assert isinstance(compound, ast.Compound)
+        decl = compound.body[0]
+        ret = compound.body[1]
+        assert isinstance(decl, ast.D)
+        assert decl.declaration.name == ".Vx.0"
+        assert ret == ast.S(statement=ast.Return(exp=ast.Var(name=".Vx.0")))
+
+    def test_outer_variable_visible_inside_compound_block(self) -> None:
+        """A variable declared in the outer scope is visible inside a nested block."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(statement=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Var(name="x"))),))),
+        )
+        resolved = _resolved_body(body)
+        compound = resolved[1].statement
+        assert isinstance(compound, ast.Compound)
+        assert compound.body[0] == ast.S(statement=ast.Return(exp=ast.Var(name=".Vx.0")))
+
+    def test_shadowing_inner_declaration_permitted(self) -> None:
+        """Declaring a variable with the same name as an outer variable is allowed (shadowing)."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=2))),
+                        ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
+                    )
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_decl = resolved[0]
+        assert isinstance(outer_decl, ast.D)
+        outer_name = outer_decl.declaration.name  # e.g. ".Vx.0"
+        compound = resolved[1].statement
+        assert isinstance(compound, ast.Compound)
+        inner_decl = compound.body[0]
+        assert isinstance(inner_decl, ast.D)
+        inner_name = inner_decl.declaration.name  # e.g. ".Vx.1"
+        assert inner_name != outer_name
+        # The return inside the block uses the inner (shadow) binding.
+        assert compound.body[1] == ast.S(statement=ast.Return(exp=ast.Var(name=inner_name)))
+
+    def test_outer_binding_restored_after_compound_block(self) -> None:
+        """After a compound block that shadows a name, the outer binding is visible again."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(
+                statement=ast.Compound(body=(ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=2))),))
+            ),
+            ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        # The return after the compound block must use the outer binding.
+        assert resolved[2] == ast.S(statement=ast.Return(exp=ast.Var(name=outer_name)))
+
+    def test_duplicate_in_same_inner_block_raises(self) -> None:
+        """Two declarations of the same name within one compound block raise ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.D(declaration=ast.Declaration(name="x", init=None)),
+                        ast.D(declaration=ast.Declaration(name="x", init=None)),
+                    )
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Duplicate"):
+            resolve(_program(body))
+
+    def test_inner_variable_not_visible_after_block(self) -> None:
+        """A variable declared inside a compound block is out of scope after it closes."""
+        body = (
+            ast.S(statement=ast.Compound(body=(ast.D(declaration=ast.Declaration(name="x", init=None)),))),
+            ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
+        )
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(_program(body))
+
+    def test_label_inside_compound_block_is_reachable_by_goto(self) -> None:
+        """A label nested inside a compound block is still collected and validatable by ``goto``."""
+        body = (
+            ast.S(statement=ast.Goto(target="inner_label")),
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.S(
+                            statement=ast.Label(
+                                name="inner_label",
+                                statement=ast.Return(exp=ast.Constant(value=0)),
+                            )
+                        ),
+                    )
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Goto(target="inner_label"))
+
+    def test_duplicate_label_inside_compound_block_raises(self) -> None:
+        """A label declared twice (once inside a compound block, once outside) raises ``SemanticError``."""
+        body = (
+            ast.S(statement=ast.Label(name="foo", statement=ast.Null())),
+            ast.S(statement=ast.Compound(body=(ast.S(statement=ast.Label(name="foo", statement=ast.Null())),))),
+        )
+        with pytest.raises(SemanticError, match="Duplicate label"):
+            resolve(_program(body))
+
+    def test_sibling_blocks_may_reuse_same_variable_name(self) -> None:
+        """Two sequential compound blocks may both declare a variable with the same name.
+
+        After the first block exits the name is no longer in scope; the second
+        block starts a fresh scope of its own and is free to declare the same
+        source-level name without conflict.
+        """
+        body = (
+            ast.S(statement=ast.Compound(body=(ast.D(declaration=ast.Declaration(name="x", init=None)),))),
+            ast.S(statement=ast.Compound(body=(ast.D(declaration=ast.Declaration(name="x", init=None)),))),
+            ast.S(statement=ast.Return(exp=ast.Constant(value=0))),
+        )
+        resolved = _resolved_body(body)
+        first_name = resolved[0].statement.body[0].declaration.name
+        second_name = resolved[1].statement.body[0].declaration.name
+        # Both resolved successfully and received distinct unique names.
+        assert first_name != second_name
+
+    def test_counter_not_reset_between_compound_blocks(self) -> None:
+        """The unique-name counter increments monotonically across compound block boundaries.
+
+        Entering or exiting a compound block must not reset the counter; the
+        three declarations ``a``, ``b``, and ``c`` must receive consecutive
+        suffixes regardless of which block each lives in.
+        """
+        body = (
+            ast.D(declaration=ast.Declaration(name="a", init=None)),
+            ast.S(statement=ast.Compound(body=(ast.D(declaration=ast.Declaration(name="b", init=None)),))),
+            ast.D(declaration=ast.Declaration(name="c", init=None)),
+            ast.S(statement=ast.Return(exp=ast.Constant(value=0))),
+        )
+        resolved = _resolved_body(body)
+        a_name = resolved[0].declaration.name
+        b_name = resolved[1].statement.body[0].declaration.name
+        c_name = resolved[2].declaration.name
+        assert a_name == ".Va.0"
+        assert b_name == ".Vb.1"
+        assert c_name == ".Vc.2"
+
+    def test_assignment_lvalue_to_outer_variable_inside_block(self) -> None:
+        """An assignment whose lvalue is a variable from an outer scope resolves correctly.
+
+        ``test_outer_variable_visible_inside_compound_block`` covers reading;
+        this test covers the lvalue (write) path through ``resolve_exp``.
+        """
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=0))),
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.S(
+                            statement=ast.Expression(
+                                exp=ast.Assignment(
+                                    lvalue=ast.Var(name="x"),
+                                    rvalue=ast.Constant(value=5),
+                                )
+                            )
+                        ),
+                    )
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        inner_stmt = resolved[1].statement.body[0]
+        assert inner_stmt == ast.S(
+            statement=ast.Expression(
+                exp=ast.Assignment(
+                    lvalue=ast.Var(name=outer_name),
+                    rvalue=ast.Constant(value=5),
+                )
+            )
+        )
+
+    def test_shadow_initialiser_resolves_to_new_binding(self) -> None:
+        """A shadow declaration's initialiser sees the new (inner) binding, not the outer one.
+
+        C11 §6.2.1 places a block-scope identifier in scope immediately after
+        its declarator, before any ``=`` initialiser.  ``int x = x;`` in an
+        inner scope where an outer ``x`` exists therefore self-initialises from
+        the freshly created inner binding rather than from the outer one.
+        """
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(statement=ast.Compound(body=(ast.D(declaration=ast.Declaration(name="x", init=ast.Var(name="x"))),))),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        inner_decl = resolved[1].statement.body[0].declaration
+        # The inner x must be distinct from the outer x.
+        assert inner_decl.name != outer_name
+        # Its initialiser references itself (the new inner binding), not the outer x.
+        assert inner_decl.init == ast.Var(name=inner_decl.name)
+
+    def test_undeclared_variable_inside_compound_block_raises(self) -> None:
+        """A reference to a variable that was never declared, inside a compound block, raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Var(name="never_declared"))),))),)
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(_program(body))
+
+    def test_compound_as_then_branch_of_if_resolves(self) -> None:
+        """A compound block used as the then-branch of an ``if`` is fully resolved."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Var(name="x"),
+                    then=ast.Compound(
+                        body=(
+                            ast.D(declaration=ast.Declaration(name="y", init=ast.Var(name="x"))),
+                            ast.S(statement=ast.Return(exp=ast.Var(name="y"))),
+                        )
+                    ),
+                    else_=None,
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        if_stmt = resolved[1].statement
+        assert isinstance(if_stmt, ast.If)
+        assert if_stmt.condition == ast.Var(name=outer_name)
+        compound = if_stmt.then
+        assert isinstance(compound, ast.Compound)
+        inner_decl = compound.body[0].declaration
+        assert inner_decl.init == ast.Var(name=outer_name)
+        assert compound.body[1] == ast.S(statement=ast.Return(exp=ast.Var(name=inner_decl.name)))
+
+    def test_compound_as_else_branch_of_if_resolves(self) -> None:
+        """A compound block used as the else-branch of an ``if`` is fully resolved."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(
+                statement=ast.If(
+                    condition=ast.Constant(value=0),
+                    then=ast.Null(),
+                    else_=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Var(name="x"))),)),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        if_stmt = resolved[1].statement
+        assert isinstance(if_stmt, ast.If)
+        compound = if_stmt.else_
+        assert isinstance(compound, ast.Compound)
+        assert compound.body[0] == ast.S(statement=ast.Return(exp=ast.Var(name=outer_name)))
+
+    def test_unknown_block_item_type_inside_compound_raises(self) -> None:
+        """An unrecognised ``BlockItem`` subclass inside a compound block raises ``SemanticError``.
+
+        The ``_`` branch of ``_resolve_block_item`` must fire for any subclass
+        that is neither ``ast.S`` nor ``ast.D``.
+        """
+
+        class _FakeItem(ast.BlockItem):
+            pass
+
+        body = (ast.S(statement=ast.Compound(body=(_FakeItem(),))),)
+        with pytest.raises(SemanticError, match="Unhandled block item type"):
+            resolve(_program(body))
+
+    def test_goto_inside_compound_targets_outer_label(self) -> None:
+        """A ``goto`` inside a compound block may target a label declared outside the block.
+
+        Labels are collected in a function-wide first pass, so a label at the
+        top level of a function is visible to a ``goto`` nested inside any
+        compound block within that function.
+        """
+        body = (
+            ast.S(statement=ast.Compound(body=(ast.S(statement=ast.Goto(target="end")),))),
+            ast.S(statement=ast.Label(name="end", statement=ast.Return(exp=ast.Constant(value=0)))),
+        )
+        resolved = _resolved_body(body)
+        inner_goto = resolved[0].statement.body[0]
+        assert inner_goto == ast.S(statement=ast.Goto(target="end"))
+
+    def test_label_wrapping_compound_block_resolves(self) -> None:
+        """A ``Label`` whose inner statement is a ``Compound`` block is fully resolved.
+
+        Tests the ``Label → _resolve_statement(Compound) → _resolve_block`` path
+        and verifies that variable references inside the compound are resolved
+        using the enclosing scope.
+        """
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(
+                statement=ast.Label(
+                    name="lbl",
+                    statement=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Var(name="x"))),)),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        label_stmt = resolved[1].statement
+        assert isinstance(label_stmt, ast.Label)
+        assert label_stmt.name == "lbl"
+        compound = label_stmt.statement
+        assert isinstance(compound, ast.Compound)
+        assert compound.body[0] == ast.S(statement=ast.Return(exp=ast.Var(name=outer_name)))
+
+    def test_deeply_nested_compound_blocks(self) -> None:
+        """Variables at each nesting level receive distinct unique names and the correct binding is used."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=1))),
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=2))),
+                        ast.S(
+                            statement=ast.Compound(
+                                body=(
+                                    ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=3))),
+                                    ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
+                                )
+                            )
+                        ),
+                    )
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer_name = resolved[0].declaration.name
+        mid_compound = resolved[1].statement
+        assert isinstance(mid_compound, ast.Compound)
+        mid_name = mid_compound.body[0].declaration.name
+        inner_compound = mid_compound.body[1].statement
+        assert isinstance(inner_compound, ast.Compound)
+        inner_name = inner_compound.body[0].declaration.name
+        # All three must be distinct.
+        assert len({outer_name, mid_name, inner_name}) == 3
+        # The return inside the innermost block uses the innermost binding.
+        assert inner_compound.body[1] == ast.S(statement=ast.Return(exp=ast.Var(name=inner_name)))
