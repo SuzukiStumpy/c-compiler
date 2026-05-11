@@ -46,6 +46,7 @@ from compiler.syntax.ast import (
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    Block,
     BlockItem,
     Complement,
     Compound,
@@ -393,7 +394,7 @@ class Parser:
         Grammar::
 
             function_definition = Function(type return_type, identifier name,
-                                           parameter* params, block_item* body)
+                                           parameter* params, block body)
 
         Returns:
             A ``Function`` node.
@@ -456,18 +457,15 @@ class Parser:
         name_token = self._expect(TokenType.IDENTIFIER)
         return Parameter(param_type=param_type, name=name_token.value)
 
-    def _parse_block(self) -> tuple[BlockItem, ...]:
-        """Parse the block-item sequence forming a function body or compound statement.
-
-        Consumes block items (statements and declarations interleaved) until a
-        ``RBRACE`` is reached.
+    def _parse_block(self) -> Block:
+        """Parse a complete ``{ block_item* }`` block, including surrounding braces.
 
         Returns:
-            A tuple of ``BlockItem`` nodes (possibly empty).
+            A ``Block`` (i.e., ``tuple[BlockItem, ...]``) of zero or more items.
 
         Raises:
-            ParseError: If the stream ends before ``}`` is found, or if any
-                block item is malformed.
+            ParseError: If the opening ``{`` is absent, the stream ends before
+                ``}`` is found, or any block item is malformed.
         """
         self._expect(TokenType.LBRACE)
 

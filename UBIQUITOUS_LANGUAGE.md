@@ -68,12 +68,17 @@
 | **Program** | The root AST node representing a translation unit; holds one or more function definitions | Root node |
 | **Function definition** | An AST node representing a complete C function, including its return type, name, parameter list, and body | Function, function declaration |
 | **Parameter** | An AST node representing a single named, typed argument in a function's signature | Argument, arg |
-| **Function body** | The ordered sequence of block items that make up a function definition | Block, function block |
-| **Block item** | A sum-type wrapper for items that may appear in a function body; each is either a statement (`S`) or a declaration (`D`) | Body item |
-| **Statement** | An executable instruction appearing in a function body; one of: return statement, expression statement, or null statement | Instruction, command |
+| **Function body** | The block forming the body of a function definition; represented as the `body` field of a `Function` node | Function block |
+| **Block** | An ordered sequence of zero or more block items enclosed by braces; the grammar production `block = Block(block_item*)`. Implemented as the Python type alias `Block = tuple[BlockItem, ...]` | Body, block body |
+| **Block item** | A sum-type wrapper for items that may appear in a block; each is either a statement (`S`) or a declaration (`D`) | Body item |
+| **Statement** | An executable instruction appearing in a block; one of: return statement, expression statement, null statement, if statement, goto statement, labeled statement, or compound statement | Instruction, command |
 | **Return statement** | The statement form `return <exp>;` that transfers control back to the caller with a value | Return, return expression |
 | **Expression statement** | A statement consisting of a single expression evaluated for its side effects; the expression's value is discarded | — |
 | **Null statement** | An empty placeholder statement with no effect | Empty statement |
+| **If statement** | The conditional statement form `if (<exp>) <statement> [else <statement>]`; represented by the `If` AST node whose `else_` field is `None` when no else-branch is present | Conditional statement |
+| **Goto statement** | The unconditional jump statement `goto <identifier>;` that transfers control to a named label within the same function; represented by the `Goto` AST node | Jump statement |
+| **Labeled statement** | A statement prefixed with an identifier and colon (`<name>: <statement>`), marking a position that can be targeted by a goto; represented by the `Label` AST node | Label |
+| **Compound statement** | The statement form `{ block_item* }` that introduces a block as a statement; represented by the `Compound` AST node | Block statement |
 | **Declaration** | An AST node representing a variable declaration, carrying the variable name and an optional initialiser expression | Variable declaration |
 | **Expression** | A syntactic construct that evaluates to a value; one of: constant, variable, unary operation (including prefix/postfix increment and decrement), binary operation, or assignment | Value, rvalue |
 | **Integer constant expression** | The expression form consisting of a single integer literal | Literal expression, number expression |
@@ -202,10 +207,13 @@ Three-address code is the intermediate representation produced by TAC generation
 - An **abstract syntax tree** is rooted at a **Program** node, which holds one or more **function definitions**.
 - A **function definition** has a **type** (return type), a name, zero or more **parameters**, and a **function body**.
 - A **parameter** has a **type** and a name.
-- A **function body** is an ordered sequence of **block items**; each **block item** wraps either a **statement** (`S`) or a **declaration** (`D`).
+- A **function body** is a **block**; a **block** is an ordered sequence of zero or more **block items**; each **block item** wraps either a **statement** (`S`) or a **declaration** (`D`).
+- A **compound statement** also contains a **block**, allowing blocks to be nested arbitrarily deep.
 - A **declaration** carries a variable name and an optional **initialiser** expression; after **semantic analysis**, its name is a **unique internal name**.
 - A **return statement** holds an **expression**.
 - An **expression statement** holds an **expression** evaluated for its side effects.
+- A **compound statement** holds a **block** of zero or more **block items**.
+- A **goto statement** holds a target label name; a **labeled statement** holds a label name and the statement it governs.
 - An **assignment expression** requires its left-hand side to be an **lvalue** (currently only a **variable expression**).
 - A **source position** references the original **C source file**, not the **preprocessed file**, via **linemarkers**.
 - A **keyword** is a **token** whose **token type** has a distinct enum member (e.g. `RETURN`) — it is never classified as an **identifier**.

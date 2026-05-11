@@ -14,10 +14,13 @@ The compiler currently handles:
 - Unary negation (`-`) and bitwise complement (`~`)
 - Prefix increment and decrement: `++x`, `--x`
 - Postfix increment and decrement: `x++`, `x--`
+- Conditional (ternary) expressions: `<cond> ? <then> : <else>`
 - Local variable declarations (`int x;`, `int x = <expr>;`)
 - Variable assignment (`x = <expr>`)
 - Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - Expression statements (expressions evaluated for side effects)
+- `if` / `else` statements
+- `goto` and labeled statements
 
 ## Prerequisites
 

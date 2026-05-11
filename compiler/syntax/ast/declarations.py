@@ -1,9 +1,9 @@
 """Program structure nodes for the AST.
 
 Defines the top-level constructs of a C translation unit: ``Parameter``,
-``Function``, ``Program``, ``Declaration``, and the ``BlockItem`` sum type
-(``S`` and ``D``) that composes statements and declarations into a function
-body.
+``Function``, ``Program``, ``Declaration``, the ``BlockItem`` sum type
+(``S`` and ``D``) that composes statements and declarations into a block,
+the ``Block`` type alias, and the ``Compound`` statement node.
 """
 
 from abc import ABC
@@ -29,10 +29,10 @@ class Declaration:
 
 
 class BlockItem(ABC):
-    """Abstract base for items that may appear inside a function body.
+    """Abstract base for items that may appear inside a block.
 
-    A function body is a sequence of ``BlockItem`` nodes, each of which is
-    either a statement (``S``) or a declaration (``D``). Consumers should use
+    A block is a sequence of ``BlockItem`` nodes, each of which is either a
+    statement (``S``) or a declaration (``D``). Consumers should use
     structural pattern matching (``match``/``case``) to dispatch on the
     concrete variant.
     """
@@ -60,24 +60,17 @@ class D(BlockItem):
     declaration: Declaration
 
 
-"""Define a simple type alias for a compound statement.
-
-A block is a simple wrapper for several BlockItems.  In the C source this
-is represented by braces wrapping a block of code.  For example:
-    {
-        int a;
-        b = a + 5;
-    }
-"""
+# A block is an ordered sequence of block items, corresponding to the grammar
+# production: block = Block(block_item*).
 Block = tuple[BlockItem, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Compound(Statement):
-    """Represent a statement which is a block.
+    """A compound statement: a ``{ block_item* }`` block used as a statement.
 
     Attributes:
-        block: Block
+        body: The ordered sequence of block items enclosed by the braces.
     """
 
     body: Block
@@ -110,7 +103,7 @@ class Function:
         params: The ordered sequence of parameters. Empty for functions declared
             with ``void`` in the parameter list.
         body: The ordered sequence of block items comprising the function body.
-            At least one block item is required by the grammar.
+            May be empty.
     """
 
     return_type: Type

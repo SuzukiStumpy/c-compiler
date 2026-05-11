@@ -5,12 +5,14 @@ Covers the full range of constructs supported by the current grammar:
     program             ::= function
     function            ::= "int" identifier "(" "void" ")" "{" block_item* "}"
     block_item          ::= statement | declaration
+    block               ::= "{" {block_item} "}"
     declaration         ::= "int" identifier [ "=" exp ] ";"
     statement           ::= "return" exp ";"
                           | exp ";"
                           | "if" "(" exp ")" statement ["else" statement]
                           | "goto" identifier ";"
                           | identifier ":" statement
+                          | block
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -32,8 +34,12 @@ import pytest
 
 from compiler.parser import parse
 from compiler.syntax.ast import (
+    Block,
     BlockItem,
+    Compound,
     Constant,
+    D,
+    Declaration,
     Expression,
     Function,
     Goto,
@@ -1011,3 +1017,141 @@ class TestLabeledStatements:
     def test_identifier_without_colon_is_expression_statement(self) -> None:
         """``foo;`` — a bare identifier not followed by ``:`` is an expression statement."""
         assert _parsed_stmt(_ident("foo"), _SEMICOLON) == Expression(exp=Var("foo"))
+
+
+# ---------------------------------------------------------------------------
+# Compound (block) statements (_parse_statement → LBRACE case)
+# ---------------------------------------------------------------------------
+
+
+class TestCompoundStatements:
+    """Parser correctly builds ``Compound`` nodes for ``{ block_item* }`` statements."""
+
+    def test_empty_compound(self) -> None:
+        """``{}`` as a statement → ``Compound(body=())``."""
+        assert _parsed_stmt(_LBRACE, _RBRACE) == Compound(body=())
+
+    def test_compound_with_single_return(self) -> None:
+        """``{ return 0; }`` → ``Compound`` wrapping a single ``Return``."""
+        assert _parsed_stmt(_LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE) == Compound(
+            body=(S(statement=Return(exp=Constant(0))),)
+        )
+
+    def test_compound_with_declaration(self) -> None:
+        """``{ int x; }`` → ``Compound`` whose body contains a single ``D`` item."""
+        assert _parsed_stmt(_LBRACE, _INT, _ident("x"), _SEMICOLON, _RBRACE) == Compound(
+            body=(D(declaration=Declaration(name="x", init=None)),)
+        )
+
+    def test_compound_with_initialised_declaration(self) -> None:
+        """``{ int x = 1; }`` → ``Compound`` with a ``D`` whose declaration carries an initialiser."""
+        assert _parsed_stmt(_LBRACE, _INT, _ident("x"), _ASSIGNMENT, _number("1"), _SEMICOLON, _RBRACE) == Compound(
+            body=(D(declaration=Declaration(name="x", init=Constant(1))),)
+        )
+
+    def test_compound_with_multiple_items(self) -> None:
+        """``{ int x = 1; return x; }`` → body contains a declaration then a statement."""
+        assert _parsed_stmt(
+            _LBRACE,
+            _INT,
+            _ident("x"),
+            _ASSIGNMENT,
+            _number("1"),
+            _SEMICOLON,
+            _RETURN,
+            _ident("x"),
+            _SEMICOLON,
+            _RBRACE,
+        ) == Compound(
+            body=(
+                D(declaration=Declaration(name="x", init=Constant(1))),
+                S(statement=Return(exp=Var("x"))),
+            )
+        )
+
+    def test_nested_compound(self) -> None:
+        """``{ { return 0; } }`` → outer ``Compound`` wrapping an inner ``Compound``."""
+        assert _parsed_stmt(_LBRACE, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE, _RBRACE) == Compound(
+            body=(S(statement=Compound(body=(S(statement=Return(exp=Constant(0))),))),)
+        )
+
+    def test_compound_does_not_consume_subsequent_block_items(self) -> None:
+        """``{ {} return 0; }`` — the compound's ``}`` does not swallow the following ``return``."""
+        body = _parsed_body(_LBRACE, _RBRACE, _RETURN, _number("0"), _SEMICOLON)
+        assert body == (S(statement=Compound(body=())), S(statement=Return(exp=Constant(0))))
+
+    def test_compound_as_if_then_branch(self) -> None:
+        """``if (1) { return 0; }`` → ``If`` with a ``Compound`` as the then-branch."""
+        result = _parsed_stmt(
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        )
+        assert result == If(
+            condition=Constant(1),
+            then=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+            else_=None,
+        )
+
+    def test_compound_as_else_branch(self) -> None:
+        """``if (1) return 1; else { return 0; }`` → ``If`` with a ``Compound`` else-branch."""
+        result = _parsed_stmt(
+            _IF,
+            _LPAREN,
+            _number("1"),
+            _RPAREN,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+            _ELSE,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        )
+        assert result == If(
+            condition=Constant(1),
+            then=Return(exp=Constant(1)),
+            else_=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+        )
+
+    def test_label_wraps_compound(self) -> None:
+        """``foo: { return 0; }`` → ``Label`` whose governed statement is a ``Compound``."""
+        result = _parsed_stmt(_ident("foo"), _COLON, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE)
+        assert result == Label(
+            name="foo",
+            statement=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+        )
+
+    def test_compound_missing_closing_brace_raises_parse_error(self) -> None:
+        """``int main(void) { { return 0; }`` — missing outer ``}`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+        ]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+    def test_compound_body_is_block_type(self) -> None:
+        """``Compound.body`` is an instance of ``Block`` (i.e., ``tuple[BlockItem, ...]``)."""
+        result = _parsed_stmt(_LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE)
+        assert isinstance(result, Compound)
+        assert isinstance(result.body, tuple)
+        # Block is a type alias — verify the runtime type satisfies it
+        b: Block = result.body
+        assert b == (S(statement=Return(exp=Constant(0))),)
