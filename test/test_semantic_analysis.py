@@ -1554,24 +1554,6 @@ class TestSwitchIdentifiers:
         assert isinstance(switch, ast.Switch)
         assert switch.control == ast.Var(name=".Vx.0")
 
-    def test_case_value_variable_is_resolved(self) -> None:
-        """A variable reference in a ``Case`` value expression is renamed to its unique identifier."""
-        body = (
-            ast.D(declaration=ast.Declaration(name="x", init=None)),
-            ast.S(
-                statement=ast.Switch(
-                    control=ast.Constant(value=1),
-                    body=ast.Case(value=ast.Var(name="x"), statement=ast.Null()),
-                )
-            ),
-        )
-        resolved = _resolved_body(body)
-        switch = resolved[1].statement
-        assert isinstance(switch, ast.Switch)
-        case_ = switch.body
-        assert isinstance(case_, ast.Case)
-        assert case_.value == ast.Var(name=".Vx.0")
-
     def test_case_governed_statement_variable_is_resolved(self) -> None:
         """A variable reference in the statement governed by a ``Case`` is renamed."""
         body = (
@@ -1670,3 +1652,121 @@ class TestSwitchIdentifiers:
         body = (ast.S(statement=ast.Default(statement=ast.Null())),)
         with pytest.raises(SemanticError, match="not within a switch"):
             resolve(_program(body))
+
+    def test_duplicate_case_value_in_same_switch_raises(self) -> None:
+        """Two ``Case`` labels with the same integer value in one switch raise ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(statement=ast.Case(value=ast.Constant(value=5), statement=ast.Null())),
+                            ast.S(statement=ast.Case(value=ast.Constant(value=4), statement=ast.Null())),
+                            ast.S(statement=ast.Case(value=ast.Constant(value=5), statement=ast.Null())),
+                        )
+                    ),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Duplicate case value"):
+            resolve(_program(body))
+
+    def test_same_case_value_in_different_switches_is_accepted(self) -> None:
+        """The same integer value may appear as a ``Case`` in two separate ``Switch`` statements."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(value=ast.Constant(value=5), statement=ast.Null()),
+                )
+            ),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=2),
+                    body=ast.Case(value=ast.Constant(value=5), statement=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert len(resolved) == 2
+
+    def test_same_case_value_in_nested_switches_is_accepted(self) -> None:
+        """The same integer value may appear as a ``Case`` in an outer and inner switch independently."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(
+                        value=ast.Constant(value=5),
+                        statement=ast.Switch(
+                            control=ast.Constant(value=2),
+                            body=ast.Case(value=ast.Constant(value=5), statement=ast.Null()),
+                        ),
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert len(resolved) == 1
+
+    def test_duplicate_default_in_same_switch_raises(self) -> None:
+        """Two ``Default`` labels within a single switch raise ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(statement=ast.Default(statement=ast.Null())),
+                            ast.S(statement=ast.Default(statement=ast.Null())),
+                        )
+                    ),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Multiple 'default'"):
+            resolve(_program(body))
+
+    def test_default_in_each_of_two_sequential_switches_is_accepted(self) -> None:
+        """A ``Default`` in each of two separate sequential switches is permitted."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Default(statement=ast.Null()),
+                )
+            ),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=2),
+                    body=ast.Default(statement=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert len(resolved) == 2
+
+    def test_default_in_each_of_two_nested_switches_is_accepted(self) -> None:
+        """A ``Default`` in both an outer and an inner switch is permitted."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(
+                                statement=ast.Default(
+                                    statement=ast.Switch(
+                                        control=ast.Constant(value=2),
+                                        body=ast.Default(statement=ast.Null()),
+                                    )
+                                )
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert len(resolved) == 1

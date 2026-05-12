@@ -21,7 +21,7 @@ which are handled by precedence climbing.  The grammar is:
                           | "do" statement "while" "(" exp ")" ";"
                           | "for" "(" for_init [exp] ";" [exp] ")" statement
                           | "switch" "(" exp ")" statement
-                          | "case" exp ":" statement
+                          | "case" int ":" statement
                           | "default" ":" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
@@ -611,7 +611,7 @@ class Parser:
                         | "do" statement "while" "(" exp ")" ";"
                         | "for" "(" for_init [exp] ";" [exp] ")" statement
                         | "switch" "(" exp ")" statement
-                        | "case" exp ":" statement
+                        | "case" int ":" statement
                         | "default" ":" statement
                         | ";"
 
@@ -678,7 +678,7 @@ class Parser:
                 return Switch(control=control, body=self._parse_statement())
             case TokenType.CASE:
                 self._consume()
-                value = self._parse_exp()
+                value = self._parse_constant()
                 self._expect(TokenType.COLON)
                 return Case(value=value, statement=self._parse_statement())
             case TokenType.DEFAULT:

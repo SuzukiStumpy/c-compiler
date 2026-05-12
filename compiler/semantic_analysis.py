@@ -79,6 +79,16 @@ class SemanticAnalyser:
             and ``Default`` encountered during resolution.  An empty stack
             indicates that ``case``/``default`` appear outside any switch,
             which is a semantic error.
+        _case_values_stack: Parallel stack to ``_switch_stack``.  Each entry
+            is the set of ``ast.Constant`` nodes already seen by ``Case`` labels
+            within the corresponding switch.  Storing the node rather than its
+            raw value keeps the check type-independent as the expression language
+            grows: equality and hashing are delegated to the frozen dataclass.
+            Used to detect duplicate case values within a single switch statement.
+        _default_seen_stack: Parallel stack to ``_switch_stack``.  Each entry
+            is ``True`` once a ``Default`` label has been encountered within the
+            corresponding switch, and ``False`` until then.  Used to enforce the
+            C rule that at most one ``default`` clause may appear per switch.
     """
 
     def __init__(self) -> None:
@@ -90,6 +100,8 @@ class SemanticAnalyser:
         self._loop_stack: list[str] = []
         self._break_stack: list[str] = []
         self._switch_stack: list[str] = []
+        self._case_values_stack: list[set[ast.Constant]] = []
+        self._default_seen_stack: list[bool] = []
 
     def _make_unique(self, name: str) -> str:
         """Generate a unique internal name for a source-level variable.
@@ -400,17 +412,27 @@ class SemanticAnalyser:
                 label = self._make_loop_label("switch")
                 self._break_stack.append(label)
                 self._switch_stack.append(label)
+                self._case_values_stack.append(set())
+                self._default_seen_stack.append(False)
                 result = ast.Switch(self.resolve_exp(control), self._resolve_statement(body), label)
                 self._break_stack.pop()
                 self._switch_stack.pop()
+                self._case_values_stack.pop()
+                self._default_seen_stack.pop()
                 return result
             case ast.Case(value=value, statement=inner):
                 if not self._switch_stack:
                     raise SemanticError("'case' label not within a switch statement.")
-                return ast.Case(self.resolve_exp(value), self._resolve_statement(inner), self._switch_stack[-1])
+                if value in self._case_values_stack[-1]:
+                    raise SemanticError(f"Duplicate case value {value.value} in switch statement.")
+                self._case_values_stack[-1].add(value)
+                return ast.Case(value, self._resolve_statement(inner), self._switch_stack[-1])
             case ast.Default(statement=inner):
                 if not self._switch_stack:
                     raise SemanticError("'default' label not within a switch statement.")
+                if self._default_seen_stack[-1]:
+                    raise SemanticError("Multiple 'default' labels in one switch statement.")
+                self._default_seen_stack[-1] = True
                 return ast.Default(self._resolve_statement(inner), self._switch_stack[-1])
             case ast.Goto(target=target):
                 if target not in self._label_set:
@@ -514,6 +536,8 @@ class SemanticAnalyser:
         self._loop_stack = []
         self._break_stack = []
         self._switch_stack = []
+        self._case_values_stack = []
+        self._default_seen_stack = []
         self._collect_labels(function.body)
         return ast.Function(
             return_type=function.return_type,

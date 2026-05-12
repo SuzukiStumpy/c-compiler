@@ -1641,10 +1641,23 @@ class TestSwitchStatements:
         result = _parsed_stmt(_CASE, _number("2"), _COLON, _RETURN, _number("0"), _SEMICOLON)
         assert result == Case(value=Constant(2), statement=Return(exp=Constant(0)))
 
-    def test_case_value_is_arbitrary_expression(self) -> None:
-        """``case 1 + 1: ;`` — the grammar accepts any expression as the case value."""
-        result = _parsed_stmt(_CASE, _number("1"), _PLUS, _number("1"), _COLON, _SEMICOLON)
-        assert result == Case(value=Binary(Add(), Constant(1), Constant(1)), statement=Null())
+    def test_case_value_must_be_constant_expression_raises_parse_error(self) -> None:
+        """``case a: ;`` — a non-constant case value raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _CASE,
+            _ident("a"),
+            _COLON,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError):
+            parse(tokens)
 
     def test_case_identifier_is_empty_before_semantic_analysis(self) -> None:
         """``Case.identifier`` is the empty string until semantic analysis assigns one."""

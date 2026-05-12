@@ -8,7 +8,7 @@ statement form supported by the compiler is represented as a subclass of
 from abc import ABC
 from dataclasses import dataclass
 
-from compiler.syntax.ast.expressions import Exp
+from compiler.syntax.ast.expressions import Constant, Exp
 
 
 class Statement(ABC):
@@ -183,14 +183,15 @@ class Case(Statement):
     the next case.
 
     Attributes:
-        value: The constant value matched against the enclosing ``switch``
-            control expression.
+        value: The integer constant matched against the enclosing ``switch``
+            control expression.  Must be a ``Constant`` node; non-constant
+            case values are rejected by the parser.
         statement: The statement immediately governed by this label.
         identifier: The unique identifier for this case, derived from the
             enclosing switch's identifier during semantic analysis.
     """
 
-    value: Exp
+    value: Constant
     statement: Statement
     identifier: str = ""
 
