@@ -208,3 +208,4 @@ __marimo__/
 
 # Local files to ignore
 writing-a-c-compiler-tests/
+.VSCodeCounter/

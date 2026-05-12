@@ -1,11 +1,25 @@
-"""Semantic analysis stage: variable resolution over the AST.
+"""Semantic analysis stage: variable and function resolution over the AST.
 
 Walks the ``compiler.syntax.ast`` tree produced by the parser and performs
-semantic checks that cannot be expressed by the grammar alone.  At present the
-sole responsibility is *variable resolution*: every variable reference is
-verified to have a corresponding declaration in scope, and each declared name is
-assigned a unique internal identifier so that later pipeline stages (TAC
-generation, code generation) need not reason about shadowing or scoping rules.
+semantic checks that cannot be expressed by the grammar alone.  Responsibilities
+are *variable resolution*, *function declaration validation*, and *type checking*:
+
+* Every variable reference is verified to have a corresponding declaration in
+  scope, and each declared name is assigned a unique internal identifier so that
+  later pipeline stages (TAC generation, code generation) need not reason about
+  shadowing or scoping rules.
+* Every function name is tracked in a program-wide function map.  Multiple
+  *declarations* of the same function are permitted; a function *definition*
+  (one with a body) may appear at most once per program.  Top-level functions
+  are processed in source order; a function must be declared or defined before
+  any call site that precedes it.
+* ``FunctionCall`` expressions are validated to ensure the callee has been
+  declared or defined at an earlier point in the source, and that the callee
+  name is not a local variable.
+* ``Var`` expressions are checked to ensure the name was declared as a variable
+  rather than as a function.
+* Linkage is recorded for each binding: ``Linkage.NONE`` for local variables,
+  ``Linkage.EXTERNAL`` for all functions.
 
 The main entry point for external callers is ``resolve``, which constructs a
 ``SemanticAnalyser``, runs it over the program, and returns a semantically
@@ -14,13 +28,16 @@ is also exposed directly for testing.
 
 Raises:
     SemanticError: If the program contains a semantic violation such as
-        a duplicate declaration or a reference to an undeclared variable.
+        a duplicate variable declaration, a reference to an undeclared variable
+        or function, a redefinition of a function, an invalid lvalue, a function
+        name used as a variable, or a variable called as a function.
 """
 
 from itertools import count
 from typing import NamedTuple
 
 import compiler.syntax.ast as ast
+from compiler.syntax.ast.types import Linkage
 from compiler.utils.exceptions import SemanticError
 
 
@@ -32,16 +49,46 @@ class VariableBinding(NamedTuple):
             (e.g. ``".Vx.0"``).
         from_current_block: ``True`` if this binding was declared in the block currently
             being analysed; ``False`` if it was inherited from an enclosing scope.  Used
-            by ``resolve_declaration`` to distinguish shadowing (permitted) from a
+            by ``resolve_variable_declaration`` to distinguish shadowing (permitted) from a
             same-block duplicate (an error).
+        linkage: The linkage classification for this variable.  Local variables always
+            have ``Linkage.NONE``; file-scope variables (not yet supported) would carry
+            ``Linkage.EXTERNAL``.
     """
 
     unique_name: str
     from_current_block: bool
+    linkage: Linkage = Linkage.NONE
+
+
+class FunctionBinding(NamedTuple):
+    """A single entry in the function map, tracking whether a definition has been seen.
+
+    Functions are globally scoped and their names are never renamed.  Unlike
+    variables, multiple declarations of the same function are permitted; only a
+    second *definition* (a ``Function`` node with a non-``None`` body) is an
+    error.  All declarations of the same function must agree on parameter count
+    and types; a mismatch is a conflict error.
+
+    Attributes:
+        has_definition: ``True`` once a definition (body present) has been
+            registered for this function name; ``False`` if only forward
+            declarations have been seen so far.
+        param_types: The ordered tuple of parameter types established by the
+            first declaration seen.  Every subsequent declaration must match
+            this tuple exactly.
+        linkage: The linkage classification for this function.  All functions
+            in the current language subset have ``Linkage.EXTERNAL``; ``static``
+            functions (internal linkage) are not yet supported.
+    """
+
+    has_definition: bool
+    param_types: tuple[ast.Type, ...]
+    linkage: Linkage = Linkage.EXTERNAL
 
 
 class SemanticAnalyser:
-    """Resolves variable references across a single AST program.
+    """Resolves variable references and validates function declarations across a single AST program.
 
     Each instance owns a fresh counter and should be used for exactly one
     ``_resolve_program`` call.  Constructing a new instance per program
@@ -57,12 +104,20 @@ class SemanticAnalyser:
             identifiers are predictable in tests regardless of how many
             variables have been declared.
         _variable_map: Mapping from source-level variable names to
-            ``VariableBinding`` values.  Each binding records both the unique
-            internal name and whether it was declared in the current block.
-            Outer-scope bindings are retained in the map with
+            ``VariableBinding`` values.  Each binding records the unique
+            internal name, whether it was declared in the current block, and
+            the variable's linkage (always ``Linkage.NONE`` for local
+            variables).  Outer-scope bindings are retained in the map with
             ``from_current_block=False`` so that variable lookups can still
             resolve them; when a compound block exits the map is restored to
-            its saved snapshot.
+            its saved snapshot.  Reset to an empty dict at the start of each
+            function definition.
+        _function_map: Program-wide mapping from function names to
+            ``FunctionBinding`` values.  Each binding records whether a
+            definition has been seen and the function's linkage (always
+            ``Linkage.EXTERNAL``).  Populated by a pre-pass in
+            ``_resolve_program`` and extended when ``FunDecl`` block items are
+            processed.  Never reset between functions.
         _label_set: Set of all label names declared in the function currently
             being analysed.  Populated by a first pass before resolution begins
             so that forward ``goto`` targets can be validated.
@@ -89,13 +144,21 @@ class SemanticAnalyser:
             is ``True`` once a ``Default`` label has been encountered within the
             corresponding switch, and ``False`` until then.  Used to enforce the
             C rule that at most one ``default`` clause may appear per switch.
+        _current_block_funs: Set of function names declared as block items in
+            the innermost enclosing block scope.  Saved and cleared on every
+            ``_enter_scope`` call and restored when that scope exits, mirroring
+            the ``from_current_block`` flag on ``VariableBinding``.  Used to
+            detect within-scope conflicts between a function declaration and a
+            variable declaration sharing the same name.
     """
 
     def __init__(self) -> None:
-        """Initialise the analyser with fresh counters and an empty symbol table."""
+        """Initialise the analyser with fresh counters and empty symbol tables."""
         self._counter: count[int] = count()
         self._loop_counter: count[int] = count()
         self._variable_map: dict[str, VariableBinding] = {}
+        self._function_map: dict[str, FunctionBinding] = {}
+        self._current_block_funs: set[str] = set()
         self._label_set: set[str] = set()
         self._loop_stack: list[str] = []
         self._break_stack: list[str] = []
@@ -195,18 +258,18 @@ class SemanticAnalyser:
                 case ast.S(statement=statement):
                     self._collect_labels_in_statement(statement)
 
-    def resolve_declaration(self, declaration: ast.Declaration) -> ast.Declaration:
+    def resolve_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
         """Resolve a variable declaration against the current symbol table.
 
-        Verifies that ``declaration.name`` has not already been declared in the
+        Verifies that ``var_decl.name`` has not already been declared in the
         *current* block (detected via the ``from_current_block`` flag on the
         existing ``VariableBinding``), assigns it a fresh unique internal name,
         records the mapping in ``_variable_map``, and returns a new
-        ``Declaration`` node whose ``name`` field holds the unique internal
-        name.  Declarations with the same source name in an *outer* block are
-        silently shadowed: the new binding overwrites the map entry for the
-        duration of the enclosing compound block, and the outer binding is
-        restored when that block exits.
+        ``VariableDeclaration`` node whose ``name`` field holds the unique
+        internal name.  Declarations with the same source name in an *outer*
+        block are silently shadowed: the new binding overwrites the map entry
+        for the duration of the enclosing compound block, and the outer binding
+        is restored when that block exits.
 
         The binding is added to ``_variable_map`` *before* the initialiser is
         resolved.  This matches the C standard (C11 §6.2.1p7), under which the
@@ -218,45 +281,113 @@ class SemanticAnalyser:
         at runtime, but not a constraint violation.
 
         Args:
-            declaration: The ``Declaration`` AST node to resolve.  Its ``name``
-                field is the source-level identifier; its ``init`` field is
-                either ``None`` (no initialiser) or an expression tree.
+            var_decl: The ``VariableDeclaration`` AST node to resolve.  Its
+                ``name`` field is the source-level identifier; its ``init``
+                field is either ``None`` (no initialiser) or an expression tree.
 
         Returns:
-            A new ``Declaration`` node with ``name`` replaced by the unique
-            internal identifier and ``init`` (if present) rewritten so that all
-            variable references within it use their unique internal names.
+            A new ``VariableDeclaration`` node with ``name`` replaced by the
+            unique internal identifier and ``init`` (if present) rewritten so
+            that all variable references within it use their unique internal
+            names.
 
         Raises:
             SemanticError: If an existing ``VariableBinding`` for
-                ``declaration.name`` has ``from_current_block=True``, indicating
+                ``var_decl.name`` has ``from_current_block=True``, indicating
                 a duplicate declaration in the same block.
         """
-        binding = self._variable_map.get(declaration.name)
+        binding = self._variable_map.get(var_decl.name)
         if binding is not None and binding.from_current_block:
-            raise SemanticError(f"Duplicate variable declaration: {declaration.name}!")
+            raise SemanticError(f"Duplicate variable declaration: {var_decl.name}!")
+        if var_decl.name in self._current_block_funs:
+            raise SemanticError(
+                f"'{var_decl.name}' redeclared as a variable but was previously declared as a function in this scope."
+            )
 
-        unique_name = self._make_unique(declaration.name)
-        self._variable_map[declaration.name] = VariableBinding(unique_name, from_current_block=True)
-        init = self.resolve_exp(declaration.init) if declaration.init is not None else None
+        unique_name = self._make_unique(var_decl.name)
+        self._variable_map[var_decl.name] = VariableBinding(unique_name, from_current_block=True)
+        init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
 
-        return ast.Declaration(unique_name, init)
+        return ast.VariableDeclaration(unique_name, init)
 
-    def _enter_scope(self) -> dict[str, VariableBinding]:
-        """Open a new nested scope and return a snapshot of the current bindings.
+    def _validate_params_unique(self, fun: ast.Function) -> None:
+        """Verify that no two parameters in a function declaration share the same name.
 
-        Saves a copy of ``_variable_map``, then marks every existing binding as
-        ``from_current_block=False`` so that declarations in the new scope may
-        shadow outer names without being treated as same-block duplicates.
+        Parameter names in a declaration need not be identical to those in the
+        matching definition, but within any single declaration or definition they
+        must be distinct.  This check applies equally to forward declarations
+        (``body is None``) and full definitions.
+
+        Args:
+            fun: The ``Function`` node whose parameter list is to be validated.
+
+        Raises:
+            SemanticError: If two or more parameters in ``fun.params`` carry the
+                same source-level name.
+        """
+        seen: set[str] = set()
+        for param in fun.params:
+            if param.name in seen:
+                raise SemanticError(f"Duplicate parameter name '{param.name}' in declaration of '{fun.name}'.")
+            seen.add(param.name)
+
+    def _register_fun_declaration(self, fun: ast.Function) -> None:
+        """Register a function declaration or definition in the program-wide function map.
+
+        Records the function name in ``_function_map``.  A function may be
+        declared any number of times; a definition (``fun.body is not None``)
+        may appear at most once — a second definition raises ``SemanticError``.
+
+        Args:
+            fun: The ``Function`` node whose name is to be registered.
+
+        Raises:
+            SemanticError: If ``fun`` is a definition and a definition for the
+                same name has already been registered; if the parameter types of
+                this declaration conflict with a prior declaration of the same
+                name; or if ``fun.name`` was already declared as a variable in
+                the current block scope.
+        """
+        var_binding = self._variable_map.get(fun.name)
+        if var_binding is not None and var_binding.from_current_block:
+            raise SemanticError(
+                f"'{fun.name}' redeclared as a function but was previously declared as a variable in this scope."
+            )
+        new_param_types = tuple(p.param_type for p in fun.params)
+        existing = self._function_map.get(fun.name)
+        if existing is not None:
+            if existing.param_types != new_param_types:
+                raise SemanticError(
+                    f"Conflicting declarations of '{fun.name}': parameter types do not match prior declaration."
+                )
+            if fun.body is not None and existing.has_definition:
+                raise SemanticError(f"Redefinition of function '{fun.name}'.")
+            if fun.body is not None:
+                self._function_map[fun.name] = FunctionBinding(has_definition=True, param_types=new_param_types)
+        else:
+            self._function_map[fun.name] = FunctionBinding(
+                has_definition=fun.body is not None, param_types=new_param_types
+            )
+        self._current_block_funs.add(fun.name)
+
+    def _enter_scope(self) -> tuple[dict[str, VariableBinding], set[str]]:
+        """Open a new nested scope and return snapshots of the current block state.
+
+        Saves a copy of ``_variable_map`` and ``_current_block_funs``, then
+        marks every existing variable binding as ``from_current_block=False``
+        and clears ``_current_block_funs`` so that the new scope starts with no
+        locally-declared names of either kind.
 
         Returns:
-            A copy of ``_variable_map`` as it stood before entering the scope.
-            Assign this value back to ``self._variable_map`` once the nested
-            scope has been fully processed to restore the enclosing bindings.
+            A ``(saved_variable_map, saved_block_funs)`` pair.  Assign both
+            values back to the corresponding attributes once the nested scope
+            has been fully processed to restore the enclosing bindings.
         """
-        saved = dict(self._variable_map)
+        saved_vars = dict(self._variable_map)
+        saved_funs = self._current_block_funs
         self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
-        return saved
+        self._current_block_funs = set()
+        return saved_vars, saved_funs
 
     def _resolve_block(self, body: ast.Block) -> ast.Block:
         """Resolve a sequence of block items in a new nested scope.
@@ -276,19 +407,21 @@ class SemanticAnalyser:
             SemanticError: If any block item within ``body`` contains a
                 semantic violation.
         """
-        saved_map = self._enter_scope()
+        saved_vars, saved_funs = self._enter_scope()
         result = tuple(self._resolve_block_item(item) for item in body)
-        self._variable_map = saved_map
+        self._variable_map = saved_vars
+        self._current_block_funs = saved_funs
         return result
 
     def resolve_exp(self, e: ast.Exp) -> ast.Exp:
-        """Resolve all variable references within an expression.
+        """Resolve all variable and function references within an expression.
 
         Recursively walks the expression tree, substituting every ``ast.Var``
         node with a new ``ast.Var`` whose name is the unique internal identifier
         recorded in ``_variable_map``.  Assignment expressions are additionally
         validated to ensure their left-hand side is an ``ast.Var`` (i.e. a
-        simple lvalue).
+        simple lvalue).  ``FunctionCall`` expressions are validated to ensure
+        the callee name appears in ``_function_map``.
 
         Args:
             e: The expression node to resolve.
@@ -298,10 +431,18 @@ class SemanticAnalyser:
             ``ast.Var`` references rewritten to use unique internal names.
 
         Raises:
-            SemanticError: If a variable reference cannot be found in
-                ``_variable_map`` (undeclared variable), or if the left-hand
-                side of an assignment is not a plain ``ast.Var`` (invalid
-                lvalue).
+            SemanticError: If a ``Var`` node names an identifier present in
+                ``_current_block_funs`` or in ``_function_map`` but not
+                ``_variable_map`` (function name used as a variable); if a
+                variable reference cannot be found in ``_variable_map``
+                (undeclared variable); if the left-hand side of an assignment
+                is not a plain ``ast.Var`` (invalid lvalue); if a
+                ``FunctionCall`` names an identifier present in
+                ``_variable_map`` but not shadowed by a block-scope function
+                declaration in ``_current_block_funs`` (variable called as a
+                function); if a ``FunctionCall`` names a function not present
+                in ``_function_map`` (undeclared function); or if the number
+                of arguments does not match the function's declared arity.
         """
         match e:
             case ast.Assignment(lvalue=ast.Var() as lvalue_var, rvalue=rvalue):
@@ -309,10 +450,13 @@ class SemanticAnalyser:
             case ast.Assignment():
                 raise SemanticError("Invalid lvalue in assignment expression.")
             case ast.Var(name=name):
+                if name in self._current_block_funs:
+                    raise SemanticError(f"Function name '{name}' used as a variable.")
                 if name in self._variable_map:
                     return ast.Var(self._variable_map[name].unique_name)
-                else:
-                    raise SemanticError(f"Undeclared variable {name}!")
+                if name in self._function_map:
+                    raise SemanticError(f"Function name '{name}' used as a variable.")
+                raise SemanticError(f"Undeclared variable {name}!")
             case ast.Constant():
                 return e
             case ast.Unary(operator=op, exp=exp):
@@ -321,6 +465,17 @@ class SemanticAnalyser:
                 return ast.Binary(op, self.resolve_exp(left), self.resolve_exp(right))
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 return ast.Conditional(self.resolve_exp(cond), self.resolve_exp(exp_true), self.resolve_exp(exp_false))
+            case ast.FunctionCall(name=name, args=args):
+                if name in self._variable_map and name not in self._current_block_funs:
+                    raise SemanticError(f"Variable '{name}' called as a function.")
+                if name not in self._function_map:
+                    raise SemanticError(f"Call to undeclared function '{name}'.")
+                expected = len(self._function_map[name].param_types)
+                if len(args) != expected:
+                    raise SemanticError(
+                        f"Function '{name}' called with {len(args)} argument(s) but declared with {expected}."
+                    )
+                return ast.FunctionCall(name, [self.resolve_exp(arg) for arg in args])
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -396,7 +551,7 @@ class SemanticAnalyser:
                 self._break_stack.pop()
                 return result
             case ast.For(init=init, condition=condition, post=post, body=body):
-                saved_variable_map = self._enter_scope()
+                saved_vars, saved_funs = self._enter_scope()
                 label = self._make_loop_label("for")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
@@ -406,7 +561,8 @@ class SemanticAnalyser:
                 body = self._resolve_statement(body)
                 self._loop_stack.pop()
                 self._break_stack.pop()
-                self._variable_map = saved_variable_map
+                self._variable_map = saved_vars
+                self._current_block_funs = saved_funs
                 return ast.For(init, condition, post, body, label)
             case ast.Switch(control=control, body=body):
                 label = self._make_loop_label("switch")
@@ -447,7 +603,7 @@ class SemanticAnalyser:
         """Resolve the initialiser clause of a ``for`` loop.
 
         Dispatches to ``_resolve_optional_exp`` for an expression initialiser
-        (``InitExp``) and to ``resolve_declaration`` for a declaration
+        (``InitExp``) and to ``resolve_variable_declaration`` for a declaration
         initialiser (``InitDecl``).
 
         Args:
@@ -466,8 +622,8 @@ class SemanticAnalyser:
         match init:
             case ast.InitExp(exp=exp):
                 return ast.InitExp(self._resolve_optional_exp(exp))
-            case ast.InitDecl(declaration=declaration):
-                return ast.InitDecl(self.resolve_declaration(declaration))
+            case ast.InitDecl(declaration=ast.VarDecl(variable_declaration=var_decl)):
+                return ast.InitDecl(ast.VarDecl(self.resolve_variable_declaration(var_decl)))
             case _:
                 raise SemanticError("Unhandled for-init type in semantic analyser")
 
@@ -493,9 +649,11 @@ class SemanticAnalyser:
         return None
 
     def _resolve_block_item(self, item: ast.BlockItem) -> ast.BlockItem:
-        """Resolve a single block item (statement or declaration).
+        """Resolve a single block item (statement, variable declaration, or function declaration).
 
-        Dispatches to ``resolve_declaration`` for ``ast.D`` items and to
+        Dispatches to ``resolve_variable_declaration`` for ``ast.D`` items wrapping
+        a ``VarDecl``, to ``_register_fun_declaration`` for ``ast.D`` items wrapping a
+        ``FunDecl`` (forward declarations only — definitions raise immediately), and to
         ``_resolve_statement`` for ``ast.S`` items.
 
         Args:
@@ -505,11 +663,18 @@ class SemanticAnalyser:
             A new block item with all variable references resolved.
 
         Raises:
-            SemanticError: If the item contains a semantic violation.
+            SemanticError: If the item contains a semantic violation, including a
+                ``FunDecl`` whose ``body`` is not ``None`` (nested definition).
         """
         match item:
-            case ast.D(declaration=declaration):
-                return ast.D(self.resolve_declaration(declaration))
+            case ast.D(declaration=ast.VarDecl(variable_declaration=var_decl)):
+                return ast.D(ast.VarDecl(self.resolve_variable_declaration(var_decl)))
+            case ast.D(declaration=ast.FunDecl(function_declaration=fun)):
+                if fun.body is not None:
+                    raise SemanticError(f"Nested function definition of '{fun.name}' is not permitted.")
+                self._validate_params_unique(fun)
+                self._register_fun_declaration(fun)
+                return item
             case ast.S(statement=statement):
                 return ast.S(self._resolve_statement(statement))
             case _:
@@ -518,41 +683,64 @@ class SemanticAnalyser:
     def _resolve_function(self, function: ast.Function) -> ast.Function:
         """Resolve all variable references within a function definition.
 
-        Resets ``_variable_map`` to an empty scope for this function, then
-        walks its body resolving every block item in order.
+        Validates that parameter names are unique (via ``_validate_params_unique``)
+        for both declarations and definitions.  If ``function.body`` is ``None``
+        this is a forward declaration and is returned immediately after the
+        parameter check (the name has already been registered by the pre-pass in
+        ``_resolve_program``).  Otherwise:
+
+        1. Resets per-function state (``_variable_map``, label and loop stacks).
+        2. Adds each parameter to ``_variable_map`` under a unique internal name.
+        3. Collects all labels in a first pass.
+        4. Resolves every block item in the body.
 
         Args:
             function: The ``Function`` AST node to resolve.
 
         Returns:
-            A new ``Function`` node with all variable references resolved and
-            all declared names replaced by unique internal identifiers.
+            A new ``Function`` node with all variable references resolved,
+            parameter names replaced by unique internal identifiers, and
+            all declared variable names replaced by unique internal identifiers.
+            Returns ``function`` unchanged if ``body`` is ``None``.
 
         Raises:
-            SemanticError: If the function body contains any semantic violation.
+            SemanticError: If the function body contains any semantic violation,
+                or if two parameters share the same name.
         """
+        self._validate_params_unique(function)
+        if function.body is None:
+            return function
+
         self._variable_map = {}
+        self._current_block_funs = set()
         self._label_set = set()
         self._loop_stack = []
         self._break_stack = []
         self._switch_stack = []
         self._case_values_stack = []
         self._default_seen_stack = []
+
+        resolved_params: list[ast.Parameter] = []
+        for param in function.params:
+            resolved_var = self.resolve_variable_declaration(ast.VariableDeclaration(param.name, None))
+            resolved_params.append(ast.Parameter(param_type=param.param_type, name=resolved_var.name))
+
         self._collect_labels(function.body)
         return ast.Function(
-            return_type=function.return_type,
             name=function.name,
-            params=function.params,
+            params=tuple(resolved_params),
             body=tuple(self._resolve_block_item(item) for item in function.body),
         )
 
     def _resolve_program(self, program: ast.Program) -> ast.Program:
         """Perform semantic analysis on a parsed program.
 
-        Resolves every function in the program in order, returning a new
-        ``ast.Program`` in which all variable names have been replaced by
-        unique internal identifiers and all semantic constraints have been
-        verified.
+        Processes top-level functions in source order.  For each function,
+        ``_register_fun_declaration`` is called first (making the name visible
+        to the bodies that follow), then ``_resolve_function`` resolves the body
+        if present.  A function must therefore be declared or defined before any
+        subsequent function body may call it; mutual recursion requires a forward
+        declaration.
 
         Args:
             program: The ``Program`` AST node produced by the parser.
@@ -563,10 +751,17 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If the program contains any semantic violation such
-                as a duplicate declaration or a reference to an undeclared
-                variable.
+                as a duplicate variable declaration, a reference to an undeclared
+                variable or function, a redefinition of a function, or a call to
+                a function whose declaration has not yet appeared in source order.
         """
-        return ast.Program(functions=tuple(self._resolve_function(fn) for fn in program.functions))
+        resolved: list[ast.Function] = []
+        for fn in program.functions:
+            self._register_fun_declaration(fn)
+            resolved.append(self._resolve_function(fn))
+            self._variable_map = {}
+            self._current_block_funs = set()
+        return ast.Program(functions=tuple(resolved))
 
 
 def resolve(program: ast.Program) -> ast.Program:

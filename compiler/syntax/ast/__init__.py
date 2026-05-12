@@ -40,6 +40,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | And | Or | Equal | NotEqual | LessThan | LessOrEqual
                          | GreaterThan | GreaterOrEqual
     type                 = IntType
+    linkage              = Linkage(NONE | EXTERNAL)
     block                = Block(block_item*)
     block_item           = S(statement) | D(declaration)
 
@@ -146,7 +147,7 @@ from compiler.syntax.ast.statements import (
     Switch,
     While,
 )
-from compiler.syntax.ast.types import IntType, Type
+from compiler.syntax.ast.types import IntType, Linkage, Type
 
 __all__ = [
     "Switch",
@@ -176,6 +177,7 @@ __all__ = [
     "Assignment",
     "Type",
     "IntType",
+    "Linkage",
     "Exp",
     "Constant",
     "Unary",
