@@ -10,7 +10,6 @@ Typical output for ``int main(void) { return 2; }``::
     Program(
         functions=(
             Function(
-                return_type=IntType()
                 name="main"
                 params=()
                 body=(

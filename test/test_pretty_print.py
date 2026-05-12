@@ -49,7 +49,6 @@ def test_minimal_program_indentation() -> None:
     program = Program(
         functions=(
             Function(
-                return_type=IntType(),
                 name="main",
                 params=(),
                 body=(Return(exp=Constant(value=2)),),
@@ -61,7 +60,6 @@ def test_minimal_program_indentation() -> None:
         "Program(\n"
         "    functions=(\n"
         "        Function(\n"
-        "            return_type=IntType()\n"
         '            name="main"\n'
         "            params=()\n"
         "            body=(\n"
@@ -79,7 +77,6 @@ def test_empty_params_tuple_inline() -> None:
     program = Program(
         functions=(
             Function(
-                return_type=IntType(),
                 name="main",
                 params=(),
                 body=(Return(exp=Constant(value=0)),),
@@ -94,7 +91,6 @@ def test_single_param_inline() -> None:
     program = Program(
         functions=(
             Function(
-                return_type=IntType(),
                 name="foo",
                 params=(Parameter(param_type=IntType(), name="n"),),
                 body=(Return(exp=Constant(value=0)),),
@@ -110,7 +106,6 @@ def test_multiple_functions_each_indented() -> None:
 
     def _fn(name: str) -> Function:
         return Function(
-            return_type=IntType(),
             name=name,
             params=(),
             body=(Return(exp=Constant(value=0)),),
@@ -132,7 +127,6 @@ def test_multiple_statements_in_body() -> None:
     program = Program(
         functions=(
             Function(
-                return_type=IntType(),
                 name="main",
                 params=(),
                 body=(
@@ -207,3 +201,21 @@ def test_for_identifier_appears_in_output() -> None:
     """A labelled ``For`` node includes its identifier in the rendered output."""
     node = For(init=InitExp(exp=None), condition=None, post=None, body=Null(), identifier="loop_2")
     assert 'identifier="loop_2"' in pretty_print(node)
+
+
+# ---------------------------------------------------------------------------
+# Function forward declarations (body=None)
+# ---------------------------------------------------------------------------
+
+
+def test_function_with_none_body_renders_inline() -> None:
+    """A forward-declaration ``Function`` with ``body=None`` renders inline."""
+    node = Function(name="foo", params=(), body=None)
+    assert pretty_print(node) == 'Function(name="foo", params=(), body=None)'
+
+
+def test_function_none_body_in_program() -> None:
+    """A ``Program`` containing a forward-declaration function renders ``body=None``."""
+    program = Program(functions=(Function(name="foo", params=(), body=None),))
+    result = pretty_print(program)
+    assert "body=None" in result

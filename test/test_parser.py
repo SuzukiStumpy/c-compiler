@@ -2,38 +2,42 @@
 
 Covers the full range of constructs supported by the current grammar:
 
-    program             ::= function
-    function            ::= "int" identifier "(" "void" ")" "{" block_item* "}"
-    block_item          ::= statement | declaration
-    block               ::= "{" {block_item} "}"
-    declaration         ::= "int" identifier [ "=" exp ] ";"
-    for_init            ::= declaration | [exp] ";"
-    statement           ::= "return" exp ";"
-                          | exp ";"
-                          | "if" "(" exp ")" statement ["else" statement]
-                          | "goto" identifier ";"
-                          | identifier ":" statement
-                          | block
-                          | "break" ";"
-                          | "continue" ";"
-                          | "while" "(" exp ")" statement
-                          | "do" statement "while" "(" exp ")" ";"
-                          | "for" "(" for_init [exp] ";" [exp] ")" statement
-                          | "switch" "(" exp ")" statement
-                          | "case" exp ":" statement
-                          | "default" ":" statement
-                          | ";"
-    exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
-    factor              ::= prefix_unop factor | primary postfix_unop?
-    primary             ::= int | identifier | "(" exp ")"
-    prefix_unop         ::= "-" | "~" | "!" | "++" | "--"
-    postfix_unop        ::= "++" | "--"
-    binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
-                          | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
-    assignop            ::= "+=" | "-=" | "*=" | "/=" | "%="
-                          | "&=" | "|=" | "^=" | "<<=" | ">>="
-    identifier          ::= ? An identifier token ?
-    int                 ::= ? A constant token ?
+    program              ::= {function-declaration}
+    function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+    param-list           ::= "void" | "int" identifier {"," "int" identifier}
+    block                ::= "{" {block_item} "}"
+    block_item           ::= statement | declaration
+    declaration          ::= variable-declaration | function-declaration
+    variable-declaration ::= "int" identifier ["=" exp] ";"
+    for_init             ::= variable-declaration | [exp] ";"
+    statement            ::= "return" exp ";"
+                           | exp ";"
+                           | "if" "(" exp ")" statement ["else" statement]
+                           | "goto" identifier ";"
+                           | identifier ":" statement
+                           | block
+                           | "break" ";"
+                           | "continue" ";"
+                           | "while" "(" exp ")" statement
+                           | "do" statement "while" "(" exp ")" ";"
+                           | "for" "(" for_init [exp] ";" [exp] ")" statement
+                           | "switch" "(" exp ")" statement
+                           | "case" exp ":" statement
+                           | "default" ":" statement
+                           | ";"
+    exp                  ::= factor | exp binop exp | exp "=" exp | exp assignop exp
+    factor               ::= prefix_unop factor | primary postfix_unop?
+    primary              ::= int | identifier | "(" exp ")"
+                           | identifier "(" [argument-list] ")"
+    argument-list        ::= exp {"," exp}
+    prefix_unop          ::= "-" | "~" | "!" | "++" | "--"
+    postfix_unop         ::= "++" | "--"
+    binop                ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
+                           | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
+    assignop             ::= "+=" | "-=" | "*=" | "/=" | "%="
+                           | "&=" | "|=" | "^=" | "<<=" | ">>="
+    identifier           ::= ? An identifier token ?
+    int                  ::= ? A constant token ?
 
 Each test builds a token stream directly (without invoking the lexer) so that
 parser behaviour is tested in isolation from lexer behaviour.
@@ -51,12 +55,13 @@ from compiler.syntax.ast import (
     Constant,
     Continue,
     D,
-    Declaration,
     Default,
     DoWhile,
     Expression,
     For,
     Function,
+    FunctionCall,
+    FunDecl,
     Goto,
     If,
     InitDecl,
@@ -70,6 +75,8 @@ from compiler.syntax.ast import (
     S,
     Statement,
     Switch,
+    VarDecl,
+    VariableDeclaration,
     While,
 )
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Exp, Unary, Var
@@ -174,6 +181,7 @@ _DEFAULT = _tok(TokenType.DEFAULT, "default")
 _ASSIGNMENT = _tok(TokenType.ASSIGNMENT, "=")
 _QUERY = _tok(TokenType.QUERY, "?")
 _COLON = _tok(TokenType.COLON, ":")
+_COMMA = _tok(TokenType.COMMA, ",")
 
 
 def _ident(name: str) -> Token:
@@ -196,7 +204,9 @@ def _parsed_body(*body_tokens: Token) -> tuple[BlockItem, ...]:
         The ``body`` tuple of ``BlockItem`` nodes from the parsed function.
     """
     tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, *body_tokens, _RBRACE]
-    return parse(tokens).functions[0].body
+    body = parse(tokens).functions[0].body
+    assert body is not None
+    return body
 
 
 def _parsed_stmt(*body_tokens: Token) -> Statement:
@@ -225,7 +235,9 @@ def _parsed_exp(*exp_tokens: Token) -> Exp:
     """
     tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, *exp_tokens, _SEMICOLON, _RBRACE]
     result = parse(tokens)
-    item = result.functions[0].body[0]
+    body = result.functions[0].body
+    assert body is not None
+    item = body[0]
     assert isinstance(item, S)
     assert isinstance(item.statement, Return)
     return item.statement.exp
@@ -246,7 +258,6 @@ class TestValidPrograms:
         expected = Program(
             functions=(
                 Function(
-                    return_type=IntType(),
                     name="main",
                     params=(),
                     body=(S(statement=Return(exp=Constant(value=0))),),
@@ -1067,13 +1078,13 @@ class TestCompoundStatements:
     def test_compound_with_declaration(self) -> None:
         """``{ int x; }`` → ``Compound`` whose body contains a single ``D`` item."""
         assert _parsed_stmt(_LBRACE, _INT, _ident("x"), _SEMICOLON, _RBRACE) == Compound(
-            body=(D(declaration=Declaration(name="x", init=None)),)
+            body=(D(declaration=VarDecl(variable_declaration=VariableDeclaration(name="x", init=None))),)
         )
 
     def test_compound_with_initialised_declaration(self) -> None:
         """``{ int x = 1; }`` → ``Compound`` with a ``D`` whose declaration carries an initialiser."""
         assert _parsed_stmt(_LBRACE, _INT, _ident("x"), _ASSIGNMENT, _number("1"), _SEMICOLON, _RBRACE) == Compound(
-            body=(D(declaration=Declaration(name="x", init=Constant(1))),)
+            body=(D(declaration=VarDecl(variable_declaration=VariableDeclaration(name="x", init=Constant(1)))),)
         )
 
     def test_compound_with_multiple_items(self) -> None:
@@ -1091,7 +1102,7 @@ class TestCompoundStatements:
             _RBRACE,
         ) == Compound(
             body=(
-                D(declaration=Declaration(name="x", init=Constant(1))),
+                D(declaration=VarDecl(variable_declaration=VariableDeclaration(name="x", init=Constant(1)))),
                 S(statement=Return(exp=Var("x"))),
             )
         )
@@ -1394,7 +1405,7 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitDecl(declaration=Declaration(name="i", init=Constant(0))),
+            init=InitDecl(declaration=VarDecl(variable_declaration=VariableDeclaration(name="i", init=Constant(0)))),
             condition=Binary(LessThan(), Var("i"), Constant(10)),
             post=Unary(PostIncrement(), Var("i")),
             body=Return(exp=Constant(0)),
@@ -1464,7 +1475,7 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitDecl(declaration=Declaration(name="i", init=Constant(0))),
+            init=InitDecl(declaration=VarDecl(variable_declaration=VariableDeclaration(name="i", init=Constant(0)))),
             condition=None,
             post=Unary(PostIncrement(), Var("i")),
             body=Null(),
@@ -1488,7 +1499,7 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitDecl(declaration=Declaration(name="i", init=Constant(0))),
+            init=InitDecl(declaration=VarDecl(variable_declaration=VariableDeclaration(name="i", init=Constant(0)))),
             condition=Binary(LessThan(), Var("i"), Constant(10)),
             post=None,
             body=Null(),
@@ -1599,6 +1610,32 @@ class TestForStatements:
             _RBRACE,
         ]
         with pytest.raises(ParseError):
+            parse(tokens)
+
+    def test_for_function_declaration_in_init_raises_parse_error(self) -> None:
+        """``for (int f(void); ; ) {}`` — function declaration in for-init is rejected."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _LPAREN,
+            _INT,
+            _ident("f"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _SEMICOLON,
+            _SEMICOLON,
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="function declarations are not permitted"):
             parse(tokens)
 
 
@@ -1818,3 +1855,189 @@ class TestSwitchStatements:
         ]
         with pytest.raises(ParseError, match="expected COLON"):
             parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Multiple parameters (_parse_params with comma-separated list)
+# ---------------------------------------------------------------------------
+
+
+class TestMultipleParameters:
+    """Parser correctly builds multi-parameter ``Function`` nodes."""
+
+    def test_two_parameters(self) -> None:
+        """``int foo(int a, int b) { return 0; }`` → two ``Parameter`` nodes."""
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ident("a"),
+            _COMMA,
+            _INT,
+            _ident("b"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        assert result.functions[0].params == (
+            Parameter(param_type=IntType(), name="a"),
+            Parameter(param_type=IntType(), name="b"),
+        )
+
+    def test_three_parameters(self) -> None:
+        """``int foo(int a, int b, int c) { return 0; }`` → three ``Parameter`` nodes."""
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ident("a"),
+            _COMMA,
+            _INT,
+            _ident("b"),
+            _COMMA,
+            _INT,
+            _ident("c"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        assert len(result.functions[0].params) == 3
+        assert result.functions[0].params[2] == Parameter(param_type=IntType(), name="c")
+
+    def test_missing_type_in_param_list_raises_parse_error(self) -> None:
+        """``int foo(int a, b)`` — missing type before second parameter raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ident("a"),
+            _COMMA,
+            _ident("b"),
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Function forward declarations (_parse_function_declaration with body=None)
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionForwardDeclarations:
+    """Parser correctly builds forward declaration ``Function`` nodes (``body=None``)."""
+
+    def test_forward_declaration_void_params(self) -> None:
+        """``int foo(void);`` → ``Function(name="foo", params=(), body=None)``."""
+        tokens = [_INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        assert result.functions[0] == Function(name="foo", params=(), body=None)
+
+    def test_forward_declaration_with_params(self) -> None:
+        """``int add(int a, int b);`` → forward declaration with two params and ``body=None``."""
+        tokens = [_INT, _ident("add"), _LPAREN, _INT, _ident("a"), _COMMA, _INT, _ident("b"), _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        fn = result.functions[0]
+        assert fn.name == "add"
+        assert fn.body is None
+        assert fn.params == (Parameter(param_type=IntType(), name="a"), Parameter(param_type=IntType(), name="b"))
+
+    def test_forward_declaration_followed_by_definition(self) -> None:
+        """``int foo(void); int foo(void) { return 0; }`` → two entries in ``Program.functions``."""
+        proto = [_INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        defn = [_INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
+        result = parse(proto + defn)
+        assert len(result.functions) == 2
+        assert result.functions[0].body is None
+        assert result.functions[1].body is not None
+
+    def test_function_declaration_as_block_item(self) -> None:
+        """A forward declaration inside a function body is parsed as a ``FunDecl`` block item."""
+        proto = [_INT, _ident("bar"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        body = _parsed_body(*proto, _RETURN, _number("0"), _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, FunDecl)
+        assert item.declaration.function_declaration.name == "bar"
+        assert item.declaration.function_declaration.body is None
+
+
+# ---------------------------------------------------------------------------
+# Function call expressions (_parse_factor → FunctionCall)
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionCallExpressions:
+    """Parser correctly builds ``FunctionCall`` nodes for function call primaries."""
+
+    def test_call_no_args(self) -> None:
+        """``return foo();`` → ``FunctionCall(name="foo", args=[])``."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN)
+        assert result == FunctionCall(name="foo", args=[])
+
+    def test_call_one_arg(self) -> None:
+        """``return foo(1);`` → ``FunctionCall(name="foo", args=[Constant(1)])``."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _RPAREN)
+        assert result == FunctionCall(name="foo", args=[Constant(1)])
+
+    def test_call_two_args(self) -> None:
+        """``return foo(1, 2);`` → two-element args list."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _COMMA, _number("2"), _RPAREN)
+        assert result == FunctionCall(name="foo", args=[Constant(1), Constant(2)])
+
+    def test_call_three_args(self) -> None:
+        """``return foo(1, 2, 3);`` → three-element args list."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _COMMA, _number("2"), _COMMA, _number("3"), _RPAREN)
+        assert result == FunctionCall(name="foo", args=[Constant(1), Constant(2), Constant(3)])
+
+    def test_call_with_expression_arg(self) -> None:
+        """``return foo(a + 1);`` — binary expression as the sole argument."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _ident("a"), _PLUS, _number("1"), _RPAREN)
+        assert result == FunctionCall(name="foo", args=[Binary(Add(), Var("a"), Constant(1))])
+
+    def test_call_result_used_in_binary(self) -> None:
+        """``return foo() + 1;`` — function call as left operand of addition."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN, _PLUS, _number("1"))
+        assert result == Binary(Add(), FunctionCall(name="foo", args=[]), Constant(1))
+
+    def test_call_with_postfix_increment(self) -> None:
+        """``return foo()++;`` — postfix ``++`` applied to the call result."""
+        result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN, _INCREMENT)
+        assert result == Unary(PostIncrement(), FunctionCall(name="foo", args=[]))
+
+    def test_call_missing_closing_paren_raises_parse_error(self) -> None:
+        """``return foo(1;`` — missing ``)`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _ident("foo"),
+            _LPAREN,
+            _number("1"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected RPAREN"):
+            parse(tokens)
+
+    def test_identifier_followed_by_non_paren_is_var(self) -> None:
+        """``return a;`` — an identifier not followed by ``(`` is a ``Var``, not a call."""
+        result = _parsed_exp(_ident("a"))
+        assert result == Var("a")

@@ -78,6 +78,7 @@ class TokenType(Enum):
     # Conditional Expressions
     QUERY = auto()  # ?
     COLON = auto()  # :
+    COMMA = auto()  # ,
 
 
 @dataclass(frozen=True, slots=True)

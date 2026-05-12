@@ -4,53 +4,55 @@ This package defines the Abstract Syntax Tree (AST) node types produced by the
 parser and consumed by later compiler phases. The hierarchy mirrors the Zephyr
 Abstract Syntax Description Language (ASDL) grammar for the supported subset of C:
 
-    program             = Program(function_definition+)
-    function_definition = Function(type return_type, identifier name,
-                                   parameter* params, block body)
-    parameter           = Parameter(type param_type, identifier name)
-    statement           = Return(exp)
-                        | Expression(exp)
-                        | If(exp condition, statement then, statement? else_)
-                        | Goto(identifier target)
-                        | Label(identifier name, statement)
-                        | Compound(block)
-                        | Break(identifier)
-                        | Continue(identifier)
-                        | While(exp condition, statement body, identifier)
-                        | DoWhile(statement body, exp condition, identifier)
-                        | For(for_init init, exp? condition, exp? post, statement body, identifier)
-                        | Switch(exp control, statement body, identifier)
-                        | Case(exp value, statement body, identifier)
-                        | Default(statement body, identifier)
-                        | Null
-    declaration         = Declaration(identifier name, exp? init)
-    for_init            = InitDecl(declaration) | InitExp(exp?)
-    exp                 = Constant(int)
-                        | Var(identifier)
-                        | Unary(unary_operator, exp)
-                        | Binary(binary_operator, exp, exp)
-                        | Assignment(exp, exp)
-                        | Conditional(exp condition, exp exp_true, exp exp_false)
-    unary_operator      = Complement | Negate | Not
-                        | PreIncrement | PreDecrement
-                        | PostIncrement | PostDecrement
-    binary_operator     = Add | Subtract | Multiply | Divide | Remainder
-                        | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
-                        | And | Or | Equal | NotEqual | LessThan | LessOrEqual
-                        | GreaterThan | GreaterOrEqual
-    type                = IntType
-    block               = Block(block_item*)
-    block_item          = S(statement) | D(declaration)
+    program              = Program(function_declaration*)
+    statement            = Return(exp)
+                         | Expression(exp)
+                         | If(exp condition, statement then, statement? else_)
+                         | Goto(identifier target)
+                         | Label(identifier name, statement)
+                         | Compound(block)
+                         | Break(identifier)
+                         | Continue(identifier)
+                         | While(exp condition, statement body, identifier)
+                         | DoWhile(statement body, exp condition, identifier)
+                         | For(for_init init, exp? condition, exp? post, statement body, identifier)
+                         | Switch(exp control, statement body, identifier)
+                         | Case(exp value, statement body, identifier)
+                         | Default(statement body, identifier)
+                         | Null
+    declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
+    variable_declaration = (identifier name, exp? init)
+    function_declaration = (identifier name, parameter* params, block? body)
+    parameter            = Parameter(type param_type, identifier name)
+    for_init             = InitDecl(declaration) | InitExp(exp?)
+    exp                  = Constant(int)
+                         | Var(identifier)
+                         | Unary(unary_operator, exp)
+                         | Binary(binary_operator, exp, exp)
+                         | Assignment(exp, exp)
+                         | Conditional(exp condition, exp exp_true, exp exp_false)
+                         | FunctionCall(identifier, exp* args)
+    unary_operator       = Complement | Negate | Not
+                         | PreIncrement | PreDecrement
+                         | PostIncrement | PostDecrement
+    binary_operator      = Add | Subtract | Multiply | Divide | Remainder
+                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
+                         | And | Or | Equal | NotEqual | LessThan | LessOrEqual
+                         | GreaterThan | GreaterOrEqual
+    type                 = IntType
+    block                = Block(block_item*)
+    block_item           = S(statement) | D(declaration)
 
 Nodes are organised into submodules by logical role:
 
     types        — C type nodes (Type, IntType)
-    expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment, Conditional)
+    expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment,
+                   Conditional, FunctionCall)
     statements   — Statement nodes (Statement, Return, Expression, If, Null,
                    Goto, Label, Break, Continue, While, DoWhile)
-    declarations — Program structure nodes (Declaration, BlockItem, S, D, Block,
-                   Compound, ForInit, InitDecl, InitExp, For,
-                   Parameter, Function, Program)
+    declarations — Program structure nodes (VariableDeclaration, Declaration,
+                   FunDecl, VarDecl, BlockItem, S, D, Block, Compound, ForInit,
+                   InitDecl, InitExp, For, Parameter, Function, Program)
     operators    — Operators which act upon expressions
                    (Complement, Negate, Not,
                    PreIncrement, PreDecrement, PostIncrement, PostDecrement,
@@ -64,10 +66,10 @@ from ``compiler.syntax.ast`` without knowing which submodule a type lives in::
 
     from compiler.syntax.ast import Program, Function, Return, Constant, IntType
 
-Sum types (``Type``, ``Exp``, ``Statement``, ``BlockItem``, ``ForInit``) are
-abstract base classes; each variant is a concrete frozen dataclass subclassing
-the appropriate base. All nodes are immutable — once constructed an AST node
-cannot be modified.
+Sum types (``Type``, ``Exp``, ``Statement``, ``Declaration``, ``BlockItem``,
+``ForInit``) are abstract base classes; each variant is a concrete frozen
+dataclass subclassing the appropriate base. All nodes are immutable — once
+constructed an AST node cannot be modified.
 """
 
 from compiler.syntax.ast.declarations import (
@@ -79,13 +81,25 @@ from compiler.syntax.ast.declarations import (
     For,
     ForInit,
     Function,
+    FunDecl,
     InitDecl,
     InitExp,
     Parameter,
     Program,
     S,
+    VarDecl,
+    VariableDeclaration,
 )
-from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Constant, Exp, Unary, Var
+from compiler.syntax.ast.expressions import (
+    Assignment,
+    Binary,
+    Conditional,
+    Constant,
+    Exp,
+    FunctionCall,
+    Unary,
+    Var,
+)
 from compiler.syntax.ast.operators import (
     Add,
     And,
@@ -173,7 +187,11 @@ __all__ = [
     "BlockItem",
     "S",
     "D",
+    "VariableDeclaration",
     "Declaration",
+    "FunDecl",
+    "VarDecl",
+    "FunctionCall",
     "Parameter",
     "Function",
     "Program",

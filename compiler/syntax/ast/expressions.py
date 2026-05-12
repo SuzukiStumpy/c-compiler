@@ -98,3 +98,16 @@ class Conditional(Exp):
     condition: Exp
     exp_true: Exp
     exp_false: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionCall(Exp):
+    """A function call within the source code.
+
+    Attributes:
+        name: The name of the function.
+        args: a list of function arguments
+    """
+
+    name: str
+    args: list[Exp]

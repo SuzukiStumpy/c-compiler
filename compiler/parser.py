@@ -3,38 +3,42 @@
 The parser uses recursive descent for all constructs except binary expressions,
 which are handled by precedence climbing.  The grammar is:
 
-    program             ::= function
-    function            ::= "int" identifier "(" "void" ")" block
-    block               ::= "{" {block_item} "}"
-    block_item          ::= statement | declaration
-    declaration         ::= "int" identifier [ "=" exp ] ";"
-    for_init            ::= declaration | exp ";"
-    statement           ::= "return" exp ";"
-                          | exp ";"
-                          | "if" "(" exp ")" statement ["else" statement]
-                          | "goto" identifier ";"
-                          | identifier ":" statement
-                          | block
-                          | "break" ";"
-                          | "continue" ";"
-                          | "while" "(" exp ")" statement
-                          | "do" statement "while" "(" exp ")" ";"
-                          | "for" "(" for_init [exp] ";" [exp] ")" statement
-                          | "switch" "(" exp ")" statement
-                          | "case" int ":" statement
-                          | "default" ":" statement
-                          | ";"
-    exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
-    factor              ::= prefix_unop factor | primary postfix_unop?
-    primary             ::= int | identifier | "(" exp ")"
-    prefix_unop         ::= "-" | "~" | "!" | "++" | "--"
-    postfix_unop        ::= "++" | "--"
-    binop               ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
-                          | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
-    assignop            ::= "+=" | "-=" | "*=" | "/=" | "%="
-                          | "&=" | "|=" | "^=" | "<<=" | ">>="
-    identifier          ::= ? An identifier token ?
-    int                 ::= ? A constant token ?
+    program              ::= {function-declaration}
+    function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+    param-list           ::= "void" | "int" identifier {"," "int" identifier}
+    block                ::= "{" {block_item} "}"
+    block_item           ::= statement | declaration
+    declaration          ::= variable-declaration | function-declaration
+    variable-declaration ::= "int" identifier ["=" exp] ";"
+    for_init             ::= variable-declaration | [exp] ";"
+    statement            ::= "return" exp ";"
+                           | exp ";"
+                           | "if" "(" exp ")" statement ["else" statement]
+                           | "goto" identifier ";"
+                           | identifier ":" statement
+                           | block
+                           | "break" ";"
+                           | "continue" ";"
+                           | "while" "(" exp ")" statement
+                           | "do" statement "while" "(" exp ")" ";"
+                           | "for" "(" for_init [exp] ";" [exp] ")" statement
+                           | "switch" "(" exp ")" statement
+                           | "case" int ":" statement
+                           | "default" ":" statement
+                           | ";"
+    exp                  ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
+    factor               ::= prefix_unop factor | primary postfix_unop?
+    primary              ::= int | identifier | "(" exp ")"
+                           | identifier "(" [argument-list] ")"
+    argument-list        ::= exp {"," exp}
+    prefix_unop          ::= "-" | "~" | "!" | "++" | "--"
+    postfix_unop         ::= "++" | "--"
+    binop                ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
+                           | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
+    assignop             ::= "+=" | "-=" | "*=" | "/=" | "%="
+                           | "&=" | "|=" | "^=" | "<<=" | ">>="
+    identifier           ::= ? An identifier token ?
+    int                  ::= ? A constant token ?
 
 Each grammar rule (except ``exp``) maps directly to a private ``_parse_*``
 method on ``Parser``.  ``_parse_exp`` implements precedence climbing so that
@@ -75,6 +79,8 @@ from compiler.syntax.ast import (
     For,
     ForInit,
     Function,
+    FunctionCall,
+    FunDecl,
     Goto,
     GreaterOrEqual,
     GreaterThan,
@@ -109,6 +115,8 @@ from compiler.syntax.ast import (
     Unary,
     UnaryOperator,
     Var,
+    VarDecl,
+    VariableDeclaration,
     While,
 )
 from compiler.types.tokens import Token, TokenType
@@ -392,68 +400,69 @@ class Parser:
     def parse_program(self) -> Program:
         """Parse the full token stream as a translation unit.
 
-        Expects one or more function definitions followed by end of input.
+        Expects one or more function declarations or definitions followed by
+        end of input.
 
         Returns:
-            A ``Program`` node containing all parsed function definitions.
+            A ``Program`` node containing all parsed function declarations.
 
         Raises:
-            ParseError: If no function definitions are found, or if any
-                function definition is malformed.
+            ParseError: If no function declarations are found, or if any
+                declaration is malformed.
         """
         functions: list[Function] = []
         while not self._at_end():
-            functions.append(self._parse_function())
+            functions.append(self._parse_function_declaration())
         if not functions:
             raise self._eof_error("expected a function definition, got empty input")
         return Program(functions=tuple(functions))
 
-    def _parse_function(self) -> Function:
-        """Parse a single function definition.
+    def _parse_function_declaration(self) -> Function:
+        """Parse a single top-level function declaration or definition.
 
         Grammar::
 
-            function_definition = Function(type return_type, identifier name,
-                                           parameter* params, block body)
+            function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+
+        A trailing ``;`` produces a forward declaration (``body=None``); a
+        ``{`` block produces a full definition.
 
         Returns:
-            A ``Function`` node.
+            A ``Function`` node with ``body=None`` for a forward declaration
+            or a ``Block`` for a full definition.
 
         Raises:
-            ParseError: If any part of the function definition is malformed.
+            ParseError: If any part of the declaration is malformed.
         """
-        return_type = self._parse_type()
+        self._parse_type()
         name_token = self._expect(TokenType.IDENTIFIER)
         self._expect(TokenType.LPAREN)
         params = self._parse_params()
         self._expect(TokenType.RPAREN)
+        if self._match(TokenType.SEMICOLON):
+            self._consume()
+            return Function(name=name_token.value, params=params, body=None)
         body = self._parse_block()
-        return Function(
-            return_type=return_type,
-            name=name_token.value,
-            params=params,
-            body=body,
-        )
+        return Function(name=name_token.value, params=params, body=body)
 
     def _parse_params(self) -> tuple[Parameter, ...]:
-        """Parse the parameter list between the parentheses of a function definition.
+        """Parse the parameter list between the parentheses of a function declaration.
+
+        Grammar::
+
+            param-list ::= "void" | "int" identifier {"," "int" identifier}
 
         Handles three forms:
 
         * ``()`` — empty parameter list.
         * ``(void)`` — explicit "no parameters" marker; treated as empty.
-        * ``(type identifier)`` — a single typed parameter.
-
-        Multiple parameters are not currently supported (no ``COMMA`` token
-        exists in the grammar). If more than one parameter appears, the
-        ``_expect(RPAREN)`` call in ``_parse_function`` will raise a
-        ``ParseError``.
+        * ``("int" identifier {"," "int" identifier})`` — one or more typed parameters.
 
         Returns:
-            A tuple of zero or one ``Parameter`` nodes.
+            A tuple of zero or more ``Parameter`` nodes.
 
         Raises:
-            ParseError: If the parameter type is unrecognised.
+            ParseError: If any parameter type or identifier is missing or malformed.
         """
         token = self._peek()
         if token is None or token.type == TokenType.RPAREN:
@@ -461,8 +470,11 @@ class Parser:
         if token.type == TokenType.VOID:
             self._consume()
             return ()
-        param = self._parse_param()
-        return (param,)
+        params: list[Parameter] = [self._parse_param()]
+        while self._match(TokenType.COMMA):
+            self._consume()
+            params.append(self._parse_param())
+        return tuple(params)
 
     def _parse_param(self) -> Parameter:
         """Parse a single ``type identifier`` parameter declaration.
@@ -509,8 +521,8 @@ class Parser:
         everything else is treated as a statement.
 
         Returns:
-            A ``D`` node wrapping a ``Declaration``, or an ``S`` node wrapping
-            a ``Statement``.
+            A ``D`` node wrapping a ``VarDecl`` or ``FunDecl``, or an ``S``
+            node wrapping a ``Statement``.
 
         Raises:
             ParseError: If the item is malformed.
@@ -521,27 +533,44 @@ class Parser:
         return S(statement=self._parse_statement())
 
     def _parse_declaration(self) -> Declaration:
-        """Parse a variable declaration, with an optional initialiser.
+        """Parse a variable or function declaration.
 
         Grammar::
 
-            declaration ::= "int" identifier [ "=" exp ] ";"
+            declaration          ::= variable-declaration | function-declaration
+            variable-declaration ::= "int" identifier ["=" exp] ";"
+            function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+
+        Dispatches after consuming the type keyword and identifier: if the
+        next token is ``(`` the item is a function declaration (returning a
+        ``FunDecl``); otherwise it is a variable declaration (returning a
+        ``VarDecl``).
 
         Returns:
-            A ``Declaration`` node.
+            A ``VarDecl`` or ``FunDecl`` node.
 
         Raises:
-            ParseError: If the identifier or semicolon is missing, or if the
+            ParseError: If the identifier or terminator is missing, or if the
                 initialiser expression is malformed.
         """
         self._expect(TokenType.INT)
         name_token = self._expect(TokenType.IDENTIFIER)
+        if self._match(TokenType.LPAREN):
+            self._consume()
+            params = self._parse_params()
+            self._expect(TokenType.RPAREN)
+            if self._match(TokenType.SEMICOLON):
+                self._consume()
+                body: Block | None = None
+            else:
+                body = self._parse_block()
+            return FunDecl(function_declaration=Function(name=name_token.value, params=params, body=body))
         init: Exp | None = None
         if self._match(TokenType.ASSIGNMENT):
             self._consume()
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
-        return Declaration(name=name_token.value, init=init)
+        return VarDecl(variable_declaration=VariableDeclaration(name=name_token.value, init=init))
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
         """Parse an optional expression and consume its terminating token.
@@ -569,29 +598,64 @@ class Parser:
         self._expect(terminator)
         return exp
 
+    def _parse_variable_declaration(self) -> VarDecl:
+        """Parse a variable declaration with an optional initialiser.
+
+        Grammar::
+
+            variable-declaration ::= "int" identifier ["=" exp] ";"
+
+        Raises ``ParseError`` immediately if the identifier is followed by
+        ``(``, since function declarations are not valid in contexts that
+        require a variable declaration (e.g. a ``for``-loop initialiser).
+
+        Returns:
+            A ``VarDecl`` node.
+
+        Raises:
+            ParseError: If a function declaration is attempted, if the
+                identifier or semicolon is missing, or if the initialiser
+                expression is malformed.
+        """
+        self._expect(TokenType.INT)
+        name_token = self._expect(TokenType.IDENTIFIER)
+        if self._match(TokenType.LPAREN):
+            raise self._token_error(
+                "function declarations are not permitted in for-loop initialisers",
+                name_token,
+            )
+        init: Exp | None = None
+        if self._match(TokenType.ASSIGNMENT):
+            self._consume()
+            init = self._parse_exp()
+        self._expect(TokenType.SEMICOLON)
+        return VarDecl(variable_declaration=VariableDeclaration(name=name_token.value, init=init))
+
     def _parse_for_init(self) -> ForInit:
         """Parse the initialiser clause of a ``for`` loop.
 
         Grammar::
 
-            for_init ::= declaration | [exp] ";"
+            for_init ::= variable-declaration | [exp] ";"
 
-        Dispatches on the next token: an ``int`` keyword begins a full variable
-        declaration (which already consumes its own trailing semicolon);
-        anything else delegates to ``_parse_optional_exp`` to handle an
+        Dispatches on the next token: an ``int`` keyword begins a variable
+        declaration (which consumes its own trailing semicolon); function
+        declarations are rejected immediately by ``_parse_variable_declaration``;
+        anything else delegates to ``_parse_optional_exp`` for an
         expression-or-empty clause followed by ``;``.
 
         Returns:
-            An ``InitDecl`` node wrapping the parsed declaration, or an
+            An ``InitDecl`` node wrapping the parsed ``VarDecl``, or an
             ``InitExp`` node whose ``exp`` field is ``None`` when the clause
             is absent.
 
         Raises:
-            ParseError: If the optional expression is malformed, or if the
-                trailing ``;`` is missing.
+            ParseError: If the initialiser is a function declaration, if the
+                optional expression is malformed, or if the trailing ``;`` is
+                missing.
         """
         if self._match(TokenType.INT):
-            return InitDecl(self._parse_declaration())
+            return InitDecl(self._parse_variable_declaration())
         return InitExp(self._parse_optional_exp(TokenType.SEMICOLON))
 
     def _parse_statement(self) -> Statement:
@@ -864,15 +928,17 @@ class Parser:
 
         Prefix unary operators (``-``, ``~``, ``!``, ``++``, ``--``) are parsed
         recursively and returned immediately. Primary expressions (constants,
-        identifiers, parenthesised expressions) are then checked for a trailing
-        postfix ``++`` or ``--`` before returning.
+        identifiers, function calls, parenthesised expressions) are then
+        checked for a trailing postfix ``++`` or ``--`` before returning.
 
         Grammar::
 
-            factor   ::= prefix_unop factor | primary postfix_unop?
-            primary  ::= int | identifier | "(" exp ")"
-            prefix_unop  ::= "-" | "~" | "!" | "++" | "--"
-            postfix_unop ::= "++" | "--"
+            factor        ::= prefix_unop factor | primary postfix_unop?
+            primary       ::= int | identifier | "(" exp ")"
+                            | identifier "(" [argument-list] ")"
+            argument-list ::= exp {"," exp}
+            prefix_unop   ::= "-" | "~" | "!" | "++" | "--"
+            postfix_unop  ::= "++" | "--"
 
         Returns:
             An ``Exp`` node.
@@ -892,7 +958,10 @@ class Parser:
                 primary: Exp = self._parse_constant()
             case TokenType.IDENTIFIER:
                 self._consume()
-                primary = Var(name=token.value)
+                if self._match(TokenType.LPAREN):
+                    primary = self._parse_function_call(token.value)
+                else:
+                    primary = Var(name=token.value)
             case TokenType.LPAREN:
                 self._consume()
                 primary = self._parse_exp()
@@ -909,6 +978,37 @@ class Parser:
                 primary = Unary(PostDecrement(), primary)
             else:
                 return primary
+
+    def _parse_function_call(self, name: str) -> FunctionCall:
+        """Parse a function call expression after the identifier has been consumed.
+
+        Grammar::
+
+            identifier "(" [argument-list] ")"
+            argument-list ::= exp {"," exp}
+
+        Consumes the opening ``(``, parses zero or more comma-separated
+        argument expressions, and consumes the closing ``)``.
+
+        Args:
+            name: The function name, already consumed by the caller.
+
+        Returns:
+            A ``FunctionCall`` node.
+
+        Raises:
+            ParseError: If any argument expression is malformed or the closing
+                ``)`` is absent.
+        """
+        self._consume()  # consume "("
+        args: list[Exp] = []
+        if not self._match(TokenType.RPAREN):
+            args.append(self._parse_exp())
+            while self._match(TokenType.COMMA):
+                self._consume()
+                args.append(self._parse_exp())
+        self._expect(TokenType.RPAREN)
+        return FunctionCall(name=name, args=args)
 
     def _parse_constant(self) -> Constant:
         """Parse an integer constant expression.

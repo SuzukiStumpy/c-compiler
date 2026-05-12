@@ -31,6 +31,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LBRACE", r"\{"),
     ("RBRACE", r"}"),
     ("SEMICOLON", r";"),
+    ("COMMA", r","),
     # Multi-char tokens containing '=' must precede the single '=' ASSIGNMENT token
     ("PLUS_ASSIGN", r"\+="),
     ("MINUS_ASSIGN", r"-="),

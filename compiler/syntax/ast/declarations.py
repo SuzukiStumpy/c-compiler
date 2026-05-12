@@ -1,11 +1,11 @@
 """Program structure nodes for the AST.
 
-Defines the top-level constructs of a C translation unit: ``Declaration``,
-the ``BlockItem`` sum type (``S`` and ``D``) that composes statements and
-declarations into a block, the ``Block`` type alias, the ``Compound``
-statement node, the ``ForInit`` sum type (``InitDecl`` and ``InitExp``) for
-``for``-loop initialisers, the ``For`` statement node, and the ``Parameter``,
-``Function``, and ``Program`` nodes.
+Defines the top-level constructs of a C translation unit: the ``VariableDeclaration``
+node, the ``Declaration`` sum type (``FunDecl`` and ``VarDecl``), the ``BlockItem``
+sum type (``S`` and ``D``) that composes statements and declarations into a block,
+the ``Block`` type alias, the ``Compound`` statement node, the ``ForInit`` sum type
+(``InitDecl`` and ``InitExp``) for ``for``-loop initialisers, the ``For`` statement
+node, and the ``Parameter``, ``Function``, and ``Program`` nodes.
 """
 
 from abc import ABC
@@ -17,7 +17,7 @@ from compiler.syntax.ast.types import Type
 
 
 @dataclass(frozen=True, slots=True)
-class Declaration:
+class VariableDeclaration:
     """A variable declaration, optionally with an initialiser.
 
     Attributes:
@@ -28,6 +28,15 @@ class Declaration:
 
     name: str
     init: Exp | None
+
+
+class Declaration(ABC):
+    """Abstract base for declaration nodes.
+
+    A declaration is either a variable declaration (``VarDecl``) or a function
+    declaration (``FunDecl``). Consumers should use structural pattern matching
+    (``match``/``case``) to dispatch on the concrete variant.
+    """
 
 
 class BlockItem(ABC):
@@ -56,7 +65,7 @@ class D(BlockItem):
     """A declaration wrapped as a block item.
 
     Attributes:
-        declaration: The declaration node.
+        declaration: The declaration node — either a ``FunDecl`` or a ``VarDecl``.
     """
 
     declaration: Declaration
@@ -93,36 +102,60 @@ class Parameter:
 
 @dataclass(frozen=True, slots=True)
 class Function:
-    """A function definition.
+    """A function declaration or definition.
 
-    Represents a complete C function including its return type, name, parameter
-    list, and body.
+    Represents a C function including its name, parameter list, and optional
+    body. When ``body`` is ``None`` the node represents a forward declaration
+    (prototype); when ``body`` is a ``Block`` the node is a full definition.
 
     Attributes:
-        return_type: The declared return type of the function.
         name: The function name as it appears in the source.
         params: The ordered sequence of parameters. Empty for functions declared
-            with ``void`` in the parameter list.
-        body: The block comprising the function body. May be empty.
+            with ``void`` or ``()`` in the parameter list.
+        body: The block comprising the function body, or ``None`` for a forward
+            declaration.
     """
 
-    return_type: Type
     name: str
     params: tuple[Parameter, ...]
-    body: Block
+    body: Block | None
+
+
+@dataclass(frozen=True, slots=True)
+class FunDecl(Declaration):
+    """A function declaration wrapped as a declaration node.
+
+    Used when a function declaration appears as a block item (``D``).
+
+    Attributes:
+        function_declaration: The underlying ``Function`` node.
+    """
+
+    function_declaration: Function
+
+
+@dataclass(frozen=True, slots=True)
+class VarDecl(Declaration):
+    """A variable declaration wrapped as a declaration node.
+
+    Used when a variable declaration appears as a block item (``D``).
+
+    Attributes:
+        variable_declaration: The underlying ``VariableDeclaration`` node.
+    """
+
+    variable_declaration: VariableDeclaration
 
 
 @dataclass(frozen=True, slots=True)
 class Program:
     """The root AST node representing a complete translation unit.
 
-    A translation unit consists of one or more top-level function definitions.
-    In the current minimal grammar only a single ``main`` function is valid, but
-    the node holds a sequence of functions in anticipation of future language
-    support (multiple functions, forward declarations, etc.).
+    A translation unit consists of one or more top-level function declarations
+    or definitions.
 
     Attributes:
-        functions: The ordered sequence of top-level function definitions.
+        functions: The ordered sequence of top-level function declarations.
             At least one function is required by the grammar.
     """
 
@@ -145,6 +178,8 @@ class InitDecl(ForInit):
 
     Attributes:
         declaration: The variable declaration that initialises the loop.
+            Always a ``VarDecl``; the parser rejects function declarations
+            in this position.
     """
 
     declaration: Declaration
