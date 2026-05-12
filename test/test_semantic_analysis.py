@@ -1305,3 +1305,368 @@ class TestLoopIdentifiers:
         )
         with pytest.raises(SemanticError, match="not within a loop"):
             resolve(_program(body))
+
+
+# ---------------------------------------------------------------------------
+# Switch identifier assignment
+# ---------------------------------------------------------------------------
+
+
+class TestSwitchIdentifiers:
+    """Switch constructs are assigned unique identifiers; Case/Default/Break are tagged correctly."""
+
+    # ------------------------------------------------------------------
+    # Identifier format and counter
+    # ------------------------------------------------------------------
+
+    def test_switch_identifier_uses_switch_prefix(self) -> None:
+        """A resolved ``Switch`` node carries an identifier beginning with ``.L.switch.``."""
+        body = (ast.S(statement=ast.Switch(control=ast.Constant(value=1), body=ast.Null())),)
+        resolved = _resolved_body(body)
+        switch = resolved[0].statement
+        assert isinstance(switch, ast.Switch)
+        assert switch.identifier.startswith(".L.switch.")
+
+    def test_switch_counter_independent_of_variable_counter(self) -> None:
+        """The first switch's identifier ends in ``.0`` regardless of how many variables were declared first."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="a", init=None)),
+            ast.D(declaration=ast.Declaration(name="b", init=None)),
+            ast.S(statement=ast.Switch(control=ast.Constant(value=1), body=ast.Null())),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[2].statement
+        assert isinstance(switch, ast.Switch)
+        assert switch.identifier == ".L.switch.0"
+
+    def test_sequential_switches_receive_distinct_identifiers(self) -> None:
+        """Two consecutive ``Switch`` statements each receive a distinct identifier."""
+        body = (
+            ast.S(statement=ast.Switch(control=ast.Constant(value=1), body=ast.Null())),
+            ast.S(statement=ast.Switch(control=ast.Constant(value=2), body=ast.Null())),
+        )
+        resolved = _resolved_body(body)
+        first = resolved[0].statement
+        second = resolved[1].statement
+        assert isinstance(first, ast.Switch)
+        assert isinstance(second, ast.Switch)
+        assert first.identifier != second.identifier
+
+    def test_nested_switches_receive_distinct_identifiers(self) -> None:
+        """An inner ``Switch`` and its enclosing outer ``Switch`` receive different identifiers."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Switch(control=ast.Constant(value=2), body=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer = resolved[0].statement
+        assert isinstance(outer, ast.Switch)
+        inner = outer.body
+        assert isinstance(inner, ast.Switch)
+        assert outer.identifier != inner.identifier
+
+    # ------------------------------------------------------------------
+    # Case and Default identifier assignment
+    # ------------------------------------------------------------------
+
+    def test_case_identifier_matches_enclosing_switch(self) -> None:
+        """A resolved ``Case`` carries the identifier of its enclosing ``Switch``."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(value=ast.Constant(value=1), statement=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[0].statement
+        assert isinstance(switch, ast.Switch)
+        case_ = switch.body
+        assert isinstance(case_, ast.Case)
+        assert case_.identifier == switch.identifier
+
+    def test_default_identifier_matches_enclosing_switch(self) -> None:
+        """A resolved ``Default`` carries the identifier of its enclosing ``Switch``."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Default(statement=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[0].statement
+        assert isinstance(switch, ast.Switch)
+        default_ = switch.body
+        assert isinstance(default_, ast.Default)
+        assert default_.identifier == switch.identifier
+
+    def test_case_in_inner_switch_gets_inner_switch_identifier(self) -> None:
+        """A ``Case`` nested inside an inner ``Switch`` is tagged with the inner switch's id, not the outer's."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Switch(
+                        control=ast.Constant(value=2),
+                        body=ast.Case(value=ast.Constant(value=2), statement=ast.Null()),
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        outer = resolved[0].statement
+        assert isinstance(outer, ast.Switch)
+        inner = outer.body
+        assert isinstance(inner, ast.Switch)
+        case_ = inner.body
+        assert isinstance(case_, ast.Case)
+        assert case_.identifier == inner.identifier
+        assert case_.identifier != outer.identifier
+
+    def test_case_and_default_in_compound_body_both_tagged(self) -> None:
+        """Both ``Case`` and ``Default`` inside a compound switch body carry the switch's identifier."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(statement=ast.Case(value=ast.Constant(value=1), statement=ast.Null())),
+                            ast.S(statement=ast.Default(statement=ast.Null())),
+                        )
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[0].statement
+        assert isinstance(switch, ast.Switch)
+        compound = switch.body
+        assert isinstance(compound, ast.Compound)
+        case_ = compound.body[0].statement
+        default_ = compound.body[1].statement
+        assert isinstance(case_, ast.Case)
+        assert isinstance(default_, ast.Default)
+        assert case_.identifier == switch.identifier
+        assert default_.identifier == switch.identifier
+
+    # ------------------------------------------------------------------
+    # Break tagging
+    # ------------------------------------------------------------------
+
+    def test_break_inside_switch_tagged_with_switch_identifier(self) -> None:
+        """A ``Break`` directly inside a ``Switch`` body is tagged with the switch's identifier."""
+        body = (ast.S(statement=ast.Switch(control=ast.Constant(value=1), body=ast.Break())),)
+        resolved = _resolved_body(body)
+        switch = resolved[0].statement
+        assert isinstance(switch, ast.Switch)
+        assert switch.body == ast.Break(switch.identifier)
+
+    def test_break_inside_switch_inside_loop_targets_switch_not_loop(self) -> None:
+        """When a switch is nested inside a loop, ``break`` exits the switch, not the loop."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.Switch(control=ast.Constant(value=1), body=ast.Break()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        switch = loop.body
+        assert isinstance(switch, ast.Switch)
+        assert switch.body == ast.Break(switch.identifier)
+        assert switch.body != ast.Break(loop.identifier)
+
+    def test_break_after_switch_inside_loop_targets_loop(self) -> None:
+        """After the inner switch closes, a ``Break`` in the outer loop body targets the loop."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.Compound(
+                        body=(
+                            ast.S(statement=ast.Switch(control=ast.Constant(value=1), body=ast.Null())),
+                            ast.S(statement=ast.Break()),
+                        )
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        compound = loop.body
+        assert isinstance(compound, ast.Compound)
+        break_stmt = compound.body[1].statement
+        assert isinstance(break_stmt, ast.Break)
+        assert break_stmt.identifier == loop.identifier
+
+    # ------------------------------------------------------------------
+    # Continue inside switch
+    # ------------------------------------------------------------------
+
+    def test_continue_inside_switch_but_outside_loop_raises(self) -> None:
+        """A ``Continue`` inside a bare switch (no enclosing loop) raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Switch(control=ast.Constant(value=1), body=ast.Continue())),)
+        with pytest.raises(SemanticError, match="not within a loop"):
+            resolve(_program(body))
+
+    def test_continue_inside_switch_inside_loop_targets_loop(self) -> None:
+        """A ``Continue`` inside a switch that is itself inside a loop targets the enclosing loop."""
+        body = (
+            ast.S(
+                statement=ast.While(
+                    condition=ast.Constant(value=1),
+                    body=ast.Switch(control=ast.Constant(value=1), body=ast.Continue()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        loop = resolved[0].statement
+        assert isinstance(loop, ast.While)
+        switch = loop.body
+        assert isinstance(switch, ast.Switch)
+        assert switch.body == ast.Continue(loop.identifier)
+        assert switch.body != ast.Continue(switch.identifier)
+
+    # ------------------------------------------------------------------
+    # Variable resolution inside switch constructs
+    # ------------------------------------------------------------------
+
+    def test_switch_control_expression_variable_is_resolved(self) -> None:
+        """A variable reference in the switch control expression is renamed to its unique identifier."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(statement=ast.Switch(control=ast.Var(name="x"), body=ast.Null())),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[1].statement
+        assert isinstance(switch, ast.Switch)
+        assert switch.control == ast.Var(name=".Vx.0")
+
+    def test_case_value_variable_is_resolved(self) -> None:
+        """A variable reference in a ``Case`` value expression is renamed to its unique identifier."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(value=ast.Var(name="x"), statement=ast.Null()),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[1].statement
+        assert isinstance(switch, ast.Switch)
+        case_ = switch.body
+        assert isinstance(case_, ast.Case)
+        assert case_.value == ast.Var(name=".Vx.0")
+
+    def test_case_governed_statement_variable_is_resolved(self) -> None:
+        """A variable reference in the statement governed by a ``Case`` is renamed."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(
+                        value=ast.Constant(value=1),
+                        statement=ast.Return(exp=ast.Var(name="x")),
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[1].statement
+        assert isinstance(switch, ast.Switch)
+        case_ = switch.body
+        assert isinstance(case_, ast.Case)
+        assert case_.statement == ast.Return(exp=ast.Var(name=".Vx.0"))
+
+    def test_default_governed_statement_variable_is_resolved(self) -> None:
+        """A variable reference in the statement governed by a ``Default`` is renamed."""
+        body = (
+            ast.D(declaration=ast.Declaration(name="x", init=None)),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Default(statement=ast.Return(exp=ast.Var(name="x"))),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        switch = resolved[1].statement
+        assert isinstance(switch, ast.Switch)
+        default_ = switch.body
+        assert isinstance(default_, ast.Default)
+        assert default_.statement == ast.Return(exp=ast.Var(name=".Vx.0"))
+
+    # ------------------------------------------------------------------
+    # Goto label collection inside switch bodies
+    # ------------------------------------------------------------------
+
+    def test_label_inside_switch_body_reachable_by_goto(self) -> None:
+        """A ``goto`` label nested inside a switch body is collected in the first pass and is a valid target."""
+        body = (
+            ast.S(statement=ast.Goto(target="lbl")),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(
+                        value=ast.Constant(value=1),
+                        statement=ast.Label(name="lbl", statement=ast.Null()),
+                    ),
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+        assert resolved[0] == ast.S(statement=ast.Goto(target="lbl"))
+
+    def test_duplicate_label_inside_switch_raises(self) -> None:
+        """A label appearing twice within a switch body raises ``SemanticError``."""
+        body = (
+            ast.S(statement=ast.Label(name="lbl", statement=ast.Null())),
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=1),
+                    body=ast.Case(
+                        value=ast.Constant(value=1),
+                        statement=ast.Label(name="lbl", statement=ast.Null()),
+                    ),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="Duplicate label"):
+            resolve(_program(body))
+
+    # ------------------------------------------------------------------
+    # Error cases
+    # ------------------------------------------------------------------
+
+    def test_break_outside_loop_or_switch_raises(self) -> None:
+        """A ``Break`` at function scope (not inside any loop or switch) raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Break()),)
+        with pytest.raises(SemanticError, match="not within a loop or switch"):
+            resolve(_program(body))
+
+    def test_case_outside_switch_raises(self) -> None:
+        """A ``Case`` appearing outside any enclosing ``Switch`` raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Case(value=ast.Constant(value=1), statement=ast.Null())),)
+        with pytest.raises(SemanticError, match="not within a switch"):
+            resolve(_program(body))
+
+    def test_default_outside_switch_raises(self) -> None:
+        """A ``Default`` appearing outside any enclosing ``Switch`` raises ``SemanticError``."""
+        body = (ast.S(statement=ast.Default(statement=ast.Null())),)
+        with pytest.raises(SemanticError, match="not within a switch"):
+            resolve(_program(body))

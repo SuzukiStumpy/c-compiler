@@ -66,13 +66,19 @@ class SemanticAnalyser:
         _label_set: Set of all label names declared in the function currently
             being analysed.  Populated by a first pass before resolution begins
             so that forward ``goto`` targets can be validated.
-        _loop_stack: Stack of loop identifiers for the loops currently
-            enclosing the statement being resolved.  The top of the stack
-            is the identifier of the immediately enclosing loop and is
-            attached to any ``Break`` or ``Continue`` encountered during
-            resolution.  An empty stack indicates that the current statement
-            is not within any loop; a ``Break`` or ``Continue`` in that
-            context is a semantic error.
+        _loop_stack: Stack of identifiers for the loops currently enclosing the
+            statement being resolved.  Used exclusively by ``Continue``:
+            ``continue`` is only valid inside a loop, never a bare switch.
+        _break_stack: Stack of identifiers for the loops *and* switches
+            currently enclosing the statement being resolved.  The top entry is
+            the target for any ``Break`` encountered.  An empty stack indicates
+            that ``break`` would be invalid at the current position.
+        _switch_stack: Stack of identifiers for the switches currently
+            enclosing the statement being resolved.  The top entry is the
+            enclosing switch identifier, which is attached to every ``Case``
+            and ``Default`` encountered during resolution.  An empty stack
+            indicates that ``case``/``default`` appear outside any switch,
+            which is a semantic error.
     """
 
     def __init__(self) -> None:
@@ -82,6 +88,8 @@ class SemanticAnalyser:
         self._variable_map: dict[str, VariableBinding] = {}
         self._label_set: set[str] = set()
         self._loop_stack: list[str] = []
+        self._break_stack: list[str] = []
+        self._switch_stack: list[str] = []
 
     def _make_unique(self, name: str) -> str:
         """Generate a unique internal name for a source-level variable.
@@ -150,6 +158,10 @@ class SemanticAnalyser:
                 self._collect_labels_in_statement(loop_body)
             case ast.For(body=loop_body):
                 self._collect_labels_in_statement(loop_body)
+            case ast.Switch(body=switch_body):
+                self._collect_labels_in_statement(switch_body)
+            case ast.Case(statement=inner_stmt) | ast.Default(statement=inner_stmt):
+                self._collect_labels_in_statement(inner_stmt)
             case _:
                 pass
 
@@ -300,27 +312,37 @@ class SemanticAnalyser:
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
-    def _resolve_statement(self, statement: ast.Statement) -> ast.Statement:
+    def _resolve_statement(self, statement: ast.Statement) -> ast.Statement:  # noqa: C901 - ignore complexity warning
         """Resolve all variable references within a statement and assign loop identifiers.
 
         Recursively resolves any expressions contained in the statement,
         returning a new statement node with all ``ast.Var`` references rewritten
-        to their unique internal names.  Additionally, each loop construct
-        (``While``, ``DoWhile``, ``For``) is assigned a fresh unique identifier
-        via ``_make_loop_label``, and every ``Break`` or ``Continue`` encountered
-        within the loop body is tagged with that same identifier.
+        to their unique internal names.  Additionally:
+
+        * Each loop construct (``While``, ``DoWhile``, ``For``) is assigned a
+          fresh unique identifier via ``_make_loop_label`` and pushes that
+          identifier onto both ``_loop_stack`` and ``_break_stack``.
+        * Each ``Switch`` is assigned a fresh identifier and pushes it onto
+          ``_break_stack`` and ``_switch_stack``.
+        * ``Break`` is tagged with the top of ``_break_stack`` (the nearest
+          enclosing loop or switch).
+        * ``Continue`` is tagged with the top of ``_loop_stack`` (the nearest
+          enclosing loop; a bare switch does not satisfy ``continue``).
+        * ``Case`` and ``Default`` are tagged with the top of ``_switch_stack``
+          (the identifier of their enclosing switch).
 
         Args:
             statement: The statement node to resolve.
 
         Returns:
             A new statement node with all variable references resolved and all
-            loop-control statements tagged with their enclosing loop's identifier.
+            control-flow statements tagged with their enclosing construct's identifier.
 
         Raises:
-            SemanticError: If any expression within the statement contains an
-                undeclared variable or an invalid lvalue, or if a ``Break`` or
-                ``Continue`` appears outside any enclosing loop.
+            SemanticError: If any expression contains an undeclared variable or
+                an invalid lvalue; if ``Break`` appears outside a loop or switch;
+                if ``Continue`` appears outside a loop; or if ``Case``/``Default``
+                appear outside a switch.
         """
         match statement:
             case ast.Compound(body=block):
@@ -332,9 +354,9 @@ class SemanticAnalyser:
             case ast.Null():
                 return statement
             case ast.Break():
-                if not self._loop_stack:
-                    raise SemanticError("'break' statement not within a loop.")
-                return ast.Break(self._loop_stack[-1])
+                if not self._break_stack:
+                    raise SemanticError("'break' statement not within a loop or switch.")
+                return ast.Break(self._break_stack[-1])
             case ast.Continue():
                 if not self._loop_stack:
                     raise SemanticError("'continue' statement not within a loop.")
@@ -348,26 +370,48 @@ class SemanticAnalyser:
             case ast.While(condition=condition, body=body):
                 label = self._make_loop_label("while")
                 self._loop_stack.append(label)
+                self._break_stack.append(label)
                 result = ast.While(self.resolve_exp(condition), self._resolve_statement(body), label)
                 self._loop_stack.pop()
+                self._break_stack.pop()
                 return result
             case ast.DoWhile(body=body, condition=condition):
                 label = self._make_loop_label("do")
                 self._loop_stack.append(label)
+                self._break_stack.append(label)
                 result = ast.DoWhile(self._resolve_statement(body), self.resolve_exp(condition), label)
                 self._loop_stack.pop()
+                self._break_stack.pop()
                 return result
             case ast.For(init=init, condition=condition, post=post, body=body):
                 saved_variable_map = self._enter_scope()
                 label = self._make_loop_label("for")
                 self._loop_stack.append(label)
+                self._break_stack.append(label)
                 init = self._resolve_for_init(init)
                 condition = self._resolve_optional_exp(condition)
                 post = self._resolve_optional_exp(post)
                 body = self._resolve_statement(body)
                 self._loop_stack.pop()
+                self._break_stack.pop()
                 self._variable_map = saved_variable_map
                 return ast.For(init, condition, post, body, label)
+            case ast.Switch(control=control, body=body):
+                label = self._make_loop_label("switch")
+                self._break_stack.append(label)
+                self._switch_stack.append(label)
+                result = ast.Switch(self.resolve_exp(control), self._resolve_statement(body), label)
+                self._break_stack.pop()
+                self._switch_stack.pop()
+                return result
+            case ast.Case(value=value, statement=inner):
+                if not self._switch_stack:
+                    raise SemanticError("'case' label not within a switch statement.")
+                return ast.Case(self.resolve_exp(value), self._resolve_statement(inner), self._switch_stack[-1])
+            case ast.Default(statement=inner):
+                if not self._switch_stack:
+                    raise SemanticError("'default' label not within a switch statement.")
+                return ast.Default(self._resolve_statement(inner), self._switch_stack[-1])
             case ast.Goto(target=target):
                 if target not in self._label_set:
                     raise SemanticError(f"goto targets undefined label '{target}'.")
@@ -468,6 +512,8 @@ class SemanticAnalyser:
         self._variable_map = {}
         self._label_set = set()
         self._loop_stack = []
+        self._break_stack = []
+        self._switch_stack = []
         self._collect_labels(function.body)
         return ast.Function(
             return_type=function.return_type,
