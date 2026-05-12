@@ -19,6 +19,9 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("FOR", r"for\b"),
     ("BREAK", r"break\b"),
     ("CONTINUE", r"continue\b"),
+    ("SWITCH", r"switch\b"),
+    ("CASE", r"case\b"),
+    ("DEFAULT", r"default\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("NUMBER", r"\d+\b"),

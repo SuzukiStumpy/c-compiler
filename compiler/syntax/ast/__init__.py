@@ -19,6 +19,9 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                         | While(exp condition, statement body, identifier)
                         | DoWhile(statement body, exp condition, identifier)
                         | For(for_init init, exp? condition, exp? post, statement body, identifier)
+                        | Switch(exp control, statement body, identifier)
+                        | Case(exp value, statement body, identifier)
+                        | Default(statement body, identifier)
                         | Null
     declaration         = Declaration(identifier name, exp? init)
     for_init            = InitDecl(declaration) | InitExp(exp?)
@@ -115,7 +118,9 @@ from compiler.syntax.ast.operators import (
 from compiler.syntax.ast.pretty_print import pretty_print
 from compiler.syntax.ast.statements import (
     Break,
+    Case,
     Continue,
+    Default,
     DoWhile,
     Expression,
     Goto,
@@ -124,11 +129,15 @@ from compiler.syntax.ast.statements import (
     Null,
     Return,
     Statement,
+    Switch,
     While,
 )
 from compiler.syntax.ast.types import IntType, Type
 
 __all__ = [
+    "Switch",
+    "Case",
+    "Default",
     "Break",
     "Continue",
     "For",

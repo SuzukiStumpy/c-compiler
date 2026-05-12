@@ -19,6 +19,9 @@ Covers the full range of constructs supported by the current grammar:
                           | "while" "(" exp ")" statement
                           | "do" statement "while" "(" exp ")" ";"
                           | "for" "(" for_init [exp] ";" [exp] ")" statement
+                          | "switch" "(" exp ")" statement
+                          | "case" exp ":" statement
+                          | "default" ":" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -43,11 +46,13 @@ from compiler.syntax.ast import (
     Block,
     BlockItem,
     Break,
+    Case,
     Compound,
     Constant,
     Continue,
     D,
     Declaration,
+    Default,
     DoWhile,
     Expression,
     For,
@@ -64,6 +69,7 @@ from compiler.syntax.ast import (
     Return,
     S,
     Statement,
+    Switch,
     While,
 )
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Exp, Unary, Var
@@ -162,6 +168,9 @@ _CONTINUE = _tok(TokenType.CONTINUE, "continue")
 _WHILE = _tok(TokenType.WHILE, "while")
 _DO = _tok(TokenType.DO, "do")
 _FOR = _tok(TokenType.FOR, "for")
+_SWITCH = _tok(TokenType.SWITCH, "switch")
+_CASE = _tok(TokenType.CASE, "case")
+_DEFAULT = _tok(TokenType.DEFAULT, "default")
 _ASSIGNMENT = _tok(TokenType.ASSIGNMENT, "=")
 _QUERY = _tok(TokenType.QUERY, "?")
 _COLON = _tok(TokenType.COLON, ":")
@@ -1590,4 +1599,209 @@ class TestForStatements:
             _RBRACE,
         ]
         with pytest.raises(ParseError):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Switch / case / default statements
+# ---------------------------------------------------------------------------
+
+
+class TestSwitchStatements:
+    """Parser correctly builds ``Switch``, ``Case``, and ``Default`` nodes."""
+
+    def test_switch_with_null_body(self) -> None:
+        """``switch (1) ;`` → ``Switch(control=Constant(1), body=Null())``."""
+        result = _parsed_stmt(_SWITCH, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
+        assert result == Switch(control=Constant(1), body=Null())
+
+    def test_switch_with_empty_compound_body(self) -> None:
+        """``switch (1) {}`` → ``Switch`` whose body is an empty ``Compound``."""
+        result = _parsed_stmt(_SWITCH, _LPAREN, _number("1"), _RPAREN, _LBRACE, _RBRACE)
+        assert result == Switch(control=Constant(1), body=Compound(body=()))
+
+    def test_switch_control_is_arbitrary_expression(self) -> None:
+        """``switch (a + 1) ;`` — binary expression as the control value."""
+        result = _parsed_stmt(_SWITCH, _LPAREN, _ident("a"), _PLUS, _number("1"), _RPAREN, _SEMICOLON)
+        assert result == Switch(control=Binary(Add(), Var("a"), Constant(1)), body=Null())
+
+    def test_switch_identifier_is_empty_before_semantic_analysis(self) -> None:
+        """``Switch.identifier`` is the empty string until semantic analysis assigns one."""
+        result = _parsed_stmt(_SWITCH, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
+        assert isinstance(result, Switch)
+        assert result.identifier == ""
+
+    def test_case_governing_null_statement(self) -> None:
+        """``case 1: ;`` → ``Case(value=Constant(1), statement=Null())``."""
+        result = _parsed_stmt(_CASE, _number("1"), _COLON, _SEMICOLON)
+        assert result == Case(value=Constant(1), statement=Null())
+
+    def test_case_governing_return_statement(self) -> None:
+        """``case 2: return 0;`` → ``Case(value=Constant(2), statement=Return(Constant(0)))``."""
+        result = _parsed_stmt(_CASE, _number("2"), _COLON, _RETURN, _number("0"), _SEMICOLON)
+        assert result == Case(value=Constant(2), statement=Return(exp=Constant(0)))
+
+    def test_case_value_is_arbitrary_expression(self) -> None:
+        """``case 1 + 1: ;`` — the grammar accepts any expression as the case value."""
+        result = _parsed_stmt(_CASE, _number("1"), _PLUS, _number("1"), _COLON, _SEMICOLON)
+        assert result == Case(value=Binary(Add(), Constant(1), Constant(1)), statement=Null())
+
+    def test_case_identifier_is_empty_before_semantic_analysis(self) -> None:
+        """``Case.identifier`` is the empty string until semantic analysis assigns one."""
+        result = _parsed_stmt(_CASE, _number("1"), _COLON, _SEMICOLON)
+        assert isinstance(result, Case)
+        assert result.identifier == ""
+
+    def test_default_governing_null_statement(self) -> None:
+        """``default: ;`` → ``Default(statement=Null())``."""
+        result = _parsed_stmt(_DEFAULT, _COLON, _SEMICOLON)
+        assert result == Default(statement=Null())
+
+    def test_default_governing_return_statement(self) -> None:
+        """``default: return 0;`` → ``Default(statement=Return(Constant(0)))``."""
+        result = _parsed_stmt(_DEFAULT, _COLON, _RETURN, _number("0"), _SEMICOLON)
+        assert result == Default(statement=Return(exp=Constant(0)))
+
+    def test_default_identifier_is_empty_before_semantic_analysis(self) -> None:
+        """``Default.identifier`` is the empty string until semantic analysis assigns one."""
+        result = _parsed_stmt(_DEFAULT, _COLON, _SEMICOLON)
+        assert isinstance(result, Default)
+        assert result.identifier == ""
+
+    def test_fall_through_via_nested_case(self) -> None:
+        """``case 1: case 2: return 0;`` — the inner ``Case`` is the governed statement of the outer.
+
+        This is the canonical fall-through representation: ``Case(1, Case(2, Return(0)))``.
+        """
+        result = _parsed_stmt(
+            _CASE, _number("1"), _COLON, _CASE, _number("2"), _COLON, _RETURN, _number("0"), _SEMICOLON
+        )
+        assert result == Case(
+            value=Constant(1),
+            statement=Case(value=Constant(2), statement=Return(exp=Constant(0))),
+        )
+
+    def test_switch_with_case_in_compound_body(self) -> None:
+        """``switch (x) { case 1: return 1; }`` — single case inside a compound body."""
+        result = _parsed_stmt(
+            _SWITCH,
+            _LPAREN,
+            _ident("x"),
+            _RPAREN,
+            _LBRACE,
+            _CASE,
+            _number("1"),
+            _COLON,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+            _RBRACE,
+        )
+        assert result == Switch(
+            control=Var("x"),
+            body=Compound(body=(S(statement=Case(value=Constant(1), statement=Return(exp=Constant(1)))),)),
+        )
+
+    def test_switch_with_case_and_default_in_compound_body(self) -> None:
+        """``switch (x) { case 1: return 1; default: return 0; }`` — case and default as siblings."""
+        result = _parsed_stmt(
+            _SWITCH,
+            _LPAREN,
+            _ident("x"),
+            _RPAREN,
+            _LBRACE,
+            _CASE,
+            _number("1"),
+            _COLON,
+            _RETURN,
+            _number("1"),
+            _SEMICOLON,
+            _DEFAULT,
+            _COLON,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        )
+        assert result == Switch(
+            control=Var("x"),
+            body=Compound(
+                body=(
+                    S(statement=Case(value=Constant(1), statement=Return(exp=Constant(1)))),
+                    S(statement=Default(statement=Return(exp=Constant(0)))),
+                )
+            ),
+        )
+
+    def test_switch_missing_lparen_raises_parse_error(self) -> None:
+        """``switch 1) ;`` — missing ``(`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _SWITCH,
+            _number("1"),
+            _RPAREN,
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected LPAREN"):
+            parse(tokens)
+
+    def test_switch_missing_rparen_raises_parse_error(self) -> None:
+        """``switch (1 ;`` — missing ``)`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _SWITCH,
+            _LPAREN,
+            _number("1"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected RPAREN"):
+            parse(tokens)
+
+    def test_case_missing_colon_raises_parse_error(self) -> None:
+        """``case 1 return 0;`` — missing ``:`` after the case value raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _CASE,
+            _number("1"),
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected COLON"):
+            parse(tokens)
+
+    def test_default_missing_colon_raises_parse_error(self) -> None:
+        """``default return 0;`` — missing ``:`` after ``default`` raises ``ParseError``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _DEFAULT,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        with pytest.raises(ParseError, match="expected COLON"):
             parse(tokens)

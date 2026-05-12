@@ -263,3 +263,26 @@ def test_label_identifier_and_colon_are_separate_tokens(preprocess_c_file: Prepr
     colon_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.COLON)
     assert tokens[colon_idx - 1].type == TokenType.IDENTIFIER
     assert tokens[colon_idx - 1].value == "end"
+
+
+# ---------------------------------------------------------------------------
+# Switch keywords
+# ---------------------------------------------------------------------------
+
+
+def test_switch_keyword_produces_switch_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/switch.c"))
+    switch_token = next(t for t in tokens if t.value == "switch")
+    assert switch_token.type == TokenType.SWITCH
+
+
+def test_case_keyword_produces_case_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/switch.c"))
+    case_token = next(t for t in tokens if t.value == "case")
+    assert case_token.type == TokenType.CASE
+
+
+def test_default_keyword_produces_default_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/switch.c"))
+    default_token = next(t for t in tokens if t.value == "default")
+    assert default_token.type == TokenType.DEFAULT

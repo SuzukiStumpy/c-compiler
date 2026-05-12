@@ -92,11 +92,11 @@ class Label(Statement):
 
 @dataclass(frozen=True, slots=True)
 class Break(Statement):
-    """A ``break`` statement; transfers control to just after the enclosing loop.
+    """A ``break`` statement; transfers control to just after the enclosing loop or switch.
 
     Attributes:
-        identifier: The identifier of the enclosing loop, assigned during the
-            loop-labelling pass of semantic analysis.
+        identifier: The identifier of the enclosing loop or switch, assigned during
+            the loop-labelling pass of semantic analysis.
     """
 
     identifier: str = ""
@@ -149,4 +149,65 @@ class DoWhile(Statement):
 
     body: Statement
     condition: Exp
+    identifier: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Switch(Statement):
+    """A ``switch`` statement.
+
+    The body is a general statement (typically a ``Compound``) that may contain
+    ``Case`` and ``Default`` nodes at any depth.  Fall-through between cases is
+    the default behaviour; a ``Break`` exits the switch.
+
+    Attributes:
+        control: The controlling expression evaluated once and matched against
+            each ``Case`` value.
+        body: The statement forming the body of the switch, usually a compound
+            block containing ``Case`` and ``Default`` nodes.
+        identifier: The unique identifier for this switch, assigned during
+            semantic analysis and used to resolve ``Break`` targets.
+    """
+
+    control: Exp
+    body: Statement
+    identifier: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Case(Statement):
+    """A ``case`` label within an enclosing ``switch``.
+
+    Acts as a jump target: if the switch control expression equals ``value``,
+    execution jumps here.  If no ``Break`` follows, execution falls through into
+    the next case.
+
+    Attributes:
+        value: The constant value matched against the enclosing ``switch``
+            control expression.
+        statement: The statement immediately governed by this label.
+        identifier: The unique identifier for this case, derived from the
+            enclosing switch's identifier during semantic analysis.
+    """
+
+    value: Exp
+    statement: Statement
+    identifier: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Default(Statement):
+    """The ``default`` label within an enclosing ``switch``.
+
+    Acts as the fallback jump target when no ``Case`` value matches the control
+    expression.  At most one ``Default`` may appear per ``switch``, but it may
+    appear at any position within the body.
+
+    Attributes:
+        statement: The statement immediately governed by this label.
+        identifier: The unique identifier for this default, derived from the
+            enclosing switch's identifier during semantic analysis.
+    """
+
+    statement: Statement
     identifier: str = ""

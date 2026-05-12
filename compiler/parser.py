@@ -20,6 +20,9 @@ which are handled by precedence climbing.  The grammar is:
                           | "while" "(" exp ")" statement
                           | "do" statement "while" "(" exp ")" ";"
                           | "for" "(" for_init [exp] ";" [exp] ")" statement
+                          | "switch" "(" exp ")" statement
+                          | "case" exp ":" statement
+                          | "default" ":" statement
                           | ";"
     exp                 ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
     factor              ::= prefix_unop factor | primary postfix_unop?
@@ -55,6 +58,7 @@ from compiler.syntax.ast import (
     Block,
     BlockItem,
     Break,
+    Case,
     Complement,
     Compound,
     Conditional,
@@ -62,6 +66,7 @@ from compiler.syntax.ast import (
     Continue,
     D,
     Declaration,
+    Default,
     Divide,
     DoWhile,
     Equal,
@@ -99,6 +104,7 @@ from compiler.syntax.ast import (
     S,
     Statement,
     Subtract,
+    Switch,
     Type,
     Unary,
     UnaryOperator,
@@ -604,6 +610,9 @@ class Parser:
                         | "while" "(" exp ")" statement
                         | "do" statement "while" "(" exp ")" ";"
                         | "for" "(" for_init [exp] ";" [exp] ")" statement
+                        | "switch" "(" exp ")" statement
+                        | "case" exp ":" statement
+                        | "default" ":" statement
                         | ";"
 
         A labeled statement is detected via one token of lookahead before the
@@ -661,6 +670,21 @@ class Parser:
                 post = self._parse_optional_exp(TokenType.RPAREN)
                 body = self._parse_statement()
                 return For(init, cond, post, body)
+            case TokenType.SWITCH:
+                self._consume()
+                self._expect(TokenType.LPAREN)
+                control = self._parse_exp()
+                self._expect(TokenType.RPAREN)
+                return Switch(control=control, body=self._parse_statement())
+            case TokenType.CASE:
+                self._consume()
+                value = self._parse_exp()
+                self._expect(TokenType.COLON)
+                return Case(value=value, statement=self._parse_statement())
+            case TokenType.DEFAULT:
+                self._consume()
+                self._expect(TokenType.COLON)
+                return Default(statement=self._parse_statement())
             case TokenType.RETURN:
                 return self._parse_return()
             case TokenType.SEMICOLON:

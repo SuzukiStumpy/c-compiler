@@ -25,6 +25,9 @@ class TokenType(Enum):
     FOR = auto()
     BREAK = auto()
     CONTINUE = auto()
+    SWITCH = auto()
+    CASE = auto()
+    DEFAULT = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
