@@ -71,6 +71,16 @@ The translation follows this mapping:
                                     <emit(post)>, Jump(start_<id>), break_<id>]
     ast.Break(target)          → [Jump("break_"+ target)]
     ast.Continue(target)       → [Jump("continue_" + target)]
+    ast.Switch(ctrl,body,id)  → <emit(ctrl)>
+                                 + for each Case(v) in body (in order):
+                                     [tmp = Binary(Equal, ctrl_val, v),
+                                      JumpIfNotZero(tmp, "case_<id>_<v>")]
+                                 + [Jump("default_<id>")] if Default present
+                                 + [Jump("break_<id>")] otherwise
+                                 + <emit(body)>
+                                 + [break_<id>]
+    ast.Case(v, stmt, id)     → [Label("case_<id>_<v>")] + <emit(stmt)>
+    ast.Default(stmt, id)     → [Label("default_<id>")] + <emit(stmt)>
 
 The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
 generation stage.
@@ -266,12 +276,13 @@ class _TacGenerator:
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 
-    def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:
+    def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:  # noqa: C901 - suppress function too complicated
         """Translate a single AST statement into a sequence of TAC instructions.
 
         Handles all statement forms supported by the compiler: ``Return``,
         ``Expression``, ``Null``, ``If``, ``Goto``, ``Label``, ``Compound``,
-        ``Break``, ``Continue``, ``While``, ``DoWhile``, and ``For``.
+        ``Break``, ``Continue``, ``While``, ``DoWhile``, ``For``, ``Switch``,
+        ``Case``, and ``Default``.
 
         Loop constructs use the identifier already assigned by the semantic
         analysis stage to derive consistent ``start_<id>``, ``continue_<id>``,
@@ -378,6 +389,34 @@ class _TacGenerator:
                     tac.Jump(target=label_start.name),
                     label_break,
                 ]
+            case ast.Switch(control=control, body=body, identifier=identifier):
+                ctrl_val, ctrl_instrs = self.translate_exp(control)
+                cases = self._collect_switch_cases(body)
+                dispatch: list[tac.Instruction] = list(ctrl_instrs)
+                has_default = False
+                for c in cases:
+                    match c:
+                        case ast.Case(value=ast.Constant(value=v)):
+                            tmp = self._make_temp()
+                            dispatch.append(
+                                tac.Binary(operator=tac.Equal(), src1=ctrl_val, src2=tac.Constant(value=v), dst=tmp)
+                            )
+                            dispatch.append(tac.JumpIfNotZero(condition=tmp, target=f"case_{identifier}_{v}"))
+                        case ast.Default():
+                            has_default = True
+                if has_default:
+                    dispatch.append(tac.Jump(target=f"default_{identifier}"))
+                else:
+                    dispatch.append(tac.Jump(target=f"break_{identifier}"))
+                return [
+                    *dispatch,
+                    *self.translate_statement(body),
+                    tac.Label(name=f"break_{identifier}"),
+                ]
+            case ast.Case(value=ast.Constant(value=v), statement=inner, identifier=identifier):
+                return [tac.Label(name=f"case_{identifier}_{v}"), *self.translate_statement(inner)]
+            case ast.Default(statement=inner, identifier=identifier):
+                return [tac.Label(name=f"default_{identifier}"), *self.translate_statement(inner)]
             case _:
                 raise CodeGenerationError(f"unsupported statement type: {type(stmt).__name__}")
 
@@ -439,6 +478,50 @@ class _TacGenerator:
         if exp is None:
             return tac.Constant(1), []
         return self.translate_exp(exp)
+
+    def _collect_switch_cases(self, stmt: ast.Statement) -> list[ast.Case | ast.Default]:
+        """Collect all ``Case`` and ``Default`` nodes from a switch body in source order.
+
+        Walks the statement tree recursively, yielding every ``Case`` and
+        ``Default`` encountered.  Recursion stops at nested ``Switch`` nodes so
+        that inner-switch labels are not included in the outer jump table.
+
+        Args:
+            stmt: The statement to walk (typically the ``body`` of a ``Switch``).
+
+        Returns:
+            A list of ``ast.Case`` and ``ast.Default`` nodes in the order they
+            appear in the source.
+        """
+        result: list[ast.Case | ast.Default] = []
+        match stmt:
+            case ast.Case() as c:
+                result.append(c)
+                result.extend(self._collect_switch_cases(c.statement))
+            case ast.Default() as d:
+                result.append(d)
+                result.extend(self._collect_switch_cases(d.statement))
+            case ast.Compound(body=body):
+                for item in body:
+                    match item:
+                        case ast.S(statement=inner):
+                            result.extend(self._collect_switch_cases(inner))
+            case ast.Switch():
+                pass
+            case ast.If(then=then_stmt, else_=None):
+                result.extend(self._collect_switch_cases(then_stmt))
+            case ast.If(then=then_stmt, else_=else_stmt) if else_stmt is not None:
+                result.extend(self._collect_switch_cases(then_stmt))
+                result.extend(self._collect_switch_cases(else_stmt))
+            case ast.While(body=body):
+                result.extend(self._collect_switch_cases(body))
+            case ast.DoWhile(body=body):
+                result.extend(self._collect_switch_cases(body))
+            case ast.For(body=body):
+                result.extend(self._collect_switch_cases(body))
+            case ast.Label(statement=inner):
+                result.extend(self._collect_switch_cases(inner))
+        return result
 
     def translate_exp(self, exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:
         """Translate an AST expression into a TAC value and any preceding instructions.
