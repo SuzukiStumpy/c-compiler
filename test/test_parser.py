@@ -2,13 +2,14 @@
 
 Covers the full range of constructs supported by the current grammar:
 
-    program              ::= {function-declaration}
-    function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+    program              ::= {declaration}
+    declaration          ::= variable-declaration | function-declaration
+    function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
+    variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
     param-list           ::= "void" | "int" identifier {"," "int" identifier}
+    specifier            ::= "int" | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
-    declaration          ::= variable-declaration | function-declaration
-    variable-declaration ::= "int" identifier ["=" exp] ";"
     for_init             ::= variable-declaration | [exp] ";"
     statement            ::= "return" exp ";"
                            | exp ";"
@@ -74,6 +75,7 @@ from compiler.syntax.ast import (
     Return,
     S,
     Statement,
+    StorageClass,
     Switch,
     VarDecl,
     VariableDeclaration,
@@ -182,6 +184,8 @@ _ASSIGNMENT = _tok(TokenType.ASSIGNMENT, "=")
 _QUERY = _tok(TokenType.QUERY, "?")
 _COLON = _tok(TokenType.COLON, ":")
 _COMMA = _tok(TokenType.COMMA, ",")
+_STATIC = _tok(TokenType.STATIC, "static")
+_EXTERN = _tok(TokenType.EXTERN, "extern")
 
 
 def _ident(name: str) -> Token:
@@ -204,7 +208,9 @@ def _parsed_body(*body_tokens: Token) -> tuple[BlockItem, ...]:
         The ``body`` tuple of ``BlockItem`` nodes from the parsed function.
     """
     tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, *body_tokens, _RBRACE]
-    body = parse(tokens).functions[0].body
+    decl = parse(tokens).declarations[0]
+    assert isinstance(decl, FunDecl)
+    body = decl.function_declaration.body
     assert body is not None
     return body
 
@@ -235,7 +241,9 @@ def _parsed_exp(*exp_tokens: Token) -> Exp:
     """
     tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, *exp_tokens, _SEMICOLON, _RBRACE]
     result = parse(tokens)
-    body = result.functions[0].body
+    decl = result.declarations[0]
+    assert isinstance(decl, FunDecl)
+    body = decl.function_declaration.body
     assert body is not None
     item = body[0]
     assert isinstance(item, S)
@@ -256,11 +264,13 @@ class TestValidPrograms:
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
         result = parse(tokens)
         expected = Program(
-            functions=(
-                Function(
-                    name="main",
-                    params=(),
-                    body=(S(statement=Return(exp=Constant(value=0))),),
+            declarations=(
+                FunDecl(
+                    function_declaration=Function(
+                        name="main",
+                        params=(),
+                        body=(S(statement=Return(exp=Constant(value=0))),),
+                    ),
                 ),
             )
         )
@@ -270,19 +280,21 @@ class TestValidPrograms:
         """``int main() { return 0; }`` — empty parens produce no parameters."""
         tokens = [_INT, _ident("main"), _LPAREN, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
         result = parse(tokens)
-        assert result.functions[0].params == ()
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == ()
 
     def test_nonzero_return_value(self) -> None:
         """``return 42;`` produces a ``Constant`` with the correct integer value."""
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("42"), _SEMICOLON, _RBRACE]
         result = parse(tokens)
-        assert result.functions[0].body == (S(statement=Return(exp=Constant(value=42))),)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.body == (S(statement=Return(exp=Constant(value=42))),)
 
     def test_single_int_parameter(self) -> None:
-        """``int foo(int x) { return x; }`` — wait, no variable references yet.
-
-        Tests that a single typed parameter is parsed into a ``Parameter`` node.
-        """
+        """``int foo(int x) { return x; }`` — tests that a single typed parameter
+        is parsed into a ``Parameter`` node."""
         tokens = [
             _INT,
             _ident("foo"),
@@ -297,19 +309,25 @@ class TestValidPrograms:
             _RBRACE,
         ]
         result = parse(tokens)
-        assert result.functions[0].params == (Parameter(param_type=IntType(), name="x"),)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == (Parameter(param_type=IntType(), name="x"),)
 
     def test_multiple_functions(self) -> None:
-        """Two consecutive function definitions both appear in ``Program.functions``."""
+        """Two consecutive function definitions both appear in ``Program.declarations``."""
 
         def _simple_fn(name: str) -> list[Token]:
             return [_INT, _ident(name), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
 
         tokens = _simple_fn("foo") + _simple_fn("bar")
         result = parse(tokens)
-        assert len(result.functions) == 2
-        assert result.functions[0].name == "foo"
-        assert result.functions[1].name == "bar"
+        assert len(result.declarations) == 2
+        decl0 = result.declarations[0]
+        decl1 = result.declarations[1]
+        assert isinstance(decl0, FunDecl)
+        assert isinstance(decl1, FunDecl)
+        assert decl0.function_declaration.name == "foo"
+        assert decl1.function_declaration.name == "bar"
 
     def test_multiple_statements_in_body(self) -> None:
         """Multiple ``return`` statements are all captured in the function body."""
@@ -329,7 +347,9 @@ class TestValidPrograms:
             _RBRACE,
         ]
         result = parse(tokens)
-        assert result.functions[0].body == (
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.body == (
             S(statement=Return(exp=Constant(value=1))),
             S(statement=Return(exp=Constant(value=2))),
         )
@@ -355,9 +375,9 @@ class TestParseErrors:
             parse(tokens)
 
     def test_missing_opening_paren(self) -> None:
-        """``int main void) { ... }`` — VOID where LPAREN expected."""
+        """``int main void) { ... }`` — parsed as variable declaration; fails at SEMICOLON."""
         tokens = [_INT, _ident("main"), _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
-        with pytest.raises(ParseError, match="expected LPAREN"):
+        with pytest.raises(ParseError, match="expected SEMICOLON"):
             parse(tokens)
 
     def test_missing_closing_paren(self) -> None:
@@ -376,7 +396,9 @@ class TestParseErrors:
         """``int main(void) {}`` — empty body is valid; produces an empty block-item tuple."""
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RBRACE]
         result = parse(tokens)
-        assert result.functions[0].body == ()
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.body == ()
 
     def test_missing_semicolon(self) -> None:
         """``return 0 }`` — missing semicolon after expression."""
@@ -1638,6 +1660,66 @@ class TestForStatements:
         with pytest.raises(ParseError, match="function declarations are not permitted"):
             parse(tokens)
 
+    def test_for_static_init_records_storage_class(self) -> None:
+        """``for (static int i = 0; ...) {}`` — parser accepts and records storage class."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _LPAREN,
+            _STATIC,
+            _INT,
+            _ident("i"),
+            _ASSIGNMENT,
+            _number("0"),
+            _SEMICOLON,
+            _SEMICOLON,
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        body = result.declarations[0].function_declaration.body
+        for_stmt = body[0].statement
+        assert isinstance(for_stmt, For)
+        assert isinstance(for_stmt.init, InitDecl)
+        assert for_stmt.init.declaration.variable_declaration.storage_class == StorageClass.Static
+
+    def test_for_extern_init_records_storage_class(self) -> None:
+        """``for (extern int i = 0; ...) {}`` — parser accepts and records storage class."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _FOR,
+            _LPAREN,
+            _EXTERN,
+            _INT,
+            _ident("i"),
+            _ASSIGNMENT,
+            _number("0"),
+            _SEMICOLON,
+            _SEMICOLON,
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        body = result.declarations[0].function_declaration.body
+        for_stmt = body[0].statement
+        assert isinstance(for_stmt, For)
+        assert isinstance(for_stmt.init, InitDecl)
+        assert for_stmt.init.declaration.variable_declaration.storage_class == StorageClass.Extern
+
 
 # ---------------------------------------------------------------------------
 # Switch / case / default statements
@@ -1884,7 +1966,9 @@ class TestMultipleParameters:
             _RBRACE,
         ]
         result = parse(tokens)
-        assert result.functions[0].params == (
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == (
             Parameter(param_type=IntType(), name="a"),
             Parameter(param_type=IntType(), name="b"),
         )
@@ -1911,8 +1995,10 @@ class TestMultipleParameters:
             _RBRACE,
         ]
         result = parse(tokens)
-        assert len(result.functions[0].params) == 3
-        assert result.functions[0].params[2] == Parameter(param_type=IntType(), name="c")
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert len(decl.function_declaration.params) == 3
+        assert decl.function_declaration.params[2] == Parameter(param_type=IntType(), name="c")
 
     def test_missing_type_in_param_list_raises_parse_error(self) -> None:
         """``int foo(int a, b)`` — missing type before second parameter raises ``ParseError``."""
@@ -1941,28 +2027,36 @@ class TestFunctionForwardDeclarations:
     """Parser correctly builds forward declaration ``Function`` nodes (``body=None``)."""
 
     def test_forward_declaration_void_params(self) -> None:
-        """``int foo(void);`` → ``Function(name="foo", params=(), body=None)``."""
+        """``int foo(void);`` → ``FunDecl`` wrapping ``Function(name="foo", params=(), body=None)``."""
         tokens = [_INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
         result = parse(tokens)
-        assert result.functions[0] == Function(name="foo", params=(), body=None)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration == Function(name="foo", params=(), body=None)
 
     def test_forward_declaration_with_params(self) -> None:
         """``int add(int a, int b);`` → forward declaration with two params and ``body=None``."""
         tokens = [_INT, _ident("add"), _LPAREN, _INT, _ident("a"), _COMMA, _INT, _ident("b"), _RPAREN, _SEMICOLON]
         result = parse(tokens)
-        fn = result.functions[0]
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        fn = decl.function_declaration
         assert fn.name == "add"
         assert fn.body is None
         assert fn.params == (Parameter(param_type=IntType(), name="a"), Parameter(param_type=IntType(), name="b"))
 
     def test_forward_declaration_followed_by_definition(self) -> None:
-        """``int foo(void); int foo(void) { return 0; }`` → two entries in ``Program.functions``."""
+        """``int foo(void); int foo(void) { return 0; }`` → two entries in ``Program.declarations``."""
         proto = [_INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
         defn = [_INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
         result = parse(proto + defn)
-        assert len(result.functions) == 2
-        assert result.functions[0].body is None
-        assert result.functions[1].body is not None
+        assert len(result.declarations) == 2
+        decl0 = result.declarations[0]
+        decl1 = result.declarations[1]
+        assert isinstance(decl0, FunDecl)
+        assert isinstance(decl1, FunDecl)
+        assert decl0.function_declaration.body is None
+        assert decl1.function_declaration.body is not None
 
     def test_function_declaration_as_block_item(self) -> None:
         """A forward declaration inside a function body is parsed as a ``FunDecl`` block item."""
@@ -2041,3 +2135,112 @@ class TestFunctionCallExpressions:
         """``return a;`` — an identifier not followed by ``(`` is a ``Var``, not a call."""
         result = _parsed_exp(_ident("a"))
         assert result == Var("a")
+
+
+# ---------------------------------------------------------------------------
+# Storage-class specifiers (_parse_specifiers / _parse_declaration)
+# ---------------------------------------------------------------------------
+
+
+class TestStorageClassSpecifiers:
+    """Parser correctly attaches storage-class specifiers to function and variable declarations."""
+
+    def test_static_variable_declaration(self) -> None:
+        """``static int x;`` → ``VarDecl`` whose ``VariableDeclaration`` carries ``StorageClass.Static``."""
+        tokens = [_STATIC, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration == VariableDeclaration(name="x", init=None, storage_class=StorageClass.Static)
+
+    def test_extern_variable_declaration(self) -> None:
+        """``extern int x;`` → ``VarDecl`` carrying ``StorageClass.Extern``."""
+        tokens = [_EXTERN, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.storage_class == StorageClass.Extern
+
+    def test_variable_declaration_no_storage_class(self) -> None:
+        """``int x;`` → ``VariableDeclaration`` with ``storage_class=None``."""
+        tokens = [_INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.storage_class is None
+
+    def test_static_variable_with_initialiser(self) -> None:
+        """``static int x = 5;`` → storage class and initialiser are both recorded."""
+        tokens = [_STATIC, _INT, _ident("x"), _ASSIGNMENT, _number("5"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        vd = decl.variable_declaration
+        assert vd.storage_class == StorageClass.Static
+        assert vd.init == Constant(5)
+
+    def test_static_function_forward_declaration(self) -> None:
+        """``static int foo(void);`` → ``FunDecl`` whose ``Function`` carries ``StorageClass.Static``."""
+        tokens = [_STATIC, _INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.storage_class == StorageClass.Static
+        assert decl.function_declaration.body is None
+
+    def test_extern_function_forward_declaration(self) -> None:
+        """``extern int foo(void);`` → ``FunDecl`` carrying ``StorageClass.Extern``."""
+        tokens = [_EXTERN, _INT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.storage_class == StorageClass.Extern
+
+    def test_static_function_definition(self) -> None:
+        """``static int foo(void) { return 0; }`` → definition with ``StorageClass.Static``."""
+        tokens = [
+            _STATIC,
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.storage_class == StorageClass.Static
+        assert decl.function_declaration.body is not None
+
+    def test_specifiers_in_int_first_order(self) -> None:
+        """``int static x;`` — specifiers in either order are accepted."""
+        tokens = [_INT, _STATIC, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.storage_class == StorageClass.Static
+
+    def test_static_local_variable(self) -> None:
+        """``static int x;`` as a block item carries ``StorageClass.Static``."""
+        body = _parsed_body(_STATIC, _INT, _ident("x"), _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        assert item.declaration.variable_declaration.storage_class == StorageClass.Static
+
+    def test_conflicting_storage_class_raises_parse_error(self) -> None:
+        """``static extern int x;`` — two storage-class specifiers raise ``ParseError``."""
+        tokens = [_STATIC, _EXTERN, _INT, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError, match="conflicting storage class"):
+            parse(tokens)
+
+    def test_missing_type_specifier_raises_parse_error(self) -> None:
+        """``static x;`` — absent type specifier raises ``ParseError``."""
+        tokens = [_STATIC, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError, match="expected a type"):
+            parse(tokens)

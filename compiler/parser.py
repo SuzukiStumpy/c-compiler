@@ -3,13 +3,14 @@
 The parser uses recursive descent for all constructs except binary expressions,
 which are handled by precedence climbing.  The grammar is:
 
-    program              ::= {function-declaration}
-    function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+    program              ::= {declaration}
+    declaration          ::= variable-declaration | function-declaration
+    function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
+    variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
     param-list           ::= "void" | "int" identifier {"," "int" identifier}
+    specifier            ::= "int" | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
-    declaration          ::= variable-declaration | function-declaration
-    variable-declaration ::= "int" identifier ["=" exp] ";"
     for_init             ::= variable-declaration | [exp] ";"
     statement            ::= "return" exp ";"
                            | exp ";"
@@ -109,6 +110,7 @@ from compiler.syntax.ast import (
     RightShift,
     S,
     Statement,
+    StorageClass,
     Subtract,
     Switch,
     Type,
@@ -400,50 +402,67 @@ class Parser:
     def parse_program(self) -> Program:
         """Parse the full token stream as a translation unit.
 
-        Expects one or more function declarations or definitions followed by
-        end of input.
+        Expects one or more top-level declarations (functions or variables)
+        followed by end of input.
 
         Returns:
-            A ``Program`` node containing all parsed function declarations.
+            A ``Program`` node containing all parsed top-level declarations.
 
         Raises:
-            ParseError: If no function declarations are found, or if any
-                declaration is malformed.
+            ParseError: If no declarations are found, or if any declaration is
+                malformed.
         """
-        functions: list[Function] = []
+        declarations: list[Declaration] = []
         while not self._at_end():
-            functions.append(self._parse_function_declaration())
-        if not functions:
-            raise self._eof_error("expected a function definition, got empty input")
-        return Program(functions=tuple(functions))
+            declarations.append(self._parse_declaration())
+        if not declarations:
+            raise self._eof_error("expected a declaration, got empty input")
+        return Program(declarations=tuple(declarations))
 
-    def _parse_function_declaration(self) -> Function:
-        """Parse a single top-level function declaration or definition.
+    def _parse_specifiers(self) -> tuple[Type, StorageClass | None]:
+        """Parse one or more declaration specifiers.
 
         Grammar::
 
-            function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+            specifier ::= "int" | "static" | "extern"
 
-        A trailing ``;`` produces a forward declaration (``body=None``); a
-        ``{`` block produces a full definition.
+        Consumes a run of specifier tokens in any order.  Exactly one type
+        specifier (``int``) must appear; at most one storage-class specifier
+        (``static`` or ``extern``) may appear.
 
         Returns:
-            A ``Function`` node with ``body=None`` for a forward declaration
-            or a ``Block`` for a full definition.
+            A ``(type, storage_class)`` pair where ``storage_class`` is
+            ``None`` when no storage-class specifier was present.
 
         Raises:
-            ParseError: If any part of the declaration is malformed.
+            ParseError: If no type specifier is present, if ``int`` appears
+                more than once, or if two storage-class specifiers conflict.
         """
-        self._parse_type()
-        name_token = self._expect(TokenType.IDENTIFIER)
-        self._expect(TokenType.LPAREN)
-        params = self._parse_params()
-        self._expect(TokenType.RPAREN)
-        if self._match(TokenType.SEMICOLON):
-            self._consume()
-            return Function(name=name_token.value, params=params, body=None)
-        body = self._parse_block()
-        return Function(name=name_token.value, params=params, body=body)
+        type_: Type | None = None
+        storage: StorageClass | None = None
+
+        while self._peek() is not None and self._peek().type in (TokenType.INT, TokenType.STATIC, TokenType.EXTERN):
+            tok = self._consume()
+            if tok.type == TokenType.INT:
+                if type_ is not None:
+                    raise self._token_error("duplicate type specifier 'int'", tok)
+                type_ = IntType()
+            elif tok.type == TokenType.STATIC:
+                if storage is not None:
+                    raise self._token_error("conflicting storage class specifiers", tok)
+                storage = StorageClass.Static
+            else:
+                if storage is not None:
+                    raise self._token_error("conflicting storage class specifiers", tok)
+                storage = StorageClass.Extern
+
+        if type_ is None:
+            tok = self._peek()
+            if tok is None:
+                raise self._eof_error("expected a type specifier, got end of input")
+            raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
+
+        return type_, storage
 
     def _parse_params(self) -> tuple[Parameter, ...]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -528,32 +547,32 @@ class Parser:
             ParseError: If the item is malformed.
         """
         token = self._peek()
-        if token is not None and token.type == TokenType.INT:
+        if token is not None and token.type in (TokenType.INT, TokenType.STATIC, TokenType.EXTERN):
             return D(declaration=self._parse_declaration())
         return S(statement=self._parse_statement())
 
     def _parse_declaration(self) -> Declaration:
-        """Parse a variable or function declaration.
+        """Parse a variable or function declaration with optional storage class.
 
         Grammar::
 
             declaration          ::= variable-declaration | function-declaration
-            variable-declaration ::= "int" identifier ["=" exp] ";"
-            function-declaration ::= "int" identifier "(" param-list ")" (block | ";")
+            function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
+            variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
+            specifier            ::= "int" | "static" | "extern"
 
-        Dispatches after consuming the type keyword and identifier: if the
-        next token is ``(`` the item is a function declaration (returning a
-        ``FunDecl``); otherwise it is a variable declaration (returning a
-        ``VarDecl``).
+        Parses the leading specifier list, then dispatches on the token after
+        the identifier: ``(`` indicates a function declaration (returning a
+        ``FunDecl``); anything else is a variable declaration (``VarDecl``).
 
         Returns:
             A ``VarDecl`` or ``FunDecl`` node.
 
         Raises:
-            ParseError: If the identifier or terminator is missing, or if the
-                initialiser expression is malformed.
+            ParseError: If no type specifier is present, the identifier or
+                terminator is missing, or the initialiser expression is malformed.
         """
-        self._expect(TokenType.INT)
+        _, storage = self._parse_specifiers()
         name_token = self._expect(TokenType.IDENTIFIER)
         if self._match(TokenType.LPAREN):
             self._consume()
@@ -564,13 +583,17 @@ class Parser:
                 body: Block | None = None
             else:
                 body = self._parse_block()
-            return FunDecl(function_declaration=Function(name=name_token.value, params=params, body=body))
+            return FunDecl(
+                function_declaration=Function(name=name_token.value, params=params, body=body, storage_class=storage)
+            )
         init: Exp | None = None
         if self._match(TokenType.ASSIGNMENT):
             self._consume()
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
-        return VarDecl(variable_declaration=VariableDeclaration(name=name_token.value, init=init))
+        return VarDecl(
+            variable_declaration=VariableDeclaration(name=name_token.value, init=init, storage_class=storage)
+        )
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
         """Parse an optional expression and consume its terminating token.
@@ -605,19 +628,20 @@ class Parser:
 
             variable-declaration ::= "int" identifier ["=" exp] ";"
 
-        Raises ``ParseError`` immediately if the identifier is followed by
-        ``(``, since function declarations are not valid in contexts that
-        require a variable declaration (e.g. a ``for``-loop initialiser).
+        Storage-class specifiers (``static``, ``extern``) are parsed by
+        ``_parse_specifiers`` and recorded on the resulting ``VariableDeclaration``
+        so that the semantic analysis stage can reject them with a ``SemanticError``.
+        A ``(`` after the identifier is rejected immediately because function
+        declarations are not permitted in for-loop initialisers.
 
         Returns:
             A ``VarDecl`` node.
 
         Raises:
-            ParseError: If a function declaration is attempted, if the
-                identifier or semicolon is missing, or if the initialiser
-                expression is malformed.
+            ParseError: If a function declaration is attempted, if the identifier
+                or semicolon is missing, or if the initialiser expression is malformed.
         """
-        self._expect(TokenType.INT)
+        _, storage = self._parse_specifiers()
         name_token = self._expect(TokenType.IDENTIFIER)
         if self._match(TokenType.LPAREN):
             raise self._token_error(
@@ -629,7 +653,9 @@ class Parser:
             self._consume()
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
-        return VarDecl(variable_declaration=VariableDeclaration(name=name_token.value, init=init))
+        return VarDecl(
+            variable_declaration=VariableDeclaration(name=name_token.value, init=init, storage_class=storage)
+        )
 
     def _parse_for_init(self) -> ForInit:
         """Parse the initialiser clause of a ``for`` loop.
@@ -638,11 +664,13 @@ class Parser:
 
             for_init ::= variable-declaration | [exp] ";"
 
-        Dispatches on the next token: an ``int`` keyword begins a variable
-        declaration (which consumes its own trailing semicolon); function
-        declarations are rejected immediately by ``_parse_variable_declaration``;
-        anything else delegates to ``_parse_optional_exp`` for an
-        expression-or-empty clause followed by ``;``.
+        Dispatches on the next token: any specifier keyword (``int``,
+        ``static``, ``extern``) begins a variable declaration (which consumes
+        its own trailing semicolon); storage-class specifiers on the
+        ``VariableDeclaration`` are later rejected by semantic analysis.
+        Function declarations are rejected immediately.  Anything else delegates
+        to ``_parse_optional_exp`` for an expression-or-empty clause followed
+        by ``;``.
 
         Returns:
             An ``InitDecl`` node wrapping the parsed ``VarDecl``, or an
@@ -650,11 +678,10 @@ class Parser:
             is absent.
 
         Raises:
-            ParseError: If the initialiser is a function declaration, if the
-                optional expression is malformed, or if the trailing ``;`` is
-                missing.
+            ParseError: If a function declaration is attempted, if the optional
+                expression is malformed, or if the trailing ``;`` is missing.
         """
-        if self._match(TokenType.INT):
+        if self._peek() is not None and self._peek().type in (TokenType.INT, TokenType.STATIC, TokenType.EXTERN):
             return InitDecl(self._parse_variable_declaration())
         return InitExp(self._parse_optional_exp(TokenType.SEMICOLON))
 

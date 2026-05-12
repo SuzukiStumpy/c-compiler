@@ -8,14 +8,15 @@ indented multi-line form.
 Typical output for ``int main(void) { return 2; }``::
 
     Program(
-        functions=(
-            Function(
-                name="main"
-                params=()
-                body=(
-                    Return(
-                        exp=Constant(value=2)
+        declarations=(
+            FunDecl(
+                function_declaration=Function(
+                    name="main"
+                    params=()
+                    body=(
+                        Return(exp=Constant(value=2))
                     )
+                    storage_class=None
                 )
             )
         )

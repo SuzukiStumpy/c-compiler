@@ -10,24 +10,34 @@ node, and the ``Parameter``, ``Function``, and ``Program`` nodes.
 
 from abc import ABC
 from dataclasses import dataclass
+from enum import Enum, auto
 
 from compiler.syntax.ast.expressions import Exp
 from compiler.syntax.ast.statements import Statement
 from compiler.syntax.ast.types import Type
 
 
+class StorageClass(Enum):
+    """Defines the storage class on function and variable declarations"""
+
+    Static = auto()
+    Extern = auto()
+
+
 @dataclass(frozen=True, slots=True)
 class VariableDeclaration:
-    """A variable declaration, optionally with an initialiser.
+    """A variable declaration, optionally with an initialiser and storage class.
 
     Attributes:
         name: The name of the variable being declared.
         init: The initialisation expression, or ``None`` if the variable is
             declared without an initial value.
+        storage_class: The storage class specifier, or ``None`` if omitted.
     """
 
     name: str
     init: Exp | None
+    storage_class: StorageClass | None = None
 
 
 class Declaration(ABC):
@@ -119,6 +129,7 @@ class Function:
     name: str
     params: tuple[Parameter, ...]
     body: Block | None
+    storage_class: StorageClass | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +139,8 @@ class FunDecl(Declaration):
     Used when a function declaration appears as a block item (``D``).
 
     Attributes:
-        function_declaration: The underlying ``Function`` node.
+        function_declaration: The underlying ``Function`` node.  The storage
+            class, if any, is carried on ``function_declaration.storage_class``.
     """
 
     function_declaration: Function
@@ -155,11 +167,11 @@ class Program:
     or definitions.
 
     Attributes:
-        functions: The ordered sequence of top-level function declarations.
+        declarations: The ordered sequence of top-level function and variable declarations.
             At least one function is required by the grammar.
     """
 
-    functions: tuple[Function, ...]
+    declarations: tuple[Declaration, ...]
 
 
 class ForInit(ABC):

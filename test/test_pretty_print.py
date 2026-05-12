@@ -11,6 +11,7 @@ from compiler.syntax.ast import (
     DoWhile,
     For,
     Function,
+    FunDecl,
     InitExp,
     IntType,
     Null,
@@ -47,23 +48,28 @@ def test_return_with_constant_is_inline() -> None:
 def test_minimal_program_indentation() -> None:
     """Full ``Program`` renders with correctly nested indentation."""
     program = Program(
-        functions=(
-            Function(
-                name="main",
-                params=(),
-                body=(Return(exp=Constant(value=2)),),
+        declarations=(
+            FunDecl(
+                function_declaration=Function(
+                    name="main",
+                    params=(),
+                    body=(Return(exp=Constant(value=2)),),
+                ),
             ),
         )
     )
     result = pretty_print(program)
     expected = (
         "Program(\n"
-        "    functions=(\n"
-        "        Function(\n"
-        '            name="main"\n'
-        "            params=()\n"
-        "            body=(\n"
-        "                Return(exp=Constant(value=2))\n"
+        "    declarations=(\n"
+        "        FunDecl(\n"
+        "            function_declaration=Function(\n"
+        '                name="main"\n'
+        "                params=()\n"
+        "                body=(\n"
+        "                    Return(exp=Constant(value=2))\n"
+        "                )\n"
+        "                storage_class=None\n"
         "            )\n"
         "        )\n"
         "    )\n"
@@ -75,11 +81,13 @@ def test_minimal_program_indentation() -> None:
 def test_empty_params_tuple_inline() -> None:
     """An empty tuple renders as ``()`` on the same line as the field name."""
     program = Program(
-        functions=(
-            Function(
-                name="main",
-                params=(),
-                body=(Return(exp=Constant(value=0)),),
+        declarations=(
+            FunDecl(
+                function_declaration=Function(
+                    name="main",
+                    params=(),
+                    body=(Return(exp=Constant(value=0)),),
+                ),
             ),
         )
     )
@@ -89,11 +97,13 @@ def test_empty_params_tuple_inline() -> None:
 def test_single_param_inline() -> None:
     """A single ``Parameter`` inside a params tuple renders inline."""
     program = Program(
-        functions=(
-            Function(
-                name="foo",
-                params=(Parameter(param_type=IntType(), name="n"),),
-                body=(Return(exp=Constant(value=0)),),
+        declarations=(
+            FunDecl(
+                function_declaration=Function(
+                    name="foo",
+                    params=(Parameter(param_type=IntType(), name="n"),),
+                    body=(Return(exp=Constant(value=0)),),
+                ),
             ),
         )
     )
@@ -104,20 +114,22 @@ def test_single_param_inline() -> None:
 def test_multiple_functions_each_indented() -> None:
     """Multiple functions in a program each appear correctly indented."""
 
-    def _fn(name: str) -> Function:
-        return Function(
-            name=name,
-            params=(),
-            body=(Return(exp=Constant(value=0)),),
+    def _fn(name: str) -> FunDecl:
+        return FunDecl(
+            function_declaration=Function(
+                name=name,
+                params=(),
+                body=(Return(exp=Constant(value=0)),),
+            )
         )
 
-    program = Program(functions=(_fn("foo"), _fn("bar")))
+    program = Program(declarations=(_fn("foo"), _fn("bar")))
     result = pretty_print(program)
     assert '"foo"' in result
     assert '"bar"' in result
-    # Both functions start at the same indent level
+    # Both Function nodes start at the same indent level
     lines = result.splitlines()
-    fn_lines = [ln for ln in lines if "Function(" in ln]
+    fn_lines = [ln for ln in lines if "function_declaration=Function(" in ln]
     assert len(fn_lines) == 2
     assert fn_lines[0].index("Function(") == fn_lines[1].index("Function(")
 
@@ -125,13 +137,15 @@ def test_multiple_functions_each_indented() -> None:
 def test_multiple_statements_in_body() -> None:
     """Multiple statements in a body all appear in the rendered output."""
     program = Program(
-        functions=(
-            Function(
-                name="main",
-                params=(),
-                body=(
-                    Return(exp=Constant(value=1)),
-                    Return(exp=Constant(value=2)),
+        declarations=(
+            FunDecl(
+                function_declaration=Function(
+                    name="main",
+                    params=(),
+                    body=(
+                        Return(exp=Constant(value=1)),
+                        Return(exp=Constant(value=2)),
+                    ),
                 ),
             ),
         )
@@ -211,11 +225,11 @@ def test_for_identifier_appears_in_output() -> None:
 def test_function_with_none_body_renders_inline() -> None:
     """A forward-declaration ``Function`` with ``body=None`` renders inline."""
     node = Function(name="foo", params=(), body=None)
-    assert pretty_print(node) == 'Function(name="foo", params=(), body=None)'
+    assert pretty_print(node) == 'Function(name="foo", params=(), body=None, storage_class=None)'
 
 
 def test_function_none_body_in_program() -> None:
     """A ``Program`` containing a forward-declaration function renders ``body=None``."""
-    program = Program(functions=(Function(name="foo", params=(), body=None),))
+    program = Program(declarations=(FunDecl(function_declaration=Function(name="foo", params=(), body=None)),))
     result = pretty_print(program)
     assert "body=None" in result

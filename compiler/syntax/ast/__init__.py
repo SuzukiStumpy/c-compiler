@@ -4,7 +4,7 @@ This package defines the Abstract Syntax Tree (AST) node types produced by the
 parser and consumed by later compiler phases. The hierarchy mirrors the Zephyr
 Abstract Syntax Description Language (ASDL) grammar for the supported subset of C:
 
-    program              = Program(function_declaration*)
+    program              = Program(declaration*)
     statement            = Return(exp)
                          | Expression(exp)
                          | If(exp condition, statement then, statement? else_)
@@ -21,8 +21,9 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Default(statement body, identifier)
                          | Null
     declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
-    variable_declaration = (identifier name, exp? init)
-    function_declaration = (identifier name, parameter* params, block? body)
+    variable_declaration = (identifier name, exp? init, storage_class?)
+    function_declaration = (identifier name, parameter* params, block? body, storage_class?)
+    storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
     exp                  = Constant(int)
@@ -88,6 +89,7 @@ from compiler.syntax.ast.declarations import (
     Parameter,
     Program,
     S,
+    StorageClass,
     VarDecl,
     VariableDeclaration,
 )
@@ -150,6 +152,7 @@ from compiler.syntax.ast.statements import (
 from compiler.syntax.ast.types import IntType, Linkage, Type
 
 __all__ = [
+    "StorageClass",
     "Switch",
     "Case",
     "Default",
