@@ -1899,8 +1899,8 @@ class TestTacGeneratorMultipleFunctions:
         result = generate(prog)
         assert result.functions == ()
 
-    def test_each_function_body_is_translated_independently(self) -> None:
-        """Temporaries in separate functions are numbered independently from zero."""
+    def test_temporaries_are_unique_across_functions(self) -> None:
+        """Temporaries allocated in different functions have distinct names."""
         prog = ast.Program(
             functions=(
                 _make_function(
@@ -1914,11 +1914,11 @@ class TestTacGeneratorMultipleFunctions:
             )
         )
         result = generate(prog)
-        # Both functions should allocate tmp.0 independently.
         f_temps = {i.dst for i in result.functions[0].body if isinstance(i, tac.Unary)}
         g_temps = {i.dst for i in result.functions[1].body if isinstance(i, tac.Unary)}
-        assert f_temps == {tac.Var(value="tmp.0")}
-        assert g_temps == {tac.Var(value="tmp.0")}
+        assert len(f_temps) == 1
+        assert len(g_temps) == 1
+        assert f_temps.isdisjoint(g_temps)
 
 
 # ---------------------------------------------------------------------------

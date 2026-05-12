@@ -10,8 +10,11 @@ import pytest
 
 from compiler.emitter import emit_program
 from compiler.syntax.asm import (
+    AllocateStack,
+    Call,
     Cmp,
     CondCodes,
+    DeallocateStack,
     Function,
     Imm,
     Jmp,
@@ -19,6 +22,7 @@ from compiler.syntax.asm import (
     Label,
     Mov,
     Program,
+    Push,
     Register,
     Registers,
     Ret,
@@ -298,3 +302,67 @@ def test_setcc_emit_stack_operand() -> None:
 def test_label_emit() -> None:
     """``Label`` emits ``.L<name>:`` flush with the left margin."""
     assert Label(name="loop_start").emit() == ".Lloop_start:"
+
+
+def test_push_emit() -> None:
+    """``Push`` emits ``  pushq <operand>``."""
+    assert Push(operand=Register(Registers.AX, Width.QWORD)).emit() == "  pushq %rax"
+
+
+def test_allocate_stack_emit() -> None:
+    """``AllocateStack`` emits ``  subq $<size>, %rsp``."""
+    assert AllocateStack(size=16).emit() == "  subq $16, %rsp"
+
+
+def test_deallocate_stack_emit() -> None:
+    """``DeallocateStack`` emits ``  addq $<size>, %rsp``."""
+    assert DeallocateStack(size=16).emit() == "  addq $16, %rsp"
+
+
+def test_call_emit() -> None:
+    """``Call`` emits ``  call <name>``."""
+    assert Call(name="foo").emit() == "  call foo"
+
+
+# ---------------------------------------------------------------------------
+# emit_program — macOS Call prefix
+# ---------------------------------------------------------------------------
+
+
+def test_emit_program_macos_call_prefix(tmp_path: Path) -> None:
+    """On macOS, ``Call`` instruction targets are prefixed with ``_``."""
+    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
+    program = Program(functions=(fn,))
+    out = tmp_path / "main.s"
+    emit_program(program, out, platform="darwin")
+    content = out.read_text()
+    assert "  call _foo" in content
+
+
+def test_emit_program_linux_call_plt_suffix(tmp_path: Path) -> None:
+    """On Linux, ``Call`` instruction targets are suffixed with ``@PLT``."""
+    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
+    program = Program(functions=(fn,))
+    out = tmp_path / "main.s"
+    emit_program(program, out, platform="linux")
+    content = out.read_text()
+    assert "  call foo@PLT" in content
+
+
+def test_emit_program_linux_call_no_underscore_prefix(tmp_path: Path) -> None:
+    """On Linux, ``Call`` instruction targets are NOT prefixed with ``_``."""
+    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
+    program = Program(functions=(fn,))
+    out = tmp_path / "main.s"
+    emit_program(program, out, platform="linux")
+    content = out.read_text()
+    assert "  call _foo" not in content
+
+
+def test_emit_program_macos_call_no_plt(tmp_path: Path) -> None:
+    """On macOS, ``Call`` instruction targets do NOT receive ``@PLT``."""
+    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
+    program = Program(functions=(fn,))
+    out = tmp_path / "main.s"
+    emit_program(program, out, platform="darwin")
+    assert "@PLT" not in out.read_text()

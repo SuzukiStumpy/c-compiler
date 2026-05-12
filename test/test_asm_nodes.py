@@ -9,8 +9,11 @@ import dataclasses
 import pytest
 
 from compiler.syntax.asm import (
+    AllocateStack,
+    Call,
     Cmp,
     CondCodes,
+    DeallocateStack,
     Function,
     Imm,
     Instruction,
@@ -20,6 +23,7 @@ from compiler.syntax.asm import (
     Mov,
     Operand,
     Program,
+    Push,
     Register,
     Registers,
     Ret,
@@ -320,3 +324,108 @@ class TestLabel:
         lbl = Label(name="start")
         with pytest.raises(dataclasses.FrozenInstanceError):
             lbl.name = "other"  # type: ignore[misc]
+
+
+class TestAllocateStack:
+    """``AllocateStack`` is a frozen dataclass for a stack-reservation instruction."""
+
+    def test_construction(self) -> None:
+        """``AllocateStack`` stores the byte count."""
+        assert AllocateStack(size=16).size == 16
+
+    def test_is_instruction(self) -> None:
+        """``AllocateStack`` is a subclass of ``Instruction``."""
+        assert isinstance(AllocateStack(size=0), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``AllocateStack`` nodes with the same size are equal."""
+        assert AllocateStack(size=32) == AllocateStack(size=32)
+
+    def test_inequality(self) -> None:
+        """``AllocateStack`` nodes with different sizes are not equal."""
+        assert AllocateStack(size=16) != AllocateStack(size=32)
+
+    def test_immutable(self) -> None:
+        """``AllocateStack`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        a = AllocateStack(size=8)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            a.size = 16  # type: ignore[misc]
+
+
+class TestDeallocateStack:
+    """``DeallocateStack`` is a frozen dataclass for a stack-reclamation instruction."""
+
+    def test_construction(self) -> None:
+        """``DeallocateStack`` stores the byte count."""
+        assert DeallocateStack(size=16).size == 16
+
+    def test_is_instruction(self) -> None:
+        """``DeallocateStack`` is a subclass of ``Instruction``."""
+        assert isinstance(DeallocateStack(size=0), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``DeallocateStack`` nodes with the same size are equal."""
+        assert DeallocateStack(size=32) == DeallocateStack(size=32)
+
+    def test_inequality(self) -> None:
+        """``DeallocateStack`` nodes with different sizes are not equal."""
+        assert DeallocateStack(size=16) != DeallocateStack(size=32)
+
+    def test_immutable(self) -> None:
+        """``DeallocateStack`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        d = DeallocateStack(size=8)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            d.size = 16  # type: ignore[misc]
+
+
+class TestPush:
+    """``Push`` is a frozen dataclass for a stack-push instruction."""
+
+    def test_construction(self) -> None:
+        """``Push`` stores the operand to push."""
+        p = Push(operand=Register(Registers.AX, Width.QWORD))
+        assert p.operand == Register(Registers.AX, Width.QWORD)
+
+    def test_is_instruction(self) -> None:
+        """``Push`` is a subclass of ``Instruction``."""
+        assert isinstance(Push(operand=Imm(value=0)), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``Push`` nodes with the same operand are equal."""
+        assert Push(operand=Imm(value=1)) == Push(operand=Imm(value=1))
+
+    def test_inequality(self) -> None:
+        """``Push`` nodes with different operands are not equal."""
+        assert Push(operand=Imm(value=1)) != Push(operand=Imm(value=2))
+
+    def test_immutable(self) -> None:
+        """``Push`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        p = Push(operand=Imm(value=0))
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            p.operand = Imm(value=99)  # type: ignore[misc]
+
+
+class TestCall:
+    """``Call`` is a frozen dataclass for a function-call instruction."""
+
+    def test_construction(self) -> None:
+        """``Call`` stores the function name."""
+        assert Call(name="foo").name == "foo"
+
+    def test_is_instruction(self) -> None:
+        """``Call`` is a subclass of ``Instruction``."""
+        assert isinstance(Call(name="foo"), Instruction)
+
+    def test_equality(self) -> None:
+        """Two ``Call`` nodes with the same name are equal."""
+        assert Call(name="bar") == Call(name="bar")
+
+    def test_inequality(self) -> None:
+        """``Call`` nodes with different names are not equal."""
+        assert Call(name="foo") != Call(name="bar")
+
+    def test_immutable(self) -> None:
+        """``Call`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        c = Call(name="foo")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            c.name = "bar"  # type: ignore[misc]

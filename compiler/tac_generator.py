@@ -106,7 +106,8 @@ def generate(program: ast.Program) -> tac.Program:
     Raises:
         CodeGenerationError: If any construct cannot be translated.
     """
-    functions = [_TacGenerator().translate_function(fn) for fn in program.functions if fn.body is not None]
+    gen = _TacGenerator()
+    functions = [gen.translate_function(fn) for fn in program.functions if fn.body is not None]
     return tac.Program(functions=tuple(functions))
 
 

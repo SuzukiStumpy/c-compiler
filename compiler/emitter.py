@@ -1,10 +1,14 @@
 """Assembly emission stage: writes an assembly AST to a ``.s`` file.
 
-Converts an ``asm.Program`` into a text assembly file, applying two
+Converts an ``asm.Program`` into a text assembly file, applying three
 platform-specific rules:
 
-* **macOS** — all function names are prefixed with an underscore (``_``)
-  because the macOS ABI requires a leading underscore on C symbols.
+* **macOS** — all function definition names and ``call`` targets are prefixed
+  with an underscore (``_``) because the macOS ABI requires a leading
+  underscore on C symbols.
+* **Linux** — every ``call`` target is suffixed with ``@PLT`` so the linker
+  routes the call through the Procedure Linkage Table, enabling correct
+  dynamic symbol resolution for external symbols.
 * **Linux / WSL** — a ``.section .note.GNU-stack,"",@progbits`` directive
   is appended to mark the stack as non-executable, as required by modern
   Linux toolchains.
@@ -27,8 +31,10 @@ def emit_program(program: asm.Program, output_path: Path, platform: str | None =
 
     Applies platform-specific transformations before writing:
 
-    * On macOS (``"darwin"``), the function name is prefixed with ``_``.
-    * On Linux (``"linux"``), a GNU-stack section directive is appended.
+    * On macOS (``"darwin"``), function definition names and ``call`` targets
+      are prefixed with ``_``.
+    * On Linux (``"linux"``), ``call`` targets are suffixed with ``@PLT`` and
+      a GNU-stack section directive is appended.
 
     Args:
         program: The assembly AST to emit.
@@ -55,8 +61,10 @@ def emit_program(program: asm.Program, output_path: Path, platform: str | None =
 def _apply_platform_conventions(program: asm.Program, platform: str) -> asm.Program:
     """Return a copy of ``program`` with platform-specific name adjustments.
 
-    On macOS, every function name receives a leading underscore.  On other
-    platforms the program is returned unchanged.
+    On macOS, every function definition name and every ``Call`` instruction
+    target receive a leading underscore.  On Linux, every ``Call`` target is
+    suffixed with ``@PLT``.  On other platforms the program is returned
+    unchanged.
 
     Args:
         program: The assembly AST to adjust.
@@ -66,7 +74,26 @@ def _apply_platform_conventions(program: asm.Program, platform: str) -> asm.Prog
         A new ``asm.Program`` with adjusted names, or the original if no
         adjustment is needed.
     """
-    if not platform.startswith("darwin"):
-        return program
-    prefixed = tuple(dataclasses.replace(fn, name=f"_{fn.name}") for fn in program.functions)
-    return dataclasses.replace(program, functions=prefixed)
+    if platform.startswith("darwin"):
+
+        def _adjust_call(instr: asm.Instruction) -> asm.Instruction:
+            return dataclasses.replace(instr, name=f"_{instr.name}") if isinstance(instr, asm.Call) else instr
+
+        def _adjust_function(fn: asm.Function) -> asm.Function:
+            return dataclasses.replace(
+                fn, name=f"_{fn.name}", instructions=tuple(_adjust_call(i) for i in fn.instructions)
+            )
+
+        return dataclasses.replace(program, functions=tuple(_adjust_function(fn) for fn in program.functions))
+
+    if platform.startswith("linux"):
+
+        def _adjust_call_plt(instr: asm.Instruction) -> asm.Instruction:
+            return dataclasses.replace(instr, name=f"{instr.name}@PLT") if isinstance(instr, asm.Call) else instr
+
+        def _adjust_function_plt(fn: asm.Function) -> asm.Function:
+            return dataclasses.replace(fn, instructions=tuple(_adjust_call_plt(i) for i in fn.instructions))
+
+        return dataclasses.replace(program, functions=tuple(_adjust_function_plt(fn) for fn in program.functions))
+
+    return program
