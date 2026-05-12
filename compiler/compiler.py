@@ -70,7 +70,7 @@ class MutuallyExclusiveOption(click.Option):
         return super().handle_parse_result(ctx, opts, args)
 
 
-def compile(source: Path, stages: Stage = Stage.ALL) -> None:
+def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> None:
     """Run the selected compilation stages on a preprocessed source file.
 
     Executes each requested stage in pipeline order: lexing, parsing, TAC
@@ -86,6 +86,8 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
     Args:
         source: Path to the preprocessed ``.i`` file to compile.
         stages: Bitmask of stages to execute.  Defaults to ``Stage.ALL``.
+        exe_out: When ``Stage.LINK`` is included, ``True`` produces a linked executable
+            and ``False`` produces an object file only.
 
     Raises:
         LexerError: If the lexer stage encounters an invalid character.
@@ -128,7 +130,7 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
         assert asm_program is not None
         assembly = source.parent / f"{source.stem}.s"
         emit_program(asm_program, assembly)
-        executable = assemble_and_link(assembly)
+        executable = assemble_and_link(assembly, exe_out=exe_out)
         click.echo(f"Compilation complete.  Output file is: {executable}")
 
 
@@ -141,6 +143,11 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
         "Pass a stage flag to stop the pipeline early and inspect intermediate output. "
         "Without a flag the full pipeline runs and an executable is produced."
     )
+)
+@click.option(
+    "-c",
+    is_flag=True,
+    help="Don't link, just produce an object file.",
 )
 @click.option(
     "--lex",
@@ -180,6 +187,7 @@ def compile(source: Path, stages: Stage = Stage.ALL) -> None:
 @click.argument("source", type=click.Path(), required=True, nargs=1)
 def compiler(
     source: str,
+    c: bool,
     lex: bool,
     parse: bool,
     validate: bool,
@@ -190,6 +198,7 @@ def compiler(
 
     Args:
         source: Path to the C source file to compile.
+        c: Don't link an executable file, just produce object file.
         lex: Stop the pipeline after lexing.
         parse: Stop the pipeline after parsing; print the AST.
         validate: Stop after semantic analysis; print the resolved AST.
@@ -211,7 +220,7 @@ def compiler(
 
     try:
         pre_processed = preprocess(Path(source))
-        compile(pre_processed, stages)
+        compile(pre_processed, stages, exe_out=not c)
     except (LexerError, ParseError, CodeGenerationError) as ex:
         click.echo(format_for_terminal(ex), err=True)
         sys.exit(1)

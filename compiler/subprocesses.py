@@ -56,30 +56,36 @@ def preprocess(source: Path) -> tuple[int, str] | Path:
     lambda result: SubprocessError(result[0], "gcc", result[1]),
     ok=lambda result: isinstance(result, Path),
 )
-def assemble_and_link(source: Path) -> tuple[int, str] | Path:
-    """Assemble and link a generated assembly file into an executable.
+def assemble_and_link(source: Path, exe_out: bool = True) -> tuple[int, str] | Path:
+    """Assemble and optionally link a generated assembly file.
 
-    Invokes ``gcc`` on the given ``.s`` file to produce a native executable
-    at the same path without the file extension.
+    Invokes ``gcc`` on the given ``.s`` file.  When ``exe_out`` is ``True``
+    (the default) the result is a native executable at the same path without
+    the file extension.  When ``exe_out`` is ``False`` the ``-c`` flag is
+    passed to ``gcc`` and the result is a ``.o`` object file.
 
     Args:
         source: Path to the ``.s`` assembly file to assemble and link.
+        exe_out: ``True`` to produce a linked executable; ``False`` to produce
+            an object file only (passes ``-c`` to ``gcc``).
 
     Returns:
-        The path to the generated executable on success.
+        The path to the generated output file on success.
 
     Raises:
         SubprocessError: If GCC exits with a non-zero return code.
     """
     print(f"Assembling and linking {source}...")
 
+    if exe_out:
+        output = source.parent / source.stem
+        gcc_args = ["gcc", source.as_posix(), "-o", output.as_posix()]
+    else:
+        output = source.parent / f"{source.stem}.o"
+        gcc_args = ["gcc", "-c", source.as_posix(), "-o", output.as_posix()]
+
     r = subprocess.run(
-        [
-            "gcc",
-            source.as_posix(),
-            "-o",
-            (source.parent / source.stem).as_posix(),
-        ],
+        gcc_args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -88,5 +94,4 @@ def assemble_and_link(source: Path) -> tuple[int, str] | Path:
     if r.returncode != 0:
         return (r.returncode, r.stdout)
     else:
-        # Path.unlink(source)
-        return source.parent / source.stem
+        return output
