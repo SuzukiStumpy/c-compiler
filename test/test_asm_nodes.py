@@ -177,24 +177,24 @@ class TestFunction:
 
 
 class TestProgram:
-    """``Program`` is the root assembly AST node holding a single function."""
+    """``Program`` is the root assembly AST node holding function definitions."""
 
     def test_construction(self) -> None:
-        """``Program`` stores its single function definition."""
+        """``Program`` stores its function definitions."""
         fn = Function(name="main", instructions=(Ret(),))
-        prog = Program(function=fn)
-        assert prog.function is fn
+        prog = Program(functions=(fn,))
+        assert prog.functions == (fn,)
 
     def test_equality(self) -> None:
         """Two ``Program`` nodes wrapping equal functions are equal."""
         fn = Function(name="main", instructions=(Ret(),))
-        assert Program(function=fn) == Program(function=fn)
+        assert Program(functions=(fn,)) == Program(functions=(fn,))
 
     def test_immutable(self) -> None:
         """``Program`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
-        prog = Program(function=Function(name="main", instructions=()))
+        prog = Program(functions=(Function(name="main", instructions=()),))
         with pytest.raises(dataclasses.FrozenInstanceError):
-            prog.function = Function(name="other", instructions=())  # type: ignore[misc]
+            prog.functions = ()  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

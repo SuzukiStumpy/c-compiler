@@ -145,7 +145,7 @@ def test_function_emit_full() -> None:
 def test_emit_program_linux_content(tmp_path: Path) -> None:
     """On Linux the file contains the expected instructions."""
     mov = Mov(src=Imm(value=3), dst=Register(Registers.AX))
-    program = Program(function=Function(name="main", instructions=(mov, Ret())))
+    program = Program(functions=(Function(name="main", instructions=(mov, Ret())),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -157,7 +157,7 @@ def test_emit_program_linux_content(tmp_path: Path) -> None:
 
 def test_emit_program_linux_gnu_stack(tmp_path: Path) -> None:
     """On Linux the GNU-stack section directive is appended."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -166,7 +166,7 @@ def test_emit_program_linux_gnu_stack(tmp_path: Path) -> None:
 
 def test_emit_program_linux_gnu_stack_is_last_line(tmp_path: Path) -> None:
     """The GNU-stack directive is the last non-empty line of the file."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
@@ -175,7 +175,7 @@ def test_emit_program_linux_gnu_stack_is_last_line(tmp_path: Path) -> None:
 
 def test_emit_program_linux_no_underscore_prefix(tmp_path: Path) -> None:
     """On Linux function names are NOT prefixed with an underscore."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -184,7 +184,7 @@ def test_emit_program_linux_no_underscore_prefix(tmp_path: Path) -> None:
 
 def test_emit_program_linux_trailing_newline(tmp_path: Path) -> None:
     """The emitted file ends with a newline character."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     assert out.read_text().endswith("\n")
@@ -197,7 +197,7 @@ def test_emit_program_linux_trailing_newline(tmp_path: Path) -> None:
 
 def test_emit_program_macos_underscore_prefix(tmp_path: Path) -> None:
     """On macOS the function name is prefixed with ``_``."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     content = out.read_text()
@@ -207,7 +207,7 @@ def test_emit_program_macos_underscore_prefix(tmp_path: Path) -> None:
 
 def test_emit_program_macos_no_gnu_stack(tmp_path: Path) -> None:
     """On macOS the GNU-stack section directive is NOT emitted."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     assert ".note.GNU-stack" not in out.read_text()
@@ -215,14 +215,14 @@ def test_emit_program_macos_no_gnu_stack(tmp_path: Path) -> None:
 
 def test_emit_program_macos_original_node_unchanged(tmp_path: Path) -> None:
     """``emit_program`` does not mutate the original ``Program`` node."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     emit_program(program, tmp_path / "main.s", platform="darwin")
-    assert program.function.name == "main"
+    assert program.functions[0].name == "main"
 
 
 def test_emit_program_writes_file(tmp_path: Path) -> None:
     """``emit_program`` creates the output file."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     out = tmp_path / "out.s"
     assert not out.exists()
     emit_program(program, out, platform="linux")
@@ -231,7 +231,7 @@ def test_emit_program_writes_file(tmp_path: Path) -> None:
 
 def test_emit_program_bad_path_raises(tmp_path: Path) -> None:
     """``emit_program`` raises ``OSError`` if the output path is not writable."""
-    program = Program(function=Function(name="main", instructions=(Ret(),)))
+    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
     with pytest.raises(OSError):
         emit_program(program, tmp_path / "nonexistent_dir" / "out.s", platform="linux")
 

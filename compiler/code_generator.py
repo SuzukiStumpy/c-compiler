@@ -58,11 +58,13 @@ def generate(program: tac.Program) -> asm.Program:
     Raises:
         CodeGenerationError: If any TAC construct cannot be translated.
     """
-    raw_fn = _translate_function(program.function)
-    resolved_fn, stack_size = _replace_pseudos(raw_fn)
-    fixed_fn = _fix_instructions(resolved_fn)
-    final_fn = _add_stack_allocation(fixed_fn, stack_size)
-    return asm.Program(function=final_fn)
+    functions: list[asm.Function] = []
+    for tac_fn in program.functions:
+        raw_fn = _translate_function(tac_fn)
+        resolved_fn, stack_size = _replace_pseudos(raw_fn)
+        fixed_fn = _fix_instructions(resolved_fn)
+        functions.append(_add_stack_allocation(fixed_fn, stack_size))
+    return asm.Program(functions=tuple(functions))
 
 
 # ==============================================================================

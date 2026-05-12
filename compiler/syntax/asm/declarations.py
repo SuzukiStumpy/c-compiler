@@ -66,23 +66,21 @@ class Function:
 class Program:
     """The root assembly AST node representing a complete translation unit.
 
-    In the current grammar a translation unit contains exactly one function
-    definition.
-
     Attributes:
-        function: The single top-level function definition.
+        functions: The ordered sequence of top-level function definitions.
+            At least one function is required.
     """
 
-    function: Function
+    functions: tuple[Function, ...]
 
     def emit(self) -> str:
         """Return the assembly text for the full translation unit.
 
-        Delegates to the single contained function definition.  Platform-
-        specific additions (name mangling, section directives) are applied
-        by the emitter before calling this method.
+        Delegates to each contained function definition and joins their output.
+        Platform-specific additions (name mangling, section directives) are
+        applied by the emitter before calling this method.
 
         Returns:
-            The assembly text of the contained function.
+            The assembly text of all contained functions, separated by newlines.
         """
-        return self.function.emit()
+        return "\n".join(fn.emit() for fn in self.functions)

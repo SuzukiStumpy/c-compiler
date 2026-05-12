@@ -68,5 +68,5 @@ def _apply_platform_conventions(program: asm.Program, platform: str) -> asm.Prog
     """
     if not platform.startswith("darwin"):
         return program
-    prefixed = dataclasses.replace(program.function, name=f"_{program.function.name}")
-    return dataclasses.replace(program, function=prefixed)
+    prefixed = tuple(dataclasses.replace(fn, name=f"_{fn.name}") for fn in program.functions)
+    return dataclasses.replace(program, functions=prefixed)

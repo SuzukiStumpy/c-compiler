@@ -18,27 +18,28 @@ class Function:
     function in the generated assembly.
 
     Attributes:
-        name: The function name used as the assembly label
-        body: The ordered sequence of instructions in the function body.  May
-              be empty before code generation fills it in, but will contain at
-              least one instruction in fully generated output.
+        name:   The function name used as the assembly label
+        params: The ordered sequence of parameters that can be passed to the function
+        body:   The ordered sequence of instructions in the function body.  May
+                be empty before code generation fills it in, but will contain at
+                least one instruction in fully generated output.
     """
 
     name: str
-    body: tuple[Instruction, ...]
+    params: tuple[str, ...] = ()
+    body: tuple[Instruction, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Program:
     """A tac program definition.
 
-    Represents the root of the tac AST and should contain the function definitions.
-
-    In the current implementation Program consists of _exactly_ one function
-    definition
+    Represents the root of the tac AST and contains all function definitions
+    in the translation unit.
 
     Attributes:
-        function: The function that is the entry point for the program
+        functions: The ordered sequence of function definitions in the program.
+            At least one function is required.
     """
 
-    function: Function
+    functions: tuple[Function, ...]

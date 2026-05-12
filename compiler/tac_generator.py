@@ -101,14 +101,13 @@ def generate(program: ast.Program) -> tac.Program:
 
     Returns:
         A ``tac.Program`` node representing the equivalent TAC program.
+        Forward declarations (functions without a body) are skipped.
 
     Raises:
-        CodeGenerationError: If ``program`` contains more than one function,
-            or if any construct cannot be translated.
+        CodeGenerationError: If any construct cannot be translated.
     """
-    if len(program.functions) != 1:
-        raise CodeGenerationError(f"expected exactly one function definition, got {len(program.functions)}")
-    return tac.Program(function=_TacGenerator().translate_function(program.functions[0]))
+    functions = [_TacGenerator().translate_function(fn) for fn in program.functions if fn.body is not None]
+    return tac.Program(functions=tuple(functions))
 
 
 def _translate_binary_op(op: ast.BinaryOperator) -> tac.BinaryOperator:
@@ -230,7 +229,11 @@ class _TacGenerator:
         instructions = self.translate_block(function.body)
         # Guard instruction for functions that don't supply a return value
         instructions.append(tac.Return(tac.Constant(0)))
-        return tac.Function(name=function.name, body=tuple(instructions))
+        return tac.Function(
+            name=function.name,
+            params=tuple(p.name for p in function.params),
+            body=tuple(instructions),
+        )
 
     def translate_block(self, block: ast.Block) -> list[tac.Instruction]:
         """Translate a sequence of block items into a flat list of TAC instructions.
@@ -268,11 +271,13 @@ class _TacGenerator:
         match item:
             case ast.S(statement=stmt):
                 return self.translate_statement(stmt)
-            case ast.D(declaration=ast.Declaration(name=name, init=init)):
+            case ast.D(declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name=name, init=init))):
                 if init is None:
                     return []
                 val, instrs = self.translate_exp(init)
                 return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
+            case ast.D(declaration=ast.FunDecl()):
+                return []
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 
@@ -448,7 +453,14 @@ class _TacGenerator:
                     return []
                 _, instrs = self.translate_exp(exp)
                 return instrs
-            case ast.InitDecl(declaration=ast.Declaration(name=name, init=decl_init)):
+            case ast.InitDecl(
+                declaration=ast.VarDecl(
+                    variable_declaration=ast.VariableDeclaration(
+                        name=name,
+                        init=decl_init,
+                    )
+                )
+            ):
                 if decl_init is None:
                     return []
                 val, instrs = self.translate_exp(decl_init)
@@ -647,5 +659,14 @@ class _TacGenerator:
                     tac.Copy(src=e2_val, dst=dst),
                     label_end,
                 ]
+            case ast.FunctionCall(name=name, args=args):
+                arg_vals: list[tac.Val] = []
+                all_instrs: list[tac.Instruction] = []
+                for arg in args:
+                    val, instrs = self.translate_exp(arg)
+                    all_instrs.extend(instrs)
+                    arg_vals.append(val)
+                dst = self._make_temp()
+                return dst, [*all_instrs, tac.FunCall(name=name, args=tuple(arg_vals), dst=dst)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

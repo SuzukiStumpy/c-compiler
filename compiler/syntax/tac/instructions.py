@@ -126,3 +126,18 @@ class Label(Instruction):
     """
 
     name: str
+
+
+@dataclass(frozen=True, slots=True)
+class FunCall(Instruction):
+    """Call site for a function.
+
+    Attributes:
+        name: Name of the function which we want to call
+        args: Ordered sequence of arguments to pass to the function
+        dst: The destination that the function will return to
+    """
+
+    name: str
+    args: tuple[Val]
+    dst: Val

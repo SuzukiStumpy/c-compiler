@@ -5,7 +5,7 @@ initial code generation pass (after the parser has done it's thing).  The gramma
 mirrors the ASDL grammar for the supported assembly subset:
 
     program             = Program(function_definition)
-    function_definition = Function(identifier, instruction* body)
+    function_definition = Function(identifier, identifier* params, instruction* body)
     instruction         = Return(val)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
@@ -14,6 +14,7 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | JumpIfZero(val condition, identifier target)
                         | JumpIfNotZero(val condition, identifier target)
                         | Label(identifier)
+                        | FunCall(identifier fun_name, val* args, val dst)
     val                 = Constant(int) | Var(identifier)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
@@ -42,6 +43,7 @@ from compiler.syntax.tac.declarations import Function, Program
 from compiler.syntax.tac.instructions import (
     Binary,
     Copy,
+    FunCall,
     Instruction,
     Jump,
     JumpIfNotZero,
@@ -76,6 +78,7 @@ from compiler.syntax.tac.operators import (
 from compiler.syntax.tac.values import Constant, Val, Var
 
 __all__ = [
+    "FunCall",
     "Equal",
     "GreaterOrEqual",
     "GreaterThan",
