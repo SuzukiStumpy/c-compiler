@@ -1,16 +1,13 @@
 [project]
-name = "c-compiler"
-version = "0.1.0"
-description = "A minimal C compiler written in Python"
-readme = "README.md"
+name            = "c-compiler"
+version         = "0.1.0"
+description     = "A minimal C compiler written in Python"
+readme          = "README.md"
 requires-python = ">=3.13"
-dependencies = [
-    "click>=8.3.3",
-]
-
+dependencies    = ["click>=8.3.3"]
 
 [build-system]
-requires = ["uv_build"]
+requires      = ["uv_build"]
 build-backend = "uv_build"
 
 [project.scripts]
@@ -29,17 +26,8 @@ dev = [
 [tool]
 
 [tool.pyrefly]
-project-includes = [
-    "compiler",
-    "**/*.py*",
-    "**/*.ipynb",
-]
-project-excludes = [
-    "**/__pycache__",
-    "**/*venv/**",
-    "**/.[!/.]*/**",
-    "test",
-]
+project-includes = ["compiler", "**/*.py*", "**/*.ipynb"]
+project-excludes = ["**/__pycache__", "**/*venv/**", "**/.[!/.]*/**", "test"]
 search-path = ["compiler"]
 site-package-path = [
     ".venv/lib64/python3.13/site-packages",
@@ -48,27 +36,28 @@ site-package-path = [
 use-ignore-files = true
 
 [tool.ruff]
-lint.select = ["ANN", "E", "F", "W", "C", "I"]
+lint.select        = ["ANN", "E", "F", "W", "C", "I"]
 lint.extend-select = ["ANN"]
-lint.ignore = []
+lint.ignore        = []
 
 # Allow ruff to auto fix any fixable issues
-lint.fixable = ["ALL"]
+lint.fixable   = ["ALL"]
 lint.unfixable = []
-line-length = 120
+line-length    = 120
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20
 
 [tool.ruff.lint.isort]
 
+[tool.uv]
+exclude-newer = "1 week"
+
 [tool.uv.build-backend]
 module-root = ""
 module-name = "compiler"
 
 [tool.pytest.ini_options]
-testpaths = [
-    "test",
-]
+testpaths     = ["test"]
 norecursedirs = ["compiler", ".venv", "**/__pycache__"]
-addopts = "--ignore=compiler"
+addopts       = "--ignore=compiler"
