@@ -133,6 +133,30 @@ class AllocateStack(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class DeallocateStack(Instruction):
+    """An ``addq`` instruction that reclaims space from the stack.
+
+    This instruction is appended to code whenever we return from a function and the
+    caller needs to restore the previous state of the stack.  The ``size`` is always
+    a positive multiple of 16 to maintain ABI alignment.
+
+    Attributes:
+        size: Number of bytes to add to ``%rsp``.
+    """
+
+    size: int
+
+    def emit(self) -> str:
+        """Return an ``addq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``  addq $<size>, %rsp``,
+            e.g. ``  addq $16, %rsp``.
+        """
+        return f"  addq ${self.size}, %rsp"
+
+
+@dataclass(frozen=True, slots=True)
 class Binary(Instruction):
     """A binary instruction that reads two operands and writes the result to the second.
 
@@ -378,3 +402,46 @@ class Label(Instruction):
             than an instruction.
         """
         return f".L{self.name}:"
+
+
+@dataclass(frozen=True, slots=True)
+class Push(Instruction):
+    """A ``pushq`` instruction that saves a value onto the stack
+
+    Attributes:
+        operand: The value to push onto the stack
+    """
+
+    operand: Operand
+
+    def emit(self) -> str:
+        """Return a ``pushq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  pushq <operand>"``.
+        """
+        return f"  pushq {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Call(Instruction):
+    """A ``call`` instruction that transfers control to a named function.
+
+    The ``call`` instruction pushes the return address onto the stack and
+    jumps to the named symbol.  The caller is responsible for placing
+    arguments in the correct ABI registers and stack slots before ``call``,
+    and for retrieving the return value from ``%eax``/``%rax`` afterwards.
+
+    Attributes:
+        name: The symbol name of the function to call.
+    """
+
+    name: str
+
+    def emit(self) -> str:
+        """Return a ``call`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  call <name>"``.
+        """
+        return f"  call {self.name}"

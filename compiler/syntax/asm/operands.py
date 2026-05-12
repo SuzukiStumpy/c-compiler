@@ -19,6 +19,7 @@ class Width(IntEnum):
 
     BYTE = 1
     DWORD = 4
+    QWORD = 8
 
 
 class Registers(Enum):
@@ -29,11 +30,15 @@ class Registers(Enum):
     additional widths without touching any other code.
     """
 
-    AX = {Width.DWORD: "eax", Width.BYTE: "al"}
-    CX = {Width.DWORD: "ecx", Width.BYTE: "cl"}
-    DX = {Width.DWORD: "edx", Width.BYTE: "dl"}
-    R10 = {Width.DWORD: "r10d", Width.BYTE: "r10b"}
-    R11 = {Width.DWORD: "r11d", Width.BYTE: "r11b"}
+    AX = {Width.QWORD: "rax", Width.DWORD: "eax", Width.BYTE: "al"}
+    CX = {Width.QWORD: "rcx", Width.DWORD: "ecx", Width.BYTE: "cl"}
+    DX = {Width.QWORD: "rdx", Width.DWORD: "edx", Width.BYTE: "dl"}
+    DI = {Width.QWORD: "rdi", Width.DWORD: "edi", Width.BYTE: "dil"}
+    SI = {Width.QWORD: "rsi", Width.DWORD: "esi", Width.BYTE: "sil"}
+    R8 = {Width.QWORD: "r8", Width.DWORD: "r8d", Width.BYTE: "r8b"}
+    R9 = {Width.QWORD: "r9", Width.DWORD: "r9d", Width.BYTE: "r9b"}
+    R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.BYTE: "r10b"}
+    R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.BYTE: "r11b"}
 
 
 class Operand(ABC):

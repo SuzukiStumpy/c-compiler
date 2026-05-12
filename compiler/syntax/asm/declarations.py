@@ -8,6 +8,7 @@ one form.
 from dataclasses import dataclass
 
 from compiler.syntax.asm.instructions import Instruction
+from compiler.syntax.asm.operands import Operand
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,13 +20,18 @@ class Function:
 
     Attributes:
         name: The function name used as the assembly label.
+        params: Register operands that carry the function's parameters on
+            entry, in ABI order (DI, SI, DX, …).  This field is informational
+            metadata used during code generation; it does not appear in the
+            emitted assembly.
         instructions: The ordered sequence of instructions in the function
             body. May be empty before code generation fills it in, but will
             contain at least one instruction in fully generated output.
     """
 
     name: str
-    instructions: tuple[Instruction, ...]
+    params: tuple[Operand, ...] = ()
+    instructions: tuple[Instruction, ...] = ()
 
     def emit(self) -> str:
         """Return the assembly text for this function definition.

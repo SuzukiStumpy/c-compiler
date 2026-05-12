@@ -33,7 +33,6 @@ def _program_returning(exp: ast.Exp) -> ast.Program:
     return ast.Program(
         functions=(
             ast.Function(
-                return_type=ast.IntType(),
                 name="main",
                 params=(),
                 body=(ast.S(statement=ast.Return(exp=exp)),),
@@ -51,7 +50,7 @@ def _body(exp: ast.Exp) -> tuple[tac.Instruction, ...]:
     Returns:
         The TAC instruction tuple from the generated function body.
     """
-    return generate(_program_returning(exp)).function.body
+    return generate(_program_returning(exp)).functions[0].body
 
 
 # ---------------------------------------------------------------------------
@@ -266,29 +265,12 @@ class TestTacGeneratorErrors:
             pass
 
         fn = ast.Function(
-            return_type=ast.IntType(),
             name="main",
             params=(),
-            body=(_FakeStmt(),),
+            body=(ast.S(statement=_FakeStmt()),),
         )
         with pytest.raises(CodeGenerationError):
             generate(ast.Program(functions=(fn,)))
-
-    def test_zero_functions_raises(self) -> None:
-        """A program with no functions raises ``CodeGenerationError``."""
-        with pytest.raises(CodeGenerationError):
-            generate(ast.Program(functions=()))
-
-    def test_multiple_functions_raises(self) -> None:
-        """A program with more than one function raises ``CodeGenerationError``."""
-        fn = ast.Function(
-            return_type=ast.IntType(),
-            name="f",
-            params=(),
-            body=(ast.Return(exp=ast.Constant(value=0)),),
-        )
-        with pytest.raises(CodeGenerationError):
-            generate(ast.Program(functions=(fn, fn)))
 
 
 # ---------------------------------------------------------------------------
@@ -438,18 +420,21 @@ def _instrs_for_body(body: tuple[ast.BlockItem, ...]) -> tuple[tac.Instruction, 
     Returns:
         The TAC instruction tuple from the generated function body.
     """
-    return generate(
-        ast.Program(
-            functions=(
-                ast.Function(
-                    return_type=ast.IntType(),
-                    name="main",
-                    params=(),
-                    body=body,
-                ),
+    return (
+        generate(
+            ast.Program(
+                functions=(
+                    ast.Function(
+                        name="main",
+                        params=(),
+                        body=body,
+                    ),
+                )
             )
         )
-    ).function.body
+        .functions[0]
+        .body
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -579,12 +564,22 @@ class TestTacGeneratorDeclarations:
 
     def test_declaration_without_init_produces_no_instructions(self) -> None:
         """A bare ``int x;`` declaration emits no TAC instructions; only the function guard is present."""
-        instrs = _instrs_for_body((ast.D(declaration=ast.Declaration(name="x", init=None)),))
+        instrs = _instrs_for_body(
+            (ast.D(declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name="x", init=None))),)
+        )
         assert instrs == (tac.Return(val=tac.Constant(value=0)),)
 
     def test_declaration_with_constant_init_produces_copy(self) -> None:
         """``int x = 5;`` emits ``Copy(Constant(5), Var("x"))`` followed by the guard."""
-        instrs = _instrs_for_body((ast.D(declaration=ast.Declaration(name="x", init=ast.Constant(value=5))),))
+        instrs = _instrs_for_body(
+            (
+                ast.D(
+                    declaration=ast.VarDecl(
+                        variable_declaration=ast.VariableDeclaration(name="x", init=ast.Constant(value=5))
+                    )
+                ),
+            )
+        )
         assert instrs == (
             tac.Copy(src=tac.Constant(value=5), dst=tac.Var(value="x")),
             tac.Return(val=tac.Constant(value=0)),
@@ -592,7 +587,15 @@ class TestTacGeneratorDeclarations:
 
     def test_declaration_copy_destination_is_the_declared_name(self) -> None:
         """The ``Copy`` destination uses the declaration's name verbatim."""
-        instrs = _instrs_for_body((ast.D(declaration=ast.Declaration(name=".Vmy_var.3", init=ast.Constant(value=0))),))
+        instrs = _instrs_for_body(
+            (
+                ast.D(
+                    declaration=ast.VarDecl(
+                        variable_declaration=ast.VariableDeclaration(name=".Vmy_var.3", init=ast.Constant(value=0))
+                    )
+                ),
+            )
+        )
         assert isinstance(instrs[0], tac.Copy)
         assert instrs[0].dst == tac.Var(value=".Vmy_var.3")
 
@@ -601,9 +604,11 @@ class TestTacGeneratorDeclarations:
         instrs = _instrs_for_body(
             (
                 ast.D(
-                    declaration=ast.Declaration(
-                        name="x",
-                        init=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
+                    declaration=ast.VarDecl(
+                        variable_declaration=ast.VariableDeclaration(
+                            name="x",
+                            init=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
+                        )
                     )
                 ),
             )
@@ -1085,13 +1090,29 @@ class TestTacGeneratorCompoundStatement:
 
     def test_compound_uninitialised_declaration_produces_no_instructions(self) -> None:
         """``{ int x; }`` has no initialiser and therefore contributes no instructions."""
-        instrs = _stmt_instrs(ast.Compound(body=(ast.D(declaration=ast.Declaration(name=".Vx.0", init=None)),)))
+        instrs = _stmt_instrs(
+            ast.Compound(
+                body=(
+                    ast.D(
+                        declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name=".Vx.0", init=None))
+                    ),
+                )
+            )
+        )
         assert instrs == (tac.Return(val=tac.Constant(value=0)),)
 
     def test_compound_initialised_declaration_produces_copy(self) -> None:
         """``{ int x = 5; }`` emits ``Copy(Constant(5), Var(x))`` followed by the guard."""
         instrs = _stmt_instrs(
-            ast.Compound(body=(ast.D(declaration=ast.Declaration(name=".Vx.0", init=ast.Constant(value=5))),))
+            ast.Compound(
+                body=(
+                    ast.D(
+                        declaration=ast.VarDecl(
+                            variable_declaration=ast.VariableDeclaration(name=".Vx.0", init=ast.Constant(value=5))
+                        )
+                    ),
+                )
+            )
         )
         assert instrs == (
             tac.Copy(src=tac.Constant(value=5), dst=tac.Var(value=".Vx.0")),
@@ -1103,7 +1124,11 @@ class TestTacGeneratorCompoundStatement:
         instrs = _stmt_instrs(
             ast.Compound(
                 body=(
-                    ast.D(declaration=ast.Declaration(name=".Vx.0", init=ast.Constant(value=1))),
+                    ast.D(
+                        declaration=ast.VarDecl(
+                            variable_declaration=ast.VariableDeclaration(name=".Vx.0", init=ast.Constant(value=1))
+                        )
+                    ),
                     ast.S(statement=ast.Return(exp=ast.Var(name=".Vx.0"))),
                 )
             )
@@ -1117,10 +1142,20 @@ class TestTacGeneratorCompoundStatement:
     def test_compound_flattens_with_surrounding_instructions(self) -> None:
         """Instructions before and after a compound block appear in a single flat sequence with no scope markers."""
         body = (
-            ast.D(declaration=ast.Declaration(name=".Va.0", init=ast.Constant(value=1))),
+            ast.D(
+                declaration=ast.VarDecl(
+                    variable_declaration=ast.VariableDeclaration(name=".Va.0", init=ast.Constant(value=1))
+                )
+            ),
             ast.S(
                 statement=ast.Compound(
-                    body=(ast.D(declaration=ast.Declaration(name=".Vb.1", init=ast.Constant(value=2))),)
+                    body=(
+                        ast.D(
+                            declaration=ast.VarDecl(
+                                variable_declaration=ast.VariableDeclaration(name=".Vb.1", init=ast.Constant(value=2))
+                            )
+                        ),
+                    )
                 )
             ),
             ast.S(statement=ast.Return(exp=ast.Var(name=".Va.0"))),
@@ -1472,7 +1507,11 @@ class TestTacGeneratorForLoop:
         """``for (int i = 0;;)`` emits ``Copy(0, i)`` as the very first instruction."""
         instrs = _stmt_instrs(
             ast.For(
-                init=ast.InitDecl(declaration=ast.Declaration(name=".Vi.0", init=ast.Constant(value=0))),
+                init=ast.InitDecl(
+                    declaration=ast.VarDecl(
+                        variable_declaration=ast.VariableDeclaration(name=".Vi.0", init=ast.Constant(value=0))
+                    )
+                ),
                 condition=None,
                 post=None,
                 body=ast.Null(),
@@ -1486,7 +1525,9 @@ class TestTacGeneratorForLoop:
         """``for (int i;;)`` — a declaration without an initialiser emits no ``Copy``."""
         instrs = _stmt_instrs(
             ast.For(
-                init=ast.InitDecl(declaration=ast.Declaration(name=".Vi.0", init=None)),
+                init=ast.InitDecl(
+                    declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name=".Vi.0", init=None))
+                ),
                 condition=None,
                 post=None,
                 body=ast.Null(),

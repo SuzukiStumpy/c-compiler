@@ -5,7 +5,7 @@ an assembly language program, produced by the code generator from the TAC AST
 and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
-    program             = Program(function_definition)
+    program             = Program(function_definition*)
     function_definition = Function(identifier name, instruction* instructions)
     instruction         = Mov(operand src, operand dst)
                         | Unary(unary_operator, operand)
@@ -20,6 +20,9 @@ for the supported assembly subset:
                         | SetCC(cond_code, operand)
                         | Label(identifier)
                         | AllocateStack(int)
+                        | DeallocateStack(int)
+                        | Push(operand)
+                        | Call(identifier)
                         | Ret
     unary_operator      = Neg | Not
     binary_operator     = Add | Sub | Mult | And | Or | Xor
@@ -28,7 +31,7 @@ for the supported assembly subset:
                         | Pseudo(identifier)
                         | Stack(int)
     cond_code           = E | NE | G | GE | L | LE
-    reg                 = AX | CX | DX | R10 | R11
+    reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11
 
 Nodes are organised into submodules by logical role:
 
@@ -55,15 +58,18 @@ from compiler.syntax.asm.declarations import Function, Program
 from compiler.syntax.asm.instructions import (
     AllocateStack,
     Binary,
+    Call,
     Cdq,
     Cmp,
     CondCodes,
+    DeallocateStack,
     Idiv,
     Instruction,
     Jmp,
     JmpCC,
     Label,
     Mov,
+    Push,
     Ret,
     Sar,
     SetCC,
@@ -102,6 +108,9 @@ __all__ = [
     "Shl",
     "Sar",
     "AllocateStack",
+    "DeallocateStack",
+    "Push",
+    "Call",
     "Cmp",
     "Jmp",
     "JmpCC",

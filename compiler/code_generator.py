@@ -42,6 +42,16 @@ import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.utils.exceptions import CodeGenerationError
 
+# System V AMD64 ABI integer argument registers, in order.
+_ABI_REGS = [
+    asm.Registers.DI,
+    asm.Registers.SI,
+    asm.Registers.DX,
+    asm.Registers.CX,
+    asm.Registers.R8,
+    asm.Registers.R9,
+]
+
 
 def generate(program: tac.Program) -> asm.Program:
     """Translate a TAC ``Program`` into an assembly ``Program``.
@@ -75,6 +85,11 @@ def generate(program: tac.Program) -> asm.Program:
 def _translate_function(fn: tac.Function) -> asm.Function:
     """Lower a TAC function to an assembly function with pseudo operands.
 
+    For each parameter, a ``Mov`` from the corresponding ABI register into a
+    ``Pseudo`` operand is prepended to the instruction list.  Parameters
+    beyond the sixth (which arrive on the stack) are handled by positive-offset
+    ``Stack`` operands rather than pseudo-registers.
+
     Args:
         fn: The TAC function to translate.
 
@@ -85,9 +100,21 @@ def _translate_function(fn: tac.Function) -> asm.Function:
         CodeGenerationError: If any instruction cannot be translated.
     """
     instructions: list[asm.Instruction] = []
+
+    # Copy register-passed params into pseudo-registers at function entry.
+    for i, param in enumerate(fn.params[:6]):
+        instructions.append(asm.Mov(asm.Register(_ABI_REGS[i]), asm.Pseudo(param)))
+
+    # Parameters beyond the sixth arrive on the caller's stack frame at
+    # 16(%rbp), 24(%rbp), … (above the saved %rbp and return address).
+    for i, param in enumerate(fn.params[6:]):
+        instructions.append(asm.Mov(asm.Stack(16 + 8 * i), asm.Pseudo(param)))
+
     for instr in fn.body:
         instructions.extend(_translate_instruction(instr))
-    return asm.Function(name=fn.name, instructions=tuple(instructions))
+
+    params_asm = tuple(asm.Register(_ABI_REGS[i]) for i in range(min(len(fn.params), 6)))
+    return asm.Function(name=fn.name, params=params_asm, instructions=tuple(instructions))
 
 
 def _translate_instruction(instr: tac.Instruction) -> list[asm.Instruction]:
@@ -196,8 +223,63 @@ def _translate_instruction(instr: tac.Instruction) -> list[asm.Instruction]:
                     ]
                 case _:
                     raise CodeGenerationError(f"unsupported TAC binary operator: {type(op).__name__}")
+        case tac.FunCall(name=name, args=args, dst=dst):
+            return _translate_funcall(name, list(args), _translate_val(dst))
         case _:
             raise CodeGenerationError(f"unsupported TAC instruction: {type(instr).__name__}")
+
+
+def _translate_funcall(name: str, args: list[tac.Val], dst: asm.Operand) -> list[asm.Instruction]:
+    """Lower a ``tac.FunCall`` to the System V AMD64 ABI calling sequence.
+
+    Up to six integer arguments are placed in the ABI registers (DI, SI, DX,
+    CX, R8, R9).  Additional arguments are pushed onto the stack right-to-left.
+    An 8-byte padding ``AllocateStack`` is inserted before the stack pushes
+    when there is an odd number of stack-passed arguments, so that the stack
+    pointer remains 16-byte aligned at the ``call`` instruction.
+
+    After the call, any stack space consumed by stack-passed arguments (and
+    the optional padding) is reclaimed with ``DeallocateStack``.  The return
+    value is then moved from ``%eax`` into ``dst``.
+
+    Args:
+        name: The symbol name of the function to call.
+        args: The ordered list of TAC argument values.
+        dst: The assembly operand that receives the return value.
+
+    Returns:
+        A list of ``asm.Instruction`` nodes implementing the call site.
+    """
+    instrs: list[asm.Instruction] = []
+
+    reg_args = args[:6]
+    stack_args = args[6:]
+
+    # Odd number of stack args would misalign the stack before `call`.
+    needs_padding = len(stack_args) % 2 != 0
+    if needs_padding:
+        instrs.append(asm.AllocateStack(8))
+
+    # Push stack args right-to-left so the first stack arg is closest to %rbp
+    # in the callee's frame (at 16(%rbp)).
+    for arg in reversed(stack_args):
+        instrs.append(asm.Push(_translate_val(arg)))
+
+    # Load register args into ABI registers.
+    for i, arg in enumerate(reg_args):
+        instrs.append(asm.Mov(_translate_val(arg), asm.Register(_ABI_REGS[i])))
+
+    instrs.append(asm.Call(name))
+
+    # Reclaim stack space used for stack-passed args and any alignment padding.
+    bytes_to_free = 8 * len(stack_args) + (8 if needs_padding else 0)
+    if bytes_to_free:
+        instrs.append(asm.DeallocateStack(bytes_to_free))
+
+    # Return value is in %eax / %rax.
+    instrs.append(asm.Mov(asm.Register(asm.Registers.AX), dst))
+
+    return instrs
 
 
 def _translate_val(val: tac.Val) -> asm.Operand:
@@ -357,11 +439,13 @@ def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
                 new_instructions.append(asm.Cmp(op1=resolve(op1), op2=resolve(op2)))
             case asm.SetCC(cond_code=cc, operand=operand):
                 new_instructions.append(asm.SetCC(cond_code=cc, operand=resolve(operand)))
+            case asm.Push(operand=operand):
+                new_instructions.append(asm.Push(operand=resolve(operand)))
             case _:
                 new_instructions.append(instr)
 
     stack_size = -next_offset[0]
-    return asm.Function(name=fn.name, instructions=tuple(new_instructions)), stack_size
+    return asm.Function(name=fn.name, params=fn.params, instructions=tuple(new_instructions)), stack_size
 
 
 # ==============================================================================
@@ -400,9 +484,14 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
             case asm.Cmp(op1=asm.Stack() as op1, op2=op2):
                 fixed.append(asm.Mov(src=op1, dst=asm.Register(asm.Registers.R10)))
                 fixed.append(asm.Cmp(op1=asm.Register(asm.Registers.R10), op2=op2))
+            # pushq cannot address a 32-bit stack slot directly; load into %eax first.
+            # movl zero-extends to %rax in x86-64, so pushq %rax carries the correct value.
+            case asm.Push(operand=asm.Stack() as operand):
+                fixed.append(asm.Mov(src=operand, dst=asm.Register(asm.Registers.AX)))
+                fixed.append(asm.Push(operand=asm.Register(asm.Registers.AX, asm.Width.QWORD)))
             case _:
                 fixed.append(instr)
-    return asm.Function(name=fn.name, instructions=tuple(fixed))
+    return asm.Function(name=fn.name, params=fn.params, instructions=tuple(fixed))
 
 
 # ==============================================================================
@@ -427,4 +516,8 @@ def _add_stack_allocation(fn: asm.Function, stack_size: int) -> asm.Function:
     if stack_size == 0:
         return fn
     aligned = (stack_size + 15) & ~15
-    return asm.Function(name=fn.name, instructions=(asm.AllocateStack(size=aligned), *fn.instructions))
+    return asm.Function(
+        name=fn.name,
+        params=fn.params,
+        instructions=(asm.AllocateStack(size=aligned), *fn.instructions),
+    )
