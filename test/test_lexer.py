@@ -286,3 +286,32 @@ def test_default_keyword_produces_default_token_not_identifier(preprocess_c_file
     tokens = lexer(preprocess_c_file("valid/switch.c"))
     default_token = next(t for t in tokens if t.value == "default")
     assert default_token.type == TokenType.DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# Storage-class keywords
+# ---------------------------------------------------------------------------
+
+
+def test_static_keyword_produces_static_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/storage_class.c"))
+    static_token = next(t for t in tokens if t.value == "static")
+    assert static_token.type == TokenType.STATIC
+
+
+def test_extern_keyword_produces_extern_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/storage_class.c"))
+    extern_token = next(t for t in tokens if t.value == "extern")
+    assert extern_token.type == TokenType.EXTERN
+
+
+def test_identifier_sharing_static_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "statically" starts with "static" — must not be classified as STATIC
+    tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
+    assert all(t.type != TokenType.STATIC for t in tokens)
+
+
+def test_identifier_sharing_extern_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "externally" starts with "extern" — must not be classified as EXTERN
+    tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
+    assert all(t.type != TokenType.EXTERN for t in tokens)

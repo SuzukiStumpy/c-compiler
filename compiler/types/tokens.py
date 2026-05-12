@@ -28,6 +28,8 @@ class TokenType(Enum):
     SWITCH = auto()
     CASE = auto()
     DEFAULT = auto()
+    STATIC = auto()
+    EXTERN = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
