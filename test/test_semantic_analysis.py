@@ -46,14 +46,44 @@ def _program(body: tuple[ast.BlockItem, ...]) -> ast.Program:
         given body.
     """
     return ast.Program(
-        functions=(
-            ast.Function(
-                name="main",
-                params=(),
-                body=body,
+        declarations=(
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=body,
+                )
             ),
         )
     )
+
+
+def _make_prog(*fns: ast.Function) -> ast.Program:
+    """Wrap one or more ``Function`` nodes in an ``ast.Program``.
+
+    Args:
+        *fns: The ``Function`` nodes to include in the program, in source order.
+
+    Returns:
+        An ``ast.Program`` whose ``declarations`` tuple contains each function
+        wrapped in an ``ast.FunDecl``.
+    """
+    return ast.Program(declarations=tuple(ast.FunDecl(fn) for fn in fns))
+
+
+def _get_fn(program: ast.Program, index: int = 0) -> ast.Function:
+    """Return the *n*-th function declaration from a resolved program.
+
+    Args:
+        program: The resolved ``ast.Program``.
+        index: Zero-based index into the list of ``FunDecl`` declarations.
+
+    Returns:
+        The ``ast.Function`` at the given position among the program's
+        ``FunDecl`` entries.
+    """
+    fns = [d.function_declaration for d in program.declarations if isinstance(d, ast.FunDecl)]
+    return fns[index]
 
 
 def _resolved_body(body: tuple[ast.BlockItem, ...]) -> tuple[ast.BlockItem, ...]:
@@ -66,7 +96,7 @@ def _resolved_body(body: tuple[ast.BlockItem, ...]) -> tuple[ast.BlockItem, ...]
         The resolved block items from the single function in the resolved
         program.
     """
-    return resolve(_program(body)).functions[0].body
+    return _get_fn(resolve(_program(body))).body
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +523,7 @@ class TestResolveProgram:
         """Resolution does not alter the function's name or params."""
         body = (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),)
         resolved = resolve(_program(body))
-        fn = resolved.functions[0]
+        fn = _get_fn(resolved)
         assert fn.name == "main"
         assert fn.params == ()
 
@@ -517,7 +547,7 @@ class TestResolveProgram:
             body=(ast.S(statement=ast.Return(exp=ast.Var(name="x"))),),
         )
         with pytest.raises(SemanticError, match="Undeclared"):
-            resolve(ast.Program(functions=(fn1, fn2)))
+            resolve(_make_prog(fn1, fn2))
 
 
 # ---------------------------------------------------------------------------
@@ -683,9 +713,9 @@ class TestResolveLabeledStatement:
                 body=(ast.S(statement=ast.Label(name="lbl", statement=ast.Return(exp=ast.Constant(value=0)))),),
             )
 
-        program = ast.Program(functions=(_fn("foo"), _fn("bar")))
+        program = _make_prog(_fn("foo"), _fn("bar"))
         resolved = resolve(program)
-        assert len(resolved.functions) == 2
+        assert len(resolved.declarations) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1304,6 +1334,61 @@ class TestLoopIdentifiers:
 
 
 # ---------------------------------------------------------------------------
+# For-loop initialiser validation
+# ---------------------------------------------------------------------------
+
+
+class TestForInitStorageClass:
+    """Storage class specifiers are forbidden in ``for`` loop initialisers."""
+
+    def test_for_init_static_raises(self) -> None:
+        """A ``static`` declaration in a ``for`` init clause raises ``SemanticError``."""
+        body = (
+            ast.S(
+                ast.For(
+                    init=ast.InitDecl(
+                        ast.VarDecl(ast.VariableDeclaration("i", ast.Constant(0), ast.StorageClass.Static))
+                    ),
+                    condition=None,
+                    post=None,
+                    body=ast.Null(),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="storage class"):
+            resolve(_program(body))
+
+    def test_for_init_extern_raises(self) -> None:
+        """An ``extern`` declaration in a ``for`` init clause raises ``SemanticError``."""
+        body = (
+            ast.S(
+                ast.For(
+                    init=ast.InitDecl(ast.VarDecl(ast.VariableDeclaration("i", None, ast.StorageClass.Extern))),
+                    condition=None,
+                    post=None,
+                    body=ast.Null(),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="storage class"):
+            resolve(_program(body))
+
+    def test_for_init_no_storage_class_is_valid(self) -> None:
+        """A plain declaration in a ``for`` init clause is accepted."""
+        body = (
+            ast.S(
+                ast.For(
+                    init=ast.InitDecl(ast.VarDecl(ast.VariableDeclaration("i", ast.Constant(0)))),
+                    condition=None,
+                    post=None,
+                    body=ast.Null(),
+                )
+            ),
+        )
+        resolve(_program(body))  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # Switch identifier assignment
 # ---------------------------------------------------------------------------
 
@@ -1790,48 +1875,40 @@ class TestFunctionDeclarations:
 
     def test_top_level_declaration_only_is_valid(self) -> None:
         """A single top-level function declaration (no body) resolves without error."""
-        program = ast.Program(
-            functions=(self._fn("foo", None), self._fn("main", (ast.S(ast.Return(ast.Constant(0))),)))
-        )
+        program = _make_prog(self._fn("foo", None), self._fn("main", (ast.S(ast.Return(ast.Constant(0))),)))
         resolved = resolve(program)
-        assert len(resolved.functions) == 2
+        assert len(resolved.declarations) == 2
 
     def test_top_level_definition_is_valid(self) -> None:
         """A top-level function definition with a body resolves without error."""
-        program = ast.Program(functions=(self._fn("main", (ast.S(ast.Return(ast.Constant(0))),)),))
+        program = _make_prog(self._fn("main", (ast.S(ast.Return(ast.Constant(0))),)))
         resolved = resolve(program)
-        assert resolved.functions[0].name == "main"
+        assert _get_fn(resolved).name == "main"
 
     def test_declaration_followed_by_definition_is_valid(self) -> None:
         """A forward declaration of a function followed by its definition is accepted."""
-        program = ast.Program(
-            functions=(
-                self._fn("foo", None),
-                self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),)),
-            )
+        program = _make_prog(
+            self._fn("foo", None),
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),)),
         )
         resolved = resolve(program)
-        assert len(resolved.functions) == 2
+        assert len(resolved.declarations) == 2
 
     def test_multiple_declarations_of_same_function_are_valid(self) -> None:
         """Multiple forward declarations of the same function name are permitted."""
-        program = ast.Program(
-            functions=(
-                self._fn("foo", None),
-                self._fn("foo", None),
-                self._fn("main", (ast.S(ast.Return(ast.Constant(0))),)),
-            )
+        program = _make_prog(
+            self._fn("foo", None),
+            self._fn("foo", None),
+            self._fn("main", (ast.S(ast.Return(ast.Constant(0))),)),
         )
         resolved = resolve(program)
-        assert len(resolved.functions) == 3
+        assert len(resolved.declarations) == 3
 
     def test_duplicate_definition_raises(self) -> None:
         """Two definitions of the same function at the top level raise ``SemanticError``."""
-        program = ast.Program(
-            functions=(
-                self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),)),
-                self._fn("foo", (ast.S(ast.Return(ast.Constant(1))),)),
-            )
+        program = _make_prog(
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),)),
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(1))),)),
         )
         with pytest.raises(SemanticError, match="Redefinition"):
             resolve(program)
@@ -1844,7 +1921,7 @@ class TestFunctionDeclarations:
             ast.S(ast.Return(ast.Constant(0))),
         )
         resolved = resolve(_program(body))
-        assert resolved.functions[0].body[0] == foo_decl
+        assert _get_fn(resolved).body[0] == foo_decl
 
     def test_repeated_block_level_declarations_of_same_function_are_valid(self) -> None:
         """Multiple declarations of the same function within a single block are all accepted.
@@ -1864,7 +1941,7 @@ class TestFunctionDeclarations:
             ast.S(ast.Return(ast.FunctionCall("foo", []))),
         )
         resolved = resolve(_program(body))
-        assert len(resolved.functions[0].body) == 3
+        assert len(_get_fn(resolved).body) == 3
 
     def test_call_to_declared_function_is_valid(self) -> None:
         """A ``FunctionCall`` to a function that has been declared resolves without error."""
@@ -1874,7 +1951,7 @@ class TestFunctionDeclarations:
             ast.S(ast.Return(ast.FunctionCall("foo", []))),
         )
         resolved = resolve(_program(body))
-        return_stmt = resolved.functions[0].body[1].statement
+        return_stmt = _get_fn(resolved).body[1].statement
         assert isinstance(return_stmt, ast.Return)
         assert return_stmt.exp == ast.FunctionCall("foo", [])
 
@@ -1890,9 +1967,9 @@ class TestFunctionDeclarations:
             params=(),
             body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
         )
-        program = ast.Program(functions=(foo, bar))
+        program = _make_prog(foo, bar)
         resolved = resolve(program)
-        return_stmt = resolved.functions[1].body[0].statement
+        return_stmt = _get_fn(resolved, 1).body[0].statement
         assert isinstance(return_stmt, ast.Return)
         assert return_stmt.exp == ast.FunctionCall("foo", [])
 
@@ -1912,7 +1989,7 @@ class TestFunctionDeclarations:
             params=(),
             body=(ast.S(ast.Return(ast.Constant(0))),),
         )
-        program = ast.Program(functions=(bar, foo))
+        program = _make_prog(bar, foo)
         with pytest.raises(SemanticError, match="undeclared function"):
             resolve(program)
 
@@ -1939,7 +2016,7 @@ class TestFunctionDeclarations:
             ast.S(ast.Return(ast.FunctionCall("foo", [ast.Var("x")]))),
         )
         resolved = resolve(_program(body))
-        return_stmt = resolved.functions[0].body[2].statement
+        return_stmt = _get_fn(resolved).body[2].statement
         assert isinstance(return_stmt, ast.Return)
         call = return_stmt.exp
         assert isinstance(call, ast.FunctionCall)
@@ -1961,8 +2038,8 @@ class TestFunctionParameters:
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=(ast.S(ast.Return(ast.Var("x"))),),
         )
-        resolved = resolve(ast.Program(functions=(fn,)))
-        param = resolved.functions[0].params[0]
+        resolved = resolve(_make_prog(fn))
+        param = _get_fn(resolved).params[0]
         assert param.name.startswith(".Vx.")
 
     def test_parameter_reference_in_body_uses_unique_name(self) -> None:
@@ -1972,9 +2049,9 @@ class TestFunctionParameters:
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=(ast.S(ast.Return(ast.Var("x"))),),
         )
-        resolved = resolve(ast.Program(functions=(fn,)))
-        param_name = resolved.functions[0].params[0].name
-        return_stmt = resolved.functions[0].body[0].statement
+        resolved = resolve(_make_prog(fn))
+        param_name = _get_fn(resolved).params[0].name
+        return_stmt = _get_fn(resolved).body[0].statement
         assert isinstance(return_stmt, ast.Return)
         assert return_stmt.exp == ast.Var(param_name)
 
@@ -1989,13 +2066,13 @@ class TestFunctionParameters:
             body=(ast.S(ast.Return(ast.Var("x"))),),
         )
         with pytest.raises(SemanticError, match="Duplicate"):
-            resolve(ast.Program(functions=(fn,)))
+            resolve(_make_prog(fn))
 
     def test_declaration_body_is_none_skips_resolution(self) -> None:
         """A ``Function`` node with ``body=None`` is returned unchanged — no resolution needed."""
         fn = ast.Function(name="foo", params=(), body=None)
-        resolved = resolve(ast.Program(functions=(fn,)))
-        assert resolved.functions[0] is fn
+        resolved = resolve(_make_prog(fn))
+        assert _get_fn(resolved) is fn
 
     def test_duplicate_params_in_top_level_declaration_raises(self) -> None:
         """Duplicate parameter names in a top-level forward declaration raise ``SemanticError``.
@@ -2016,7 +2093,7 @@ class TestFunctionParameters:
             body=(ast.S(ast.Return(ast.Constant(0))),),
         )
         with pytest.raises(SemanticError, match="Duplicate parameter name 'a'"):
-            resolve(ast.Program(functions=(foo_decl, main_def)))
+            resolve(_make_prog(foo_decl, main_def))
 
     def test_duplicate_params_in_block_level_declaration_raises(self) -> None:
         """Duplicate parameter names in a block-scope function declaration raise ``SemanticError``.
@@ -2057,8 +2134,8 @@ class TestFunctionParameters:
             params=(),
             body=(ast.S(ast.Return(ast.Constant(0))),),
         )
-        resolved = resolve(ast.Program(functions=(foo_decl, main_def)))
-        assert len(resolved.functions) == 2
+        resolved = resolve(_make_prog(foo_decl, main_def))
+        assert len(resolved.declarations) == 2
 
     def test_same_param_name_in_declaration_and_definition_is_valid(self) -> None:
         """The same parameter name may be reused between a declaration and its matching definition."""
@@ -2072,8 +2149,8 @@ class TestFunctionParameters:
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=(ast.S(ast.Return(ast.Var("x"))),),
         )
-        resolved = resolve(ast.Program(functions=(foo_decl, foo_def)))
-        assert len(resolved.functions) == 2
+        resolved = resolve(_make_prog(foo_decl, foo_def))
+        assert len(resolved.declarations) == 2
 
     def test_nested_function_definition_raises(self) -> None:
         """A function definition appearing as a block item inside another function raises ``SemanticError``.
@@ -2129,7 +2206,19 @@ class TestFunctionParameters:
             ast.S(ast.Return(ast.Constant(0))),
         )
         resolved = resolve(_program(body))
-        assert resolved.functions[0].body[0] == foo_decl
+        assert _get_fn(resolved).body[0] == foo_decl
+
+    def test_block_scope_static_function_declaration_raises(self) -> None:
+        """A block-scope function declaration with ``static`` storage class raises ``SemanticError``."""
+        foo_decl = ast.D(
+            ast.FunDecl(ast.Function(name="foo", params=(), body=None, storage_class=ast.StorageClass.Static))
+        )
+        body: tuple[ast.BlockItem, ...] = (
+            foo_decl,
+            ast.S(ast.Return(ast.FunctionCall("foo", []))),
+        )
+        with pytest.raises(SemanticError, match="static"):
+            resolve(_program(body))
 
 
 # ---------------------------------------------------------------------------
@@ -2175,8 +2264,8 @@ class TestCrossKindRedeclaration:
             ast.S(ast.Return(ast.Constant(0))),
         )
         main_fn = ast.Function(name="main", params=(), body=main_body)
-        resolved = resolve(ast.Program(functions=(foo_top, main_fn)))
-        assert len(resolved.functions) == 2
+        resolved = resolve(_make_prog(foo_top, main_fn))
+        assert len(resolved.declarations) == 2
 
     def test_function_in_outer_scope_variable_in_inner_scope_is_valid(self) -> None:
         """A variable in an inner block may shadow a function declared in an outer block.
@@ -2197,7 +2286,7 @@ class TestCrossKindRedeclaration:
             ),
         )
         resolved = resolve(_program(body))
-        assert len(resolved.functions[0].body) == 2
+        assert len(_get_fn(resolved).body) == 2
 
     def test_variable_in_outer_scope_function_in_inner_scope_is_valid(self) -> None:
         """A function declaration in an inner block is independent of a variable in the outer block."""
@@ -2214,7 +2303,43 @@ class TestCrossKindRedeclaration:
             ),
         )
         resolved = resolve(_program(body))
-        assert len(resolved.functions[0].body) == 2
+        assert len(_get_fn(resolved).body) == 2
+
+    def test_extern_variable_conflicts_with_prior_file_scope_function_raises(self) -> None:
+        """A block-scope ``extern`` variable whose name was previously declared as a function raises ``SemanticError``.
+
+        Both refer to the same external entity; declaring it as both a function and a
+        variable is a conflict.
+        """
+        foo_fn = ast.Function(name="foo", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        main_body: tuple[ast.BlockItem, ...] = (
+            ast.D(ast.VarDecl(ast.VariableDeclaration("foo", None, ast.StorageClass.Extern))),
+            ast.S(ast.Return(ast.Constant(0))),
+        )
+        main_fn = ast.Function(name="main", params=(), body=main_body)
+        with pytest.raises(SemanticError, match="redeclared as a variable"):
+            resolve(_make_prog(foo_fn, main_fn))
+
+    def test_function_declaration_conflicts_with_prior_extern_variable_raises(self) -> None:
+        """A block-scope function declaration whose name was declared as ``extern`` in an outer scope raises.
+
+        An ``extern`` variable binding has external linkage; a function of the same
+        name in an inner scope would refer to the same external entity but with a
+        conflicting type, which is an error.
+        """
+        body: tuple[ast.BlockItem, ...] = (
+            ast.D(ast.VarDecl(ast.VariableDeclaration("foo", None, ast.StorageClass.Extern))),
+            ast.S(
+                statement=ast.Compound(
+                    body=(
+                        ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None))),
+                        ast.S(ast.Return(ast.Constant(0))),
+                    )
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="redeclared as a function"):
+            resolve(_program(body))
 
 
 # ---------------------------------------------------------------------------
@@ -2272,7 +2397,7 @@ class TestTypeChecking:
             body=(ast.S(ast.Return(ast.FunctionCall("p", []))),),
         )
         with pytest.raises(SemanticError, match="Variable 'p' called as a function"):
-            resolve(ast.Program(functions=(fn,)))
+            resolve(_make_prog(fn))
 
     def test_variable_shadowing_function_name_is_usable_as_variable(self) -> None:
         """A local variable may shadow a function name; the variable is then accessible as a ``Var``.
@@ -2293,7 +2418,7 @@ class TestTypeChecking:
             ),
         )
         resolved = resolve(_program(body))
-        compound = resolved.functions[0].body[1].statement
+        compound = _get_fn(resolved).body[1].statement
         assert isinstance(compound, ast.Compound)
         inner_name = compound.body[0].declaration.variable_declaration.name
         assert compound.body[1] == ast.S(ast.Return(ast.Var(inner_name)))
@@ -2404,7 +2529,7 @@ class TestConflictingDeclarations:
         )
         main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(5))),))
         with pytest.raises(SemanticError, match="Conflicting declarations"):
-            resolve(ast.Program(functions=(foo_decl, main, foo_def)))
+            resolve(_make_prog(foo_decl, main, foo_def))
 
     def test_two_declarations_different_param_count_raises(self) -> None:
         """Two forward declarations of the same function with different arities raise ``SemanticError``."""
@@ -2412,7 +2537,7 @@ class TestConflictingDeclarations:
         foo_one = ast.Function(name="foo", params=(self._int_param("a"),), body=None)
         main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
         with pytest.raises(SemanticError, match="Conflicting declarations"):
-            resolve(ast.Program(functions=(foo_zero, foo_one, main)))
+            resolve(_make_prog(foo_zero, foo_one, main))
 
     def test_block_level_declaration_conflicts_with_top_level_raises(self) -> None:
         """A block-scope declaration that disagrees with the top-level declaration raises ``SemanticError``."""
@@ -2424,7 +2549,7 @@ class TestConflictingDeclarations:
         )
         main = ast.Function(name="main", params=(), body=body)
         with pytest.raises(SemanticError, match="Conflicting declarations"):
-            resolve(ast.Program(functions=(foo_top, main)))
+            resolve(_make_prog(foo_top, main))
 
     def test_matching_declarations_are_valid(self) -> None:
         """Repeated declarations of the same function with identical parameter types are accepted."""
@@ -2436,16 +2561,16 @@ class TestConflictingDeclarations:
             body=(ast.S(ast.Return(ast.Var("p"))),),
         )
         main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
-        resolved = resolve(ast.Program(functions=(foo_decl_a, foo_decl_b, foo_def, main)))
-        assert len(resolved.functions) == 4
+        resolved = resolve(_make_prog(foo_decl_a, foo_decl_b, foo_def, main))
+        assert len(resolved.declarations) == 4
 
     def test_zero_param_matching_declarations_are_valid(self) -> None:
         """Two forward declarations of the same zero-parameter function are accepted."""
         foo_a = ast.Function(name="foo", params=(), body=None)
         foo_b = ast.Function(name="foo", params=(), body=None)
         main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
-        resolved = resolve(ast.Program(functions=(foo_a, foo_b, main)))
-        assert len(resolved.functions) == 3
+        resolved = resolve(_make_prog(foo_a, foo_b, main))
+        assert len(resolved.declarations) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -2486,7 +2611,7 @@ class TestArgumentCount:
             ast.S(ast.Return(ast.FunctionCall("foo", [ast.Constant(1), ast.Constant(2)]))),
         )
         resolved = resolve(_program(body))
-        ret = resolved.functions[0].body[1].statement
+        ret = _get_fn(resolved).body[1].statement
         assert isinstance(ret, ast.Return)
         assert isinstance(ret.exp, ast.FunctionCall)
 
@@ -2497,7 +2622,7 @@ class TestArgumentCount:
             ast.S(ast.Return(ast.FunctionCall("foo", []))),
         )
         resolved = resolve(_program(body))
-        assert resolved.functions[0].body[1] == ast.S(ast.Return(ast.FunctionCall("foo", [])))
+        assert _get_fn(resolved).body[1] == ast.S(ast.Return(ast.FunctionCall("foo", [])))
 
 
 # ---------------------------------------------------------------------------
@@ -2530,8 +2655,8 @@ class TestFunctionShadowsVariable:
             ),
         )
         main = ast.Function(name="main", params=(), body=body)
-        resolved = resolve(ast.Program(functions=(foo_top, main)))
-        assert len(resolved.functions) == 2
+        resolved = resolve(_make_prog(foo_top, main))
+        assert len(resolved.declarations) == 2
 
     def test_outer_variable_visible_after_inner_scope_exits(self) -> None:
         """After the inner block exits, the outer variable binding is restored.
@@ -2553,9 +2678,9 @@ class TestFunctionShadowsVariable:
             ast.S(ast.Return(ast.Var("foo"))),
         )
         main = ast.Function(name="main", params=(), body=body)
-        resolved = resolve(ast.Program(functions=(foo_top, main)))
-        outer_name = resolved.functions[1].body[0].declaration.variable_declaration.name
-        ret_stmt = resolved.functions[1].body[2].statement
+        resolved = resolve(_make_prog(foo_top, main))
+        outer_name = _get_fn(resolved, 1).body[0].declaration.variable_declaration.name
+        ret_stmt = _get_fn(resolved, 1).body[2].statement
         assert isinstance(ret_stmt, ast.Return)
         assert ret_stmt.exp == ast.Var(outer_name)
 
@@ -2579,4 +2704,246 @@ class TestFunctionShadowsVariable:
         )
         main = ast.Function(name="main", params=(), body=body)
         with pytest.raises(SemanticError, match="Function name 'foo' used as a variable"):
-            resolve(ast.Program(functions=(foo_top, main)))
+            resolve(_make_prog(foo_top, main))
+
+
+# ---------------------------------------------------------------------------
+# File-scope variable declarations
+# ---------------------------------------------------------------------------
+
+
+def _file_var(name: str, init: ast.Exp | None = None, sc: ast.StorageClass | None = None) -> ast.VarDecl:
+    """Return a top-level ``VarDecl`` with the given name, optional initialiser, and optional storage class.
+
+    Args:
+        name: The variable name.
+        init: Optional initialiser expression.
+        sc: Optional storage class specifier.
+
+    Returns:
+        An ``ast.VarDecl`` wrapping a ``VariableDeclaration``.
+    """
+    return ast.VarDecl(ast.VariableDeclaration(name, init, sc))
+
+
+def _prog_with_decls(*decls: ast.Declaration) -> ast.Program:
+    """Build an ``ast.Program`` from an arbitrary mix of top-level declarations.
+
+    Args:
+        *decls: Any combination of ``ast.FunDecl`` and ``ast.VarDecl`` nodes.
+
+    Returns:
+        An ``ast.Program`` whose ``declarations`` tuple contains all given nodes.
+    """
+    return ast.Program(declarations=decls)
+
+
+class TestFileScopeVariableDeclarations:
+    """File-scope variable declarations are validated for linkage and duplicate definitions."""
+
+    def test_file_scope_variable_is_not_renamed(self) -> None:
+        """A file-scope variable keeps its original name after resolution."""
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Var("g"))),),
+        )
+        program = _prog_with_decls(_file_var("g", ast.Constant(0)), ast.FunDecl(main_fn))
+        resolved = resolve(program)
+        var_decl = resolved.declarations[0].variable_declaration
+        assert var_decl.name == "g"
+
+    def test_file_scope_variable_visible_in_function_body(self) -> None:
+        """A file-scope variable declared before a function is visible inside that function."""
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Var("g"))),),
+        )
+        program = _prog_with_decls(_file_var("g", ast.Constant(0)), ast.FunDecl(main_fn))
+        resolved = resolve(program)
+        ret = _get_fn(resolved).body[0].statement
+        assert isinstance(ret, ast.Return)
+        assert ret.exp == ast.Var("g")
+
+    def test_file_scope_variable_not_visible_before_declaration(self) -> None:
+        """A file-scope variable declared after a function is NOT visible inside that function."""
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Var("g"))),),
+        )
+        program = _prog_with_decls(ast.FunDecl(main_fn), _file_var("g", ast.Constant(0)))
+        with pytest.raises(SemanticError, match="Undeclared"):
+            resolve(program)
+
+    def test_static_file_scope_variable_has_internal_linkage(self) -> None:
+        """A ``static`` file-scope variable is recorded with ``Linkage.INTERNAL``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+        assert analyser._variable_map["x"].linkage is Linkage.INTERNAL
+
+    def test_extern_file_scope_variable_has_external_linkage(self) -> None:
+        """An ``extern`` file-scope variable is recorded with ``Linkage.EXTERNAL``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Extern))
+        assert analyser._variable_map["x"].linkage is Linkage.EXTERNAL
+
+    def test_no_storage_class_file_scope_has_external_linkage(self) -> None:
+        """A file-scope variable with no storage class specifier has ``Linkage.EXTERNAL``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", None))
+        assert analyser._variable_map["x"].linkage is Linkage.EXTERNAL
+
+    def test_file_scope_variable_after_function_of_same_name_raises(self) -> None:
+        """A file-scope variable declaration after a function of the same name raises ``SemanticError``."""
+        foo_fn = ast.Function(name="foo", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
+        )
+        with pytest.raises(SemanticError, match="redeclared as a variable"):
+            resolve(_prog_with_decls(ast.FunDecl(foo_fn), ast.FunDecl(main_fn), _file_var("foo", ast.Constant(3))))
+
+    def test_function_after_file_scope_variable_of_same_name_raises(self) -> None:
+        """A function declaration after a file-scope variable of the same name raises ``SemanticError``."""
+        foo_fn = ast.Function(name="foo", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        with pytest.raises(SemanticError, match="redeclared as a function"):
+            resolve(_prog_with_decls(_file_var("foo", ast.Constant(3)), ast.FunDecl(foo_fn)))
+
+
+# ---------------------------------------------------------------------------
+# Block-scope storage class specifiers
+# ---------------------------------------------------------------------------
+
+
+class TestBlockScopeStorageClass:
+    """Block-scope ``static`` and ``extern`` declarations are validated and resolved correctly."""
+
+    def test_block_scope_static_is_renamed(self) -> None:
+        """A ``static`` local variable receives a unique internal name like any other local."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+        assert result.name.startswith(".Vx.")
+
+    def test_block_scope_static_preserves_storage_class(self) -> None:
+        """The ``Static`` storage class is preserved on the resolved ``VariableDeclaration``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+        assert result.storage_class is ast.StorageClass.Static
+
+    def test_block_scope_static_has_internal_linkage(self) -> None:
+        """A ``static`` local variable is recorded in ``_variable_map`` with ``Linkage.INTERNAL``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+        assert analyser._variable_map["x"].linkage is Linkage.INTERNAL
+
+    def test_block_scope_static_duplicate_raises(self) -> None:
+        """Declaring the same ``static`` local twice in the same block raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+        with pytest.raises(SemanticError, match="Duplicate"):
+            analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+
+    def test_block_scope_extern_is_not_renamed(self) -> None:
+        """A block-scope ``extern`` declaration keeps its original source name."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))
+        assert result.name == "g"
+
+    def test_block_scope_extern_has_external_linkage(self) -> None:
+        """A block-scope ``extern`` declaration is recorded with ``Linkage.EXTERNAL``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))
+        assert analyser._variable_map["g"].linkage is Linkage.EXTERNAL
+
+    def test_block_scope_extern_with_init_raises(self) -> None:
+        """A block-scope ``extern`` declaration with an initialiser raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="may not have an initialiser"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration("g", ast.Constant(5), ast.StorageClass.Extern)
+            )
+
+    def test_block_scope_extern_repeated_is_valid(self) -> None:
+        """Two ``extern`` declarations of the same name in the same block are permitted."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))
+        result = analyser.resolve_variable_declaration(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))
+        assert result.name == "g"
+
+    def test_block_scope_extern_after_non_extern_raises(self) -> None:
+        """An ``extern`` declaration after a non-``extern`` declaration of the same name raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None))
+        with pytest.raises(SemanticError, match="previously declared without linkage"):
+            analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Extern))
+
+    def test_block_scope_non_extern_after_extern_raises(self) -> None:
+        """A non-``extern`` declaration after an ``extern`` declaration of the same name raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Extern))
+        with pytest.raises(SemanticError, match="previously declared with linkage"):
+            analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None))
+
+    def test_block_scope_extern_resolves_in_function_body(self) -> None:
+        """A block-scope ``extern`` declaration makes the variable usable inside the function."""
+        body: tuple[ast.BlockItem, ...] = (
+            ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))),
+            ast.S(ast.Return(ast.Var("g"))),
+        )
+        resolved = _resolved_body(body)
+        ret = resolved[1].statement
+        assert isinstance(ret, ast.Return)
+        assert ret.exp == ast.Var("g")
+
+    def test_block_scope_static_non_constant_init_raises(self) -> None:
+        """A ``static`` local variable with a non-constant initialiser raises ``SemanticError``.
+
+        Variables with static storage duration are initialised at program start, so
+        their initialisers must be compile-time constants.  A reference to another
+        variable (e.g. ``static int b = a * 2``) is therefore invalid.
+        """
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("a", ast.Constant(1)))
+        with pytest.raises(SemanticError, match="constant expression"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "b",
+                    ast.Binary(ast.Multiply, ast.Var("a"), ast.Constant(2)),
+                    ast.StorageClass.Static,
+                )
+            )
+
+    def test_block_scope_static_constant_init_is_valid(self) -> None:
+        """A ``static`` local variable with a ``Constant`` initialiser is accepted."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration("x", ast.Constant(42), ast.StorageClass.Static)
+        )
+        assert result.init == ast.Constant(42)
+
+    def test_block_scope_static_shadows_file_scope_variable(self) -> None:
+        """A ``static`` local variable shadows a file-scope variable of the same name.
+
+        Inside the function the ``static`` local's unique internal name is used;
+        the file-scope variable is not accessible under the original name.
+        """
+        g_decl = _file_var("g", ast.Constant(0))
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(
+                ast.D(ast.VarDecl(ast.VariableDeclaration("g", ast.Constant(1), ast.StorageClass.Static))),
+                ast.S(ast.Return(ast.Var("g"))),
+            ),
+        )
+        program = _prog_with_decls(g_decl, ast.FunDecl(main_fn))
+        resolved = resolve(program)
+        fn = _get_fn(resolved)
+        static_name = fn.body[0].declaration.variable_declaration.name
+        assert static_name.startswith(".Vg.")
+        ret = fn.body[1].statement
+        assert isinstance(ret, ast.Return)
+        assert ret.exp == ast.Var(static_name)

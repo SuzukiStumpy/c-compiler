@@ -7,19 +7,29 @@ are *variable resolution*, *function declaration validation*, and *type checking
 * Every variable reference is verified to have a corresponding declaration in
   scope, and each declared name is assigned a unique internal identifier so that
   later pipeline stages (TAC generation, code generation) need not reason about
-  shadowing or scoping rules.
+  shadowing or scoping rules.  File-scope variables keep their original names;
+  block-scope variables (including ``static`` locals) are renamed to unique
+  internal identifiers.
 * Every function name is tracked in a program-wide function map.  Multiple
   *declarations* of the same function are permitted; a function *definition*
   (one with a body) may appear at most once per program.  Top-level functions
   are processed in source order; a function must be declared or defined before
   any call site that precedes it.
+* File-scope variable declarations are added to the identifier table unaltered.
+  ``static`` file-scope variables receive ``Linkage.INTERNAL``; all others
+  receive ``Linkage.EXTERNAL``.
+* Block-scope ``extern`` declarations are checked to ensure they carry no
+  initialiser and are not mixed with a non-``extern`` declaration of the same
+  name in the same scope.  Block-scope ``static`` declarations are renamed
+  exactly like regular local variables but carry ``Linkage.INTERNAL``.
 * ``FunctionCall`` expressions are validated to ensure the callee has been
   declared or defined at an earlier point in the source, and that the callee
   name is not a local variable.
 * ``Var`` expressions are checked to ensure the name was declared as a variable
   rather than as a function.
 * Linkage is recorded for each binding: ``Linkage.NONE`` for local variables,
-  ``Linkage.EXTERNAL`` for all functions.
+  ``Linkage.INTERNAL`` for ``static`` variables, ``Linkage.EXTERNAL`` for all
+  functions and file-scope variables without ``static``.
 
 The main entry point for external callers is ``resolve``, which constructs a
 ``SemanticAnalyser``, runs it over the program, and returns a semantically
@@ -30,13 +40,16 @@ Raises:
     SemanticError: If the program contains a semantic violation such as
         a duplicate variable declaration, a reference to an undeclared variable
         or function, a redefinition of a function, an invalid lvalue, a function
-        name used as a variable, or a variable called as a function.
+        name used as a variable, a variable called as a function, mixed linkage
+        on a block-scope variable, or a block-scope ``extern`` declaration with
+        an initialiser.
 """
 
 from itertools import count
 from typing import NamedTuple
 
 import compiler.syntax.ast as ast
+from compiler.syntax.ast.declarations import StorageClass
 from compiler.syntax.ast.types import Linkage
 from compiler.utils.exceptions import SemanticError
 
@@ -46,14 +59,14 @@ class VariableBinding(NamedTuple):
 
     Attributes:
         unique_name: The unique internal identifier assigned to the source-level variable
-            (e.g. ``".Vx.0"``).
+            (e.g. ``".Vx.0"``).  File-scope variables use their original source name.
         from_current_block: ``True`` if this binding was declared in the block currently
-            being analysed; ``False`` if it was inherited from an enclosing scope.  Used
-            by ``resolve_variable_declaration`` to distinguish shadowing (permitted) from a
-            same-block duplicate (an error).
-        linkage: The linkage classification for this variable.  Local variables always
-            have ``Linkage.NONE``; file-scope variables (not yet supported) would carry
-            ``Linkage.EXTERNAL``.
+            being analysed; ``False`` if it was inherited from an enclosing scope or the
+            file scope.  Used by ``resolve_variable_declaration`` to distinguish shadowing
+            (permitted) from a same-block duplicate (an error).
+        linkage: The linkage classification for this variable.  Local variables carry
+            ``Linkage.NONE``; ``static`` variables carry ``Linkage.INTERNAL``; file-scope
+            and ``extern``-declared variables carry ``Linkage.EXTERNAL``.
     """
 
     unique_name: str
@@ -106,12 +119,15 @@ class SemanticAnalyser:
         _variable_map: Mapping from source-level variable names to
             ``VariableBinding`` values.  Each binding records the unique
             internal name, whether it was declared in the current block, and
-            the variable's linkage (always ``Linkage.NONE`` for local
-            variables).  Outer-scope bindings are retained in the map with
-            ``from_current_block=False`` so that variable lookups can still
-            resolve them; when a compound block exits the map is restored to
-            its saved snapshot.  Reset to an empty dict at the start of each
-            function definition.
+            the variable's linkage.  File-scope variables accumulate in this
+            map (with ``from_current_block=False``) as top-level ``VarDecl``
+            nodes are processed; when a ``FunDecl`` definition is resolved the
+            map is snapshotted before entering the body and restored afterward
+            so that local variables declared inside the function are not visible
+            to subsequent top-level declarations.  Outer-scope bindings are
+            retained in the map with ``from_current_block=False`` so that
+            variable lookups can still resolve them; when a compound block exits
+            the map is restored to its saved snapshot.
         _function_map: Program-wide mapping from function names to
             ``FunctionBinding`` values.  Each binding records whether a
             definition has been seen and the function's linkage (always
@@ -259,56 +275,106 @@ class SemanticAnalyser:
                     self._collect_labels_in_statement(statement)
 
     def resolve_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
-        """Resolve a variable declaration against the current symbol table.
+        """Resolve a block-scope variable declaration against the current symbol table.
 
-        Verifies that ``var_decl.name`` has not already been declared in the
-        *current* block (detected via the ``from_current_block`` flag on the
-        existing ``VariableBinding``), assigns it a fresh unique internal name,
-        records the mapping in ``_variable_map``, and returns a new
-        ``VariableDeclaration`` node whose ``name`` field holds the unique
-        internal name.  Declarations with the same source name in an *outer*
-        block are silently shadowed: the new binding overwrites the map entry
-        for the duration of the enclosing compound block, and the outer binding
-        is restored when that block exits.
+        ``extern`` declarations keep their original source name and are recorded
+        with ``Linkage.EXTERNAL``; an initialiser is forbidden.  All other
+        declarations (plain or ``static``) are renamed to a unique internal
+        identifier.  ``static`` declarations are recorded with
+        ``Linkage.INTERNAL``; plain declarations with ``Linkage.NONE``.
 
-        The binding is added to ``_variable_map`` *before* the initialiser is
-        resolved.  This matches the C standard (C11 §6.2.1p7), under which the
-        scope of a declared identifier begins immediately after its declarator —
-        before the ``=`` initialiser — so constructs such as
-        ``int a = 0 && a;`` are valid (the right-hand side of ``&&`` is never
-        evaluated when the left is zero).  A self-referential initialiser such
-        as ``int x = x;`` is accepted at this stage; it is undefined behaviour
-        at runtime, but not a constraint violation.
+        If the same name has already been declared in the *current* block (i.e.
+        the existing binding has ``from_current_block=True``), a
+        ``SemanticError`` is raised.  When the existing binding has linkage and
+        the new declaration does not (or vice versa), the error message
+        identifies the linkage conflict specifically; otherwise it reports a
+        plain duplicate.
+
+        This method is *not* used for file-scope variable declarations; those
+        are handled by ``_resolve_file_scope_variable_declaration``.
 
         Args:
-            var_decl: The ``VariableDeclaration`` AST node to resolve.  Its
-                ``name`` field is the source-level identifier; its ``init``
-                field is either ``None`` (no initialiser) or an expression tree.
+            var_decl: The ``VariableDeclaration`` AST node to resolve.
 
         Returns:
-            A new ``VariableDeclaration`` node with ``name`` replaced by the
-            unique internal identifier and ``init`` (if present) rewritten so
-            that all variable references within it use their unique internal
-            names.
+            ``var_decl`` unchanged for ``extern`` declarations.  A new
+            ``VariableDeclaration`` with a unique internal name (and resolved
+            ``init``) for all other declarations.
 
         Raises:
-            SemanticError: If an existing ``VariableBinding`` for
-                ``var_decl.name`` has ``from_current_block=True``, indicating
-                a duplicate declaration in the same block.
+            SemanticError: If ``var_decl`` is an ``extern`` declaration with an
+                initialiser; if the same name was declared with conflicting
+                linkage in the same block; if the same name was already declared
+                in this block; or if a non-``extern`` name conflicts with a
+                same-scope function declaration.
         """
         binding = self._variable_map.get(var_decl.name)
-        if binding is not None and binding.from_current_block:
-            raise SemanticError(f"Duplicate variable declaration: {var_decl.name}!")
-        if var_decl.name in self._current_block_funs:
-            raise SemanticError(
-                f"'{var_decl.name}' redeclared as a variable but was previously declared as a function in this scope."
+        if var_decl.storage_class == StorageClass.Extern:
+            if var_decl.init is not None:
+                raise SemanticError(f"Block-scope 'extern' variable '{var_decl.name}' may not have an initialiser.")
+            if var_decl.name in self._function_map:
+                raise SemanticError(
+                    f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
+                )
+            if binding is not None and binding.from_current_block:
+                if binding.linkage != Linkage.EXTERNAL:
+                    raise SemanticError(f"'{var_decl.name}' previously declared without linkage in this scope.")
+                return var_decl  # repeated extern declaration of the same symbol — permitted
+            self._variable_map[var_decl.name] = VariableBinding(
+                var_decl.name, from_current_block=True, linkage=Linkage.EXTERNAL
             )
+            return var_decl
+        else:
+            if binding is not None and binding.from_current_block:
+                if binding.linkage == Linkage.EXTERNAL:
+                    raise SemanticError(f"'{var_decl.name}' previously declared with linkage in this scope.")
+                raise SemanticError(f"Duplicate variable declaration: {var_decl.name}!")
+            if var_decl.name in self._current_block_funs:
+                raise SemanticError(
+                    f"'{var_decl.name}' redeclared as a variable but was previously declared as a function "
+                    "in this scope."
+                )
+            unique_name = self._make_unique(var_decl.name)
+            linkage = Linkage.INTERNAL if var_decl.storage_class == StorageClass.Static else Linkage.NONE
+            self._variable_map[var_decl.name] = VariableBinding(unique_name, from_current_block=True, linkage=linkage)
+            if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
+                if not isinstance(var_decl.init, ast.Constant):
+                    raise SemanticError(
+                        f"Initialiser of 'static' variable '{var_decl.name}' must be a constant expression."
+                    )
+            init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
+            return ast.VariableDeclaration(unique_name, init, var_decl.storage_class)
 
-        unique_name = self._make_unique(var_decl.name)
-        self._variable_map[var_decl.name] = VariableBinding(unique_name, from_current_block=True)
-        init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
+    def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
+        """Record a file-scope variable declaration in the identifier table.
 
-        return ast.VariableDeclaration(unique_name, init)
+        File-scope variables are *not* renamed — they keep their original source
+        names throughout the compilation pipeline.  The binding is added to
+        ``_variable_map`` with ``from_current_block=False`` so that subsequent
+        function bodies can reference it.
+
+        Linkage is determined by storage class: ``static`` yields
+        ``Linkage.INTERNAL``; everything else (``extern`` or no specifier) yields
+        ``Linkage.EXTERNAL``.
+
+        Args:
+            var_decl: The ``VariableDeclaration`` AST node from a top-level
+                ``VarDecl`` block.
+
+        Returns:
+            ``var_decl`` unchanged — file-scope variables are not renamed.
+
+        Raises:
+            SemanticError: If ``var_decl.name`` was previously declared as a
+                function (conflicting entity kind on the same external name).
+        """
+        if var_decl.name in self._function_map:
+            raise SemanticError(
+                f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
+            )
+        linkage = Linkage.INTERNAL if var_decl.storage_class == StorageClass.Static else Linkage.EXTERNAL
+        self._variable_map[var_decl.name] = VariableBinding(var_decl.name, from_current_block=False, linkage=linkage)
+        return var_decl
 
     def _validate_params_unique(self, fun: ast.Function) -> None:
         """Verify that no two parameters in a function declaration share the same name.
@@ -345,14 +411,14 @@ class SemanticAnalyser:
             SemanticError: If ``fun`` is a definition and a definition for the
                 same name has already been registered; if the parameter types of
                 this declaration conflict with a prior declaration of the same
-                name; or if ``fun.name`` was already declared as a variable in
-                the current block scope.
+                name; if ``fun.name`` was already declared as a variable in the
+                current block scope; or if ``fun.name`` was previously declared
+                as an ``extern`` variable at any scope level (conflicting entity
+                kind on the same external name).
         """
         var_binding = self._variable_map.get(fun.name)
-        if var_binding is not None and var_binding.from_current_block:
-            raise SemanticError(
-                f"'{fun.name}' redeclared as a function but was previously declared as a variable in this scope."
-            )
+        if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
+            raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
         new_param_types = tuple(p.param_type for p in fun.params)
         existing = self._function_map.get(fun.name)
         if existing is not None:
@@ -615,14 +681,20 @@ class SemanticAnalyser:
             A new ``ForInit`` node with all variable references resolved.
 
         Raises:
-            SemanticError: If a declaration within ``init`` duplicates a name
-                already declared in the same scope, or if an expression within
-                ``init`` contains an undeclared variable or an invalid lvalue.
+            SemanticError: If a declaration within ``init`` carries a storage
+                class specifier; if a declaration within ``init`` duplicates a
+                name already declared in the same scope; or if an expression
+                within ``init`` contains an undeclared variable or an invalid
+                lvalue.
         """
         match init:
             case ast.InitExp(exp=exp):
                 return ast.InitExp(self._resolve_optional_exp(exp))
             case ast.InitDecl(declaration=ast.VarDecl(variable_declaration=var_decl)):
+                if var_decl.storage_class is not None:
+                    raise SemanticError(
+                        f"Variable '{var_decl.name}' in 'for' loop initialiser may not have a storage class specifier."
+                    )
                 return ast.InitDecl(ast.VarDecl(self.resolve_variable_declaration(var_decl)))
             case _:
                 raise SemanticError("Unhandled for-init type in semantic analyser")
@@ -664,7 +736,9 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If the item contains a semantic violation, including a
-                ``FunDecl`` whose ``body`` is not ``None`` (nested definition).
+                ``FunDecl`` whose ``body`` is not ``None`` (nested definition), or
+                a ``FunDecl`` with a ``static`` storage class specifier (``static``
+                is not permitted on block-scope function declarations).
         """
         match item:
             case ast.D(declaration=ast.VarDecl(variable_declaration=var_decl)):
@@ -672,6 +746,10 @@ class SemanticAnalyser:
             case ast.D(declaration=ast.FunDecl(function_declaration=fun)):
                 if fun.body is not None:
                     raise SemanticError(f"Nested function definition of '{fun.name}' is not permitted.")
+                if fun.storage_class == StorageClass.Static:
+                    raise SemanticError(
+                        f"Block-scope function declaration '{fun.name}' may not have 'static' storage class."
+                    )
                 self._validate_params_unique(fun)
                 self._register_fun_declaration(fun)
                 return item
@@ -689,7 +767,9 @@ class SemanticAnalyser:
         parameter check (the name has already been registered by the pre-pass in
         ``_resolve_program``).  Otherwise:
 
-        1. Resets per-function state (``_variable_map``, label and loop stacks).
+        1. Resets per-function state; marks all entries in ``_variable_map`` as
+           ``from_current_block=False`` so that file-scope variables accumulated
+           in ``_resolve_program`` are visible inside the function body.
         2. Adds each parameter to ``_variable_map`` under a unique internal name.
         3. Collects all labels in a first pass.
         4. Resolves every block item in the body.
@@ -711,7 +791,7 @@ class SemanticAnalyser:
         if function.body is None:
             return function
 
-        self._variable_map = {}
+        self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
         self._current_block_funs = set()
         self._label_set = set()
         self._loop_stack = []
@@ -735,12 +815,17 @@ class SemanticAnalyser:
     def _resolve_program(self, program: ast.Program) -> ast.Program:
         """Perform semantic analysis on a parsed program.
 
-        Processes top-level functions in source order.  For each function,
-        ``_register_fun_declaration`` is called first (making the name visible
-        to the bodies that follow), then ``_resolve_function`` resolves the body
-        if present.  A function must therefore be declared or defined before any
-        subsequent function body may call it; mutual recursion requires a forward
-        declaration.
+        Processes top-level declarations in source order.  For each ``FunDecl``,
+        ``_register_fun_declaration`` is called first (making the name visible to
+        the bodies that follow), then ``_resolve_function`` resolves the body if
+        present.  For each ``VarDecl``, ``_resolve_file_scope_variable_declaration``
+        validates linkage consistency and records the variable in
+        ``_file_scope_var_map`` so that subsequent function bodies can reference it.
+
+        A function must therefore be declared or defined before any subsequent
+        function body may call it; mutual recursion requires a forward declaration.
+        A file-scope variable must be declared before any function body that
+        references it.
 
         Args:
             program: The ``Program`` AST node produced by the parser.
@@ -752,16 +837,25 @@ class SemanticAnalyser:
         Raises:
             SemanticError: If the program contains any semantic violation such
                 as a duplicate variable declaration, a reference to an undeclared
-                variable or function, a redefinition of a function, or a call to
-                a function whose declaration has not yet appeared in source order.
+                variable or function, a redefinition of a function, a call to a
+                function whose declaration has not yet appeared in source order,
+                conflicting linkage on a file-scope variable, or a duplicate
+                file-scope definition.
         """
-        resolved: list[ast.Function] = []
-        for fn in program.functions:
-            self._register_fun_declaration(fn)
-            resolved.append(self._resolve_function(fn))
-            self._variable_map = {}
-            self._current_block_funs = set()
-        return ast.Program(functions=tuple(resolved))
+        resolved: list[ast.Declaration] = []
+        for decl in program.declarations:
+            match decl:
+                case ast.FunDecl(function_declaration=fn):
+                    file_scope_state = dict(self._variable_map)
+                    self._register_fun_declaration(fn)
+                    resolved.append(ast.FunDecl(self._resolve_function(fn)))
+                    self._variable_map = file_scope_state
+                    self._current_block_funs = set()
+                case ast.VarDecl(variable_declaration=var_decl):
+                    resolved.append(ast.VarDecl(self._resolve_file_scope_variable_declaration(var_decl)))
+                case _:
+                    raise SemanticError("Unhandled top-level declaration type in semantic analyser")
+        return ast.Program(declarations=tuple(resolved))
 
 
 def resolve(program: ast.Program) -> ast.Program:

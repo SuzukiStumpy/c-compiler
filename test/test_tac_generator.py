@@ -31,11 +31,13 @@ def _program_returning(exp: ast.Exp) -> ast.Program:
         is ``return <exp>;``.
     """
     return ast.Program(
-        functions=(
-            ast.Function(
-                name="main",
-                params=(),
-                body=(ast.S(statement=ast.Return(exp=exp)),),
+        declarations=(
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=(ast.S(statement=ast.Return(exp=exp)),),
+                )
             ),
         )
     )
@@ -270,7 +272,7 @@ class TestTacGeneratorErrors:
             body=(ast.S(statement=_FakeStmt()),),
         )
         with pytest.raises(CodeGenerationError):
-            generate(ast.Program(functions=(fn,)))
+            generate(ast.Program(declarations=(ast.FunDecl(fn),)))
 
 
 # ---------------------------------------------------------------------------
@@ -423,11 +425,13 @@ def _instrs_for_body(body: tuple[ast.BlockItem, ...]) -> tuple[tac.Instruction, 
     return (
         generate(
             ast.Program(
-                functions=(
-                    ast.Function(
-                        name="main",
-                        params=(),
-                        body=body,
+                declarations=(
+                    ast.FunDecl(
+                        ast.Function(
+                            name="main",
+                            params=(),
+                            body=body,
+                        )
                     ),
                 )
             )
@@ -1856,9 +1860,9 @@ class TestTacGeneratorMultipleFunctions:
     def test_two_functions_produce_two_tac_functions(self) -> None:
         """A program with two definitions yields two entries in ``tac.Program.functions``."""
         prog = ast.Program(
-            functions=(
-                _make_function("foo", (ast.S(statement=ast.Return(exp=ast.Constant(value=1))),)),
-                _make_function("bar", (ast.S(statement=ast.Return(exp=ast.Constant(value=2))),)),
+            declarations=(
+                ast.FunDecl(_make_function("foo", (ast.S(statement=ast.Return(exp=ast.Constant(value=1))),))),
+                ast.FunDecl(_make_function("bar", (ast.S(statement=ast.Return(exp=ast.Constant(value=2))),))),
             )
         )
         result = generate(prog)
@@ -1867,9 +1871,9 @@ class TestTacGeneratorMultipleFunctions:
     def test_function_names_are_preserved_in_order(self) -> None:
         """The TAC functions appear in the same order as the source definitions."""
         prog = ast.Program(
-            functions=(
-                _make_function("alpha", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),)),
-                _make_function("beta", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),)),
+            declarations=(
+                ast.FunDecl(_make_function("alpha", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
+                ast.FunDecl(_make_function("beta", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
             )
         )
         result = generate(prog)
@@ -1879,9 +1883,9 @@ class TestTacGeneratorMultipleFunctions:
     def test_forward_declaration_is_skipped(self) -> None:
         """A function with ``body=None`` (forward declaration) is excluded from the TAC output."""
         prog = ast.Program(
-            functions=(
-                ast.Function(name="declared_only", params=(), body=None),
-                _make_function("defined", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),)),
+            declarations=(
+                ast.FunDecl(ast.Function(name="declared_only", params=(), body=None)),
+                ast.FunDecl(_make_function("defined", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
             )
         )
         result = generate(prog)
@@ -1891,9 +1895,9 @@ class TestTacGeneratorMultipleFunctions:
     def test_all_forward_declarations_produces_empty_function_list(self) -> None:
         """A program consisting solely of forward declarations yields an empty ``functions`` tuple."""
         prog = ast.Program(
-            functions=(
-                ast.Function(name="f", params=(), body=None),
-                ast.Function(name="g", params=(), body=None),
+            declarations=(
+                ast.FunDecl(ast.Function(name="f", params=(), body=None)),
+                ast.FunDecl(ast.Function(name="g", params=(), body=None)),
             )
         )
         result = generate(prog)
@@ -1902,14 +1906,18 @@ class TestTacGeneratorMultipleFunctions:
     def test_temporaries_are_unique_across_functions(self) -> None:
         """Temporaries allocated in different functions have distinct names."""
         prog = ast.Program(
-            functions=(
-                _make_function(
-                    "f",
-                    (ast.S(statement=ast.Return(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)))),),
+            declarations=(
+                ast.FunDecl(
+                    _make_function(
+                        "f",
+                        (ast.S(statement=ast.Return(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)))),),
+                    )
                 ),
-                _make_function(
-                    "g",
-                    (ast.S(statement=ast.Return(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)))),),
+                ast.FunDecl(
+                    _make_function(
+                        "g",
+                        (ast.S(statement=ast.Return(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)))),),
+                    )
                 ),
             )
         )
@@ -1932,11 +1940,13 @@ class TestTacGeneratorFunctionParameters:
     def test_single_parameter_name_preserved(self) -> None:
         """A function with one parameter stores its name in ``tac.Function.params``."""
         prog = ast.Program(
-            functions=(
-                _make_function(
-                    "f",
-                    (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
-                    params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
+            declarations=(
+                ast.FunDecl(
+                    _make_function(
+                        "f",
+                        (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+                        params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
+                    )
                 ),
             )
         )
@@ -1946,14 +1956,16 @@ class TestTacGeneratorFunctionParameters:
     def test_multiple_parameters_names_preserved_in_order(self) -> None:
         """Multiple parameters are stored in declaration order."""
         prog = ast.Program(
-            functions=(
-                _make_function(
-                    "add",
-                    (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
-                    params=(
-                        ast.Parameter(param_type=ast.IntType(), name="a"),
-                        ast.Parameter(param_type=ast.IntType(), name="b"),
-                    ),
+            declarations=(
+                ast.FunDecl(
+                    _make_function(
+                        "add",
+                        (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+                        params=(
+                            ast.Parameter(param_type=ast.IntType(), name="a"),
+                            ast.Parameter(param_type=ast.IntType(), name="b"),
+                        ),
+                    )
                 ),
             )
         )
@@ -1963,7 +1975,9 @@ class TestTacGeneratorFunctionParameters:
     def test_no_parameters_yields_empty_params(self) -> None:
         """A function with no parameters has an empty ``params`` tuple."""
         prog = ast.Program(
-            functions=(_make_function("main", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),)),)
+            declarations=(
+                ast.FunDecl(_make_function("main", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
+            )
         )
         result = generate(prog)
         assert result.functions[0].params == ()

@@ -36,10 +36,12 @@ class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 §6.2.2).
 
     ``NONE`` applies to identifiers with no linkage — local (block-scope)
-    variables.  ``EXTERNAL`` applies to identifiers with external linkage —
-    functions and file-scope variables not qualified with ``static``.
-    Internal linkage (``static`` at file scope) is not yet supported.
+    variables.  ``INTERNAL`` applies to identifiers with internal linkage —
+    file-scope or static-local variables qualified with ``static``.
+    ``EXTERNAL`` applies to identifiers with external linkage — functions and
+    file-scope variables not qualified with ``static``.
     """
 
     NONE = auto()
+    INTERNAL = auto()
     EXTERNAL = auto()
