@@ -60,4 +60,4 @@ module-name = "compiler"
 [tool.pytest.ini_options]
 testpaths     = ["test"]
 norecursedirs = ["compiler", ".venv", "**/__pycache__"]
-addopts       = "--ignore=compiler"
+addopts       = "--ignore=compiler --import-mode=importlib"

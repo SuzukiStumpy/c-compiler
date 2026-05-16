@@ -5,13 +5,19 @@ and ``Program``.  These are the product types in the grammar - each has exactly
 one form.
 """
 
+from abc import ABC
 from dataclasses import dataclass
 
 from compiler.syntax.tac.instructions import Instruction
 
 
+class TopLevel(ABC):
+    """Abstract class representing the top level of a TACKY program.  Encapsulates global
+    function definitions and static variables."""
+
+
 @dataclass(frozen=True, slots=True)
-class Function:
+class Function(TopLevel):
     """A tac function definition.
 
     Represents a labelled sequence of instructions that forms a single callable
@@ -19,6 +25,7 @@ class Function:
 
     Attributes:
         name:   The function name used as the assembly label
+        globl: Whether to mark a function definition with the ``.globl`` directive in the assembly
         params: The ordered sequence of parameters that can be passed to the function
         body:   The ordered sequence of instructions in the function body.  May
                 be empty before code generation fills it in, but will contain at
@@ -26,20 +33,45 @@ class Function:
     """
 
     name: str
+    globl: bool = False
     params: tuple[str, ...] = ()
     body: tuple[Instruction, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StaticVariable(TopLevel):
+    """A globpyally defined static variable declaration.
+
+    Attributes:
+        name: The symbol representing the variable
+        globl: Whether the variable is declared with the ``.globl`` directive in the assembly.
+        init: The initial value of the variable
+    """
+
+    name: str
+    globl: bool
+    init: int
 
 
 @dataclass(frozen=True, slots=True)
 class Program:
     """A tac program definition.
 
-    Represents the root of the tac AST and contains all function definitions
+    Represents the root of the tac AST and contains all ``TopLevel`` definitions
     in the translation unit.
 
     Attributes:
-        functions: The ordered sequence of function definitions in the program.
+        top_level: The ordered sequence of ``TopLevel`` definitions in the program.
             At least one function is required.
     """
 
-    functions: tuple[Function, ...]
+    top_level: tuple[TopLevel, ...]
+
+    @property
+    def functions(self) -> tuple[Function, ...]:
+        """Return only the ``Function`` entries from ``top_level``.
+
+        Returns:
+            A tuple containing every ``Function`` in ``top_level``, in order.
+        """
+        return tuple(t for t in self.top_level if isinstance(t, Function))

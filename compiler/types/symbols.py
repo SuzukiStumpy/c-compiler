@@ -1,0 +1,103 @@
+"""Symbol table types shared between the semantic analysis and TAC generation stages.
+
+The symbol table maps every name that has been resolved by the semantic analyser
+to a ``SymbolTableEntry`` describing how that name should be treated by downstream
+passes.
+
+Grammar::
+
+    symbol_table_entry = SymbolTableEntry(attrs)
+    attrs              = StaticAttr(initial_value, bool globl)
+                       | FunAttr(bool defined, bool globl)
+    initial_value      = Initial(int)
+                       | Tentative
+                       | NoInitializer
+
+``StaticAttr`` is attached to every variable with static storage duration:
+file-scope variables (external or internal linkage) and block-scope ``static``
+or ``extern`` variables.
+
+``FunAttr`` is attached to every function declaration or definition.
+
+``Initial(i)``      — the variable was given a constant initialiser ``i``.
+``Tentative``       — the variable is a tentative definition (no initialiser);
+                      it will be zero-initialised at link time.
+``NoInitializer``   — the name appears only in a non-defining declaration (e.g.
+                      ``extern int x;`` with no preceding definition); it will
+                      not generate any data-section output.
+"""
+
+from abc import ABC
+from dataclasses import dataclass
+
+
+class InitialValue(ABC):
+    """Abstract base for the three possible initial-value states of a static variable."""
+
+
+@dataclass(frozen=True, slots=True)
+class Initial(InitialValue):
+    """The variable was defined with a constant initialiser.
+
+    Attributes:
+        value: The integer value supplied as the initialiser.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class Tentative(InitialValue):
+    """The variable is a tentative definition; zero-initialised if no definition is seen."""
+
+
+@dataclass(frozen=True, slots=True)
+class NoInitializer(InitialValue):
+    """The name appears only in a non-defining declaration; generates no data-section output."""
+
+
+class SymbolAttrs(ABC):
+    """Abstract base for symbol-table attribute variants."""
+
+
+@dataclass(frozen=True, slots=True)
+class StaticAttr(SymbolAttrs):
+    """Attributes for a variable with static storage duration.
+
+    Attributes:
+        init:  The initial-value classification for the variable.
+        globl: ``True`` when the symbol has external linkage (should appear in
+               the ``.globl`` directive); ``False`` for internal linkage.
+    """
+
+    init: InitialValue
+    globl: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FunAttr(SymbolAttrs):
+    """Attributes for a function declaration or definition.
+
+    Attributes:
+        defined: ``True`` once a function body has been registered for this name.
+        globl:   ``True`` when the function has external linkage.
+    """
+
+    defined: bool
+    globl: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolTableEntry:
+    """A single entry in the program-wide symbol table.
+
+    Attributes:
+        attrs: The attribute variant that describes how this symbol should be
+               treated by downstream compilation passes.
+    """
+
+    attrs: SymbolAttrs
+
+
+SymbolTable = dict[str, SymbolTableEntry]
+"""Mapping from resolved identifier name to its symbol-table entry."""

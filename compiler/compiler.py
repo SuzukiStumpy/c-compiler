@@ -14,7 +14,7 @@ from compiler.code_generator import generate
 from compiler.emitter import emit_program
 from compiler.lexer import lexer
 from compiler.parser import parse
-from compiler.semantic_analysis import resolve
+from compiler.semantic_analysis import resolve_with_symbols
 from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.syntax.ast import pretty_print
 from compiler.tac_generator import generate as tac_generate
@@ -100,6 +100,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
     program: ast.Program | None = None
     tac_program: tac.Program | None = None
     asm_program: asm.Program | None = None
+    symbol_table = {}
 
     if Stage.LEX in stages:
         token_stream = lexer(source)
@@ -110,13 +111,13 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
             click.echo(pretty_print(program))
 
     if Stage.VALIDATE in stages:
-        program = resolve(program)  # type: ignore[bad-argument-type]
+        program, symbol_table = resolve_with_symbols(program)  # type: ignore[bad-argument-type]
         if Stage.TACKY not in stages:
             click.echo(pretty_print(program))
 
     if Stage.TACKY in stages:
         assert program is not None
-        tac_program = tac_generate(program)
+        tac_program = tac_generate(program, symbol_table)
         if Stage.CODEGEN not in stages:
             click.echo(pretty_print(tac_program))
 

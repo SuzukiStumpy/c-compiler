@@ -53,6 +53,16 @@ from typing import NamedTuple
 import compiler.syntax.ast as ast
 from compiler.syntax.ast.declarations import StorageClass
 from compiler.syntax.ast.types import Linkage
+from compiler.types.symbols import (
+    FunAttr,
+    Initial,
+    InitialValue,
+    NoInitializer,
+    StaticAttr,
+    SymbolTable,
+    SymbolTableEntry,
+    Tentative,
+)
 from compiler.utils.exceptions import SemanticError
 
 
@@ -187,6 +197,7 @@ class SemanticAnalyser:
         self._loop_counter: count[int] = count()
         self._variable_map: dict[str, VariableBinding] = {}
         self._function_map: dict[str, FunctionBinding] = {}
+        self._symbol_table: SymbolTable = {}
         self._file_scope_linkage: dict[str, Linkage] = {}
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
@@ -343,6 +354,10 @@ class SemanticAnalyser:
             self._variable_map[var_decl.name] = VariableBinding(
                 var_decl.name, from_current_block=True, linkage=effective_linkage
             )
+            # Only add a symbol table entry when the name hasn't been seen yet; file-scope
+            # declarations take precedence and should not be downgraded to NoInitializer.
+            if var_decl.name not in self._symbol_table:
+                self._symbol_table[var_decl.name] = SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=True))
             return var_decl
         else:
             if binding is not None and binding.from_current_block:
@@ -363,6 +378,13 @@ class SemanticAnalyser:
                         f"Initialiser of 'static' variable '{var_decl.name}' must be a constant expression."
                     )
             init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
+            if var_decl.storage_class == StorageClass.Static:
+                static_init: InitialValue = (
+                    Initial(var_decl.init.value)  # type: ignore[union-attr]
+                    if isinstance(var_decl.init, ast.Constant)
+                    else Tentative()
+                )
+                self._symbol_table[unique_name] = SymbolTableEntry(StaticAttr(init=static_init, globl=False))
             return ast.VariableDeclaration(unique_name, init, var_decl.storage_class)
 
     def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
@@ -418,6 +440,26 @@ class SemanticAnalyser:
         self._variable_map[var_decl.name] = VariableBinding(
             var_decl.name, from_current_block=False, linkage=new_linkage
         )
+        globl = new_linkage == Linkage.EXTERNAL
+        existing_entry = self._symbol_table.get(var_decl.name)
+        if var_decl.init is not None:
+            assert isinstance(var_decl.init, ast.Constant)
+            self._symbol_table[var_decl.name] = SymbolTableEntry(
+                StaticAttr(init=Initial(var_decl.init.value), globl=globl)
+            )
+        elif var_decl.storage_class == StorageClass.Extern:
+            # A non-defining extern declaration — add a NoInitializer entry only when the name
+            # is entirely new; any existing Initial or Tentative entry takes precedence.
+            if existing_entry is None:
+                self._symbol_table[var_decl.name] = SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=globl))
+        else:
+            # Tentative definition — upgrade from NoInitializer but never downgrade from Initial.
+            if (
+                existing_entry is None
+                or isinstance(existing_entry.attrs, StaticAttr)
+                and isinstance(existing_entry.attrs.init, NoInitializer)
+            ):
+                self._symbol_table[var_decl.name] = SymbolTableEntry(StaticAttr(init=Tentative(), globl=globl))
         return var_decl
 
     def _validate_params_unique(self, fun: ast.Function) -> None:
@@ -492,6 +534,14 @@ class SemanticAnalyser:
             self._function_map[fun.name] = FunctionBinding(
                 has_definition=fun.body is not None, param_types=new_param_types, linkage=new_linkage
             )
+        fun_globl = new_linkage == Linkage.EXTERNAL
+        prior_sym = self._symbol_table.get(fun.name)
+        prior_defined = (
+            isinstance(prior_sym.attrs, FunAttr) and prior_sym.attrs.defined if prior_sym is not None else False
+        )
+        self._symbol_table[fun.name] = SymbolTableEntry(
+            FunAttr(defined=prior_defined or fun.body is not None, globl=fun_globl)
+        )
         self._current_block_funs.add(fun.name)
 
     def _enter_scope(self) -> tuple[dict[str, VariableBinding], set[str]]:
@@ -864,10 +914,14 @@ class SemanticAnalyser:
             resolved_params.append(ast.Parameter(param_type=param.param_type, name=resolved_var.name))
 
         self._collect_labels(function.body)
+        binding = self._function_map.get(function.name)
+        globl = binding.linkage == Linkage.EXTERNAL if binding is not None else True
         return ast.Function(
             name=function.name,
             params=tuple(resolved_params),
             body=tuple(self._resolve_block_item(item) for item in function.body),
+            globl=globl,
+            storage_class=function.storage_class,
         )
 
     def _resolve_program(self, program: ast.Program) -> ast.Program:
@@ -925,6 +979,9 @@ def resolve(program: ast.Program) -> ast.Program:
     testing individual helpers) should instantiate ``SemanticAnalyser``
     directly.
 
+    For pipeline use (where the symbol table is needed by downstream stages)
+    prefer ``resolve_with_symbols``.
+
     Args:
         program: The ``Program`` AST node produced by the parser.
 
@@ -936,3 +993,27 @@ def resolve(program: ast.Program) -> ast.Program:
         SemanticError: If the program contains any semantic violation.
     """
     return SemanticAnalyser()._resolve_program(program)
+
+
+def resolve_with_symbols(program: ast.Program) -> tuple[ast.Program, SymbolTable]:
+    """Semantic analysis stage entry point that also returns the populated symbol table.
+
+    Identical to ``resolve`` but additionally exposes the ``SymbolTable`` built
+    during analysis.  Downstream stages (TAC generation) require the symbol
+    table to emit ``StaticVariable`` constructs for variables with static
+    storage duration.
+
+    Args:
+        program: The ``Program`` AST node produced by the parser.
+
+    Returns:
+        A tuple ``(resolved_program, symbol_table)`` where ``resolved_program``
+        is the semantically validated AST and ``symbol_table`` maps every
+        resolved identifier to its ``SymbolTableEntry``.
+
+    Raises:
+        SemanticError: If the program contains any semantic violation.
+    """
+    analyser = SemanticAnalyser()
+    resolved = analyser._resolve_program(program)
+    return resolved, analyser._symbol_table

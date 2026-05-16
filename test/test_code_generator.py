@@ -24,7 +24,7 @@ def _simple_tac_program(value: int = 0, name: str = "main") -> tac.Program:
         A ``tac.Program`` containing a single function that returns ``value``.
     """
     return tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name=name,
                 body=(tac.Return(val=tac.Constant(value=value)),),
@@ -99,7 +99,7 @@ def test_mov_destination_is_register() -> None:
 def test_multiple_return_statements_produce_instruction_pairs() -> None:
     """Each ``Return`` contributes a ``Mov``+``Ret`` pair; no stack allocation."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -125,7 +125,7 @@ def test_multiple_return_statements_produce_instruction_pairs() -> None:
 def test_unary_negate_produces_allocate_mov_unary_mov_ret() -> None:
     """``Unary(Negate, Constant(5), Var('t'))`` + ``Return(Var('t'))`` produces the expected sequence."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -148,7 +148,7 @@ def test_unary_negate_produces_allocate_mov_unary_mov_ret() -> None:
 def test_unary_complement_uses_not_operator() -> None:
     """``Unary(Complement, ...)`` translates to an ``asm.Unary`` with ``Not()``."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -167,7 +167,7 @@ def test_unary_complement_uses_not_operator() -> None:
 def test_stack_allocation_is_multiple_of_16() -> None:
     """``AllocateStack`` size is always a multiple of 16 bytes."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -186,7 +186,7 @@ def test_stack_allocation_is_multiple_of_16() -> None:
 def test_no_pseudo_operands_in_output() -> None:
     """No ``Pseudo`` operands remain after code generation."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -214,7 +214,7 @@ def test_no_pseudo_operands_in_output() -> None:
 def test_chained_temps_produce_no_mem_mem_mov() -> None:
     """Two chained unary ops produce no ``Mov(Stack, Stack)`` instructions."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -250,7 +250,7 @@ def _binary_tac_program(op: tac.BinaryOperator, src1: tac.Val, src2: tac.Val) ->
         A ``tac.Program`` whose sole function returns the result of the binary expression.
     """
     return tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -378,7 +378,7 @@ def test_idiv_immediate_divisor_routed_through_r11() -> None:
 def test_idiv_memory_divisor_not_routed_through_r11() -> None:
     """A stack-slot divisor is passed directly to ``idivl`` without an extra ``Mov``."""
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -462,7 +462,7 @@ class TestBitwiseAndOrXorCodeGen:
 def _shift_tac_program(op: tac.BinaryOperator, value: int, count: int) -> tac.Program:
     """Build a ``tac.Program`` that shifts ``value`` by ``count`` using ``op``."""
     return tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -536,7 +536,7 @@ def test_unsupported_instruction_raises_codegen_error() -> None:
         pass
 
     program = tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(_FakeInstruction(),),
@@ -568,7 +568,7 @@ def _relational_tac_program(
         A ``tac.Program`` whose sole function returns 0 or 1 based on the comparison.
     """
     return tac.Program(
-        functions=(
+        top_level=(
             tac.Function(
                 name="main",
                 body=(
@@ -651,7 +651,7 @@ class TestJumpAndLabelCodeGen:
     """``tac.Jump``, ``tac.JumpIfZero``, ``tac.JumpIfNotZero``, ``tac.Label``, and ``tac.Copy`` lowering."""
 
     def _program(self, *body: tac.Instruction) -> tac.Program:
-        return tac.Program(functions=(tac.Function(name="main", body=body),))
+        return tac.Program(top_level=(tac.Function(name="main", body=body),))
 
     def test_jump_produces_jmp(self) -> None:
         """``tac.Jump(target)`` lowers to ``asm.Jmp(label)``."""
@@ -727,7 +727,7 @@ class TestCmpPseudoReplacement:
     def test_jump_if_zero_cmp_operand_resolved(self) -> None:
         """The ``Cmp(Imm(0), cond)`` emitted for ``JumpIfZero`` has its condition operand resolved."""
         program = tac.Program(
-            functions=(
+            top_level=(
                 tac.Function(
                     name="main",
                     body=(

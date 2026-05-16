@@ -124,11 +124,16 @@ class Function:
             with ``void`` or ``()`` in the parameter list.
         body: The block comprising the function body, or ``None`` for a forward
             declaration.
+        globl: ``True`` when the function has external linkage and should be
+            visible to the linker.  Set by the semantic analysis stage; defaults
+            to ``False`` before analysis runs.
+        storage_class: The optional storage-class specifier (``static``).
     """
 
     name: str
     params: tuple[Parameter, ...]
     body: Block | None
+    globl: bool = False
     storage_class: StorageClass | None = None
 
 

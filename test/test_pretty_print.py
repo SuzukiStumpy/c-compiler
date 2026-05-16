@@ -69,6 +69,7 @@ def test_minimal_program_indentation() -> None:
         "                body=(\n"
         "                    Return(exp=Constant(value=2))\n"
         "                )\n"
+        "                globl=False\n"
         "                storage_class=None\n"
         "            )\n"
         "        )\n"
@@ -225,7 +226,7 @@ def test_for_identifier_appears_in_output() -> None:
 def test_function_with_none_body_renders_inline() -> None:
     """A forward-declaration ``Function`` with ``body=None`` renders inline."""
     node = Function(name="foo", params=(), body=None)
-    assert pretty_print(node) == 'Function(name="foo", params=(), body=None, storage_class=None)'
+    assert pretty_print(node) == 'Function(name="foo", params=(), body=None, globl=False, storage_class=None)'
 
 
 def test_function_none_body_in_program() -> None:

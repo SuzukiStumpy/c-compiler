@@ -4,8 +4,9 @@ This package defines the Abstract Syntax Tree (AST) node types produced by the
 initial code generation pass (after the parser has done it's thing).  The grammar
 mirrors the ASDL grammar for the supported assembly subset:
 
-    program             = Program(function_definition)
-    function_definition = Function(identifier, identifier* params, instruction* body)
+    program             = Program(top_level*)
+    top_level           = Function(identifier, bool global, identifier* params, instruction* body)
+                        | StaticVariable(identifier, bool global, int init)
     instruction         = Return(val)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
@@ -32,14 +33,14 @@ Nodes are organised into submodules by logical role:
 All node types are re-exported from this package so callers can import directly
 from ``compiler.syntax.tac`` without knowing which submodule a type lives in::
 
-    from compiler.tax import Program, Function, Return, Unary ... etc
+    from compiler.tac import Program, Function, Return, Unary ... etc
 
 Sum types (``Operator``, ``Instruction``, etc) are abstract base classes; each
 variant is a concrete frozen dataclass subclassing the appropriate base.  All
 nodes are immutable - once constructed a tac AST node cannot be modified.
 """
 
-from compiler.syntax.tac.declarations import Function, Program
+from compiler.syntax.tac.declarations import Function, Program, StaticVariable, TopLevel
 from compiler.syntax.tac.instructions import (
     Binary,
     Copy,
@@ -78,6 +79,8 @@ from compiler.syntax.tac.operators import (
 from compiler.syntax.tac.values import Constant, Val, Var
 
 __all__ = [
+    "StaticVariable",
+    "TopLevel",
     "FunCall",
     "Equal",
     "GreaterOrEqual",

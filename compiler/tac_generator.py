@@ -7,97 +7,107 @@ on demand and named ``tmp.0``, ``tmp.1``, etc.
 
 The translation follows this mapping:
 
-    ast.Program([fn])          → tac.Program(fn)
-    ast.Function(name, body)   → tac.Function(name, instructions)
-    ast.Return(exp)            → <emit(exp)> + [tac.Return(result_val)]
-    ast.Constant(v)            → tac.Constant(v)   (no extra instructions)
-    ast.Unary(op, inner)       → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
-                                 returns tmp as the result val
-    ast.Unary(PreIncrement, x) → [Binary(Add, x, 1, tmp), Copy(tmp, x)]
-                                 returns x (new value)
-    ast.Unary(PreDecrement, x) → [Binary(Sub, x, 1, tmp), Copy(tmp, x)]
-                                 returns x (new value)
-    ast.Unary(PostIncrement,x) → [Copy(x, old), Binary(Add, x, 1, tmp), Copy(tmp, x)]
-                                 returns old (original value)
-    ast.Unary(PostDecrement,x) → [Copy(x, old), Binary(Sub, x, 1, tmp), Copy(tmp, x)]
-                                 returns old (original value)
-    ast.Binary(op, l, r)       → <emit(l)> + <emit(r)>
-      (arithmetic / bitwise /    + [tac.Binary(op, l_val, r_val, tmp)]
-       comparison operators)     returns tmp as the result val
-    ast.Binary(And, l, r)      → <emit(l)>
-                                 + [JumpIfZero(l_val, false_lbl)]
-                                 + <emit(r)>
-                                 + [JumpIfZero(r_val, false_lbl),
-                                    Copy(1, tmp), Jump(end_lbl),
-                                    false_lbl, Copy(0, tmp), end_lbl]
-                                 returns tmp as the result val
-    ast.Binary(Or, l, r)       → <emit(l)>
-                                 + [JumpIfNotZero(l_val, true_lbl)]
-                                 + <emit(r)>
-                                 + [JumpIfNotZero(r_val, true_lbl),
-                                    Copy(0, tmp), Jump(end_lbl),
-                                    true_lbl, Copy(1, tmp), end_lbl]
-                                 returns tmp as the result val
-    ast.If(cond, then, None)   → <emit(cond)>
-                                 + [JumpIfZero(cond_val, end_lbl)]
-                                 + <emit(then)>
-                                 + [end_lbl]
-    ast.Conditional(c, e1, e2) → <emit(c)>
-                                 + [JumpIfZero(c_val, false_lbl)]
-                                 + <emit(e1)>
-                                 + [Copy(e1_val, tmp), Jump(end_lbl), false_lbl]
-                                 + <emit(e2)>
-                                 + [Copy(e2_val, tmp), end_lbl]
-                                 returns tmp as the result val
-    ast.If(cond, then, else_)  → <emit(cond)>
-                                 + [JumpIfZero(cond_val, else_lbl)]
-                                 + <emit(then)>
-                                 + [Jump(end_lbl), else_lbl]
-                                 + <emit(else_)>
-                                 + [end_lbl]
-    ast.Goto(target)           → [Jump(target)]
-    ast.Label(name, stmt)      → [Label(name)] + <emit(stmt)>
-    ast.Compound(body)         → <emit(item_0)> + <emit(item_1)> + ...
-    ast.While(cond,body,id)     → [continue_<id>, <emit(cond)>,
-                                  JumpIfZero(cond_val, break_<id>),
-                                  <emit(body)>, Jump(continue_<id>), break_<id>]
-    ast.DoWhile(body,cond,id)  → [start_<id>, <emit(body)>, continue_<id>,
-                                  <emit(cond)>,
-                                  JumpIfNotZero(cond_val, start_<id>), break_<id>]
-    ast.For(init,cond,post,    → <emit(init)>
-            body,id)             + [start_<id>, <emit(cond)>,
-                                    JumpIfZero(cond_val, break_<id>),
-                                    <emit(body)>, continue_<id>,
-                                    <emit(post)>, Jump(start_<id>), break_<id>]
-    ast.Break(target)          → [Jump("break_"+ target)]
-    ast.Continue(target)       → [Jump("continue_" + target)]
-    ast.Switch(ctrl,body,id)  → <emit(ctrl)>
-                                 + for each Case(v) in body (in order):
-                                     [tmp = Binary(Equal, ctrl_val, v),
-                                      JumpIfNotZero(tmp, "case_<id>_<v>")]
-                                 + [Jump("default_<id>")] if Default present
-                                 + [Jump("break_<id>")] otherwise
-                                 + <emit(body)>
-                                 + [break_<id>]
-    ast.Case(v, stmt, id)     → [Label("case_<id>_<v>")] + <emit(stmt)>
-    ast.Default(stmt, id)     → [Label("default_<id>")] + <emit(stmt)>
+    ast.Program(decls)                    → tac.Program(top_level=[...])
+    ast.FunDecl(fn) [with body]           → tac.Function(name, globl, params, instructions)
+    ast.VarDecl(v)  [file-scope/static]   → tac.StaticVariable(name, globl, init)
+    ast.Return(exp)                       → <emit(exp)> + [tac.Return(result_val)]
+    ast.Constant(v)                       → tac.Constant(v)   (no extra instructions)
+    ast.Unary(op, inner)                  → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
+                                            returns tmp as the result val
+    ast.Unary(PreIncrement, x)            → [Binary(Add, x, 1, tmp), Copy(tmp, x)]
+                                            returns x (new value)
+    ast.Unary(PreDecrement, x)            → [Binary(Sub, x, 1, tmp), Copy(tmp, x)]
+                                            returns x (new value)
+    ast.Unary(PostIncrement,x)            → [Copy(x, old), Binary(Add, x, 1, tmp), Copy(tmp, x)]
+                                            returns old (original value)
+    ast.Unary(PostDecrement,x)            → [Copy(x, old), Binary(Sub, x, 1, tmp), Copy(tmp, x)]
+                                            returns old (original value)
+    ast.Binary(op, l, r)                  → <emit(l)> + <emit(r)>
+      (arithmetic / bitwise /               + [tac.Binary(op, l_val, r_val, tmp)]
+       comparison operators)                returns tmp as the result val
+    ast.Binary(And, l, r)                 → <emit(l)>
+                                            + [JumpIfZero(l_val, false_lbl)]
+                                            + <emit(r)>
+                                            + [JumpIfZero(r_val, false_lbl),
+                                               Copy(1, tmp), Jump(end_lbl),
+                                               false_lbl, Copy(0, tmp), end_lbl]
+                                            returns tmp as the result val
+    ast.Binary(Or, l, r)                  → <emit(l)>
+                                            + [JumpIfNotZero(l_val, true_lbl)]
+                                            + <emit(r)>
+                                            + [JumpIfNotZero(r_val, true_lbl),
+                                               Copy(0, tmp), Jump(end_lbl),
+                                               true_lbl, Copy(1, tmp), end_lbl]
+                                            returns tmp as the result val
+    ast.If(cond, then, None)              → <emit(cond)>
+                                            + [JumpIfZero(cond_val, end_lbl)]
+                                            + <emit(then)>
+                                            + [end_lbl]
+    ast.Conditional(c, e1, e2)            → <emit(c)>
+                                            + [JumpIfZero(c_val, false_lbl)]
+                                            + <emit(e1)>
+                                            + [Copy(e1_val, tmp), Jump(end_lbl), false_lbl]
+                                            + <emit(e2)>
+                                            + [Copy(e2_val, tmp), end_lbl]
+                                            returns tmp as the result val
+    ast.If(cond, then, else_)             → <emit(cond)>
+                                            + [JumpIfZero(cond_val, else_lbl)]
+                                            + <emit(then)>
+                                            + [Jump(end_lbl), else_lbl]
+                                            + <emit(else_)>
+                                            + [end_lbl]
+    ast.Goto(target)                      → [Jump(target)]
+    ast.Label(name, stmt)                 → [Label(name)] + <emit(stmt)>
+    ast.Compound(body)                    → <emit(item_0)> + <emit(item_1)> + ...
+    ast.While(cond,body,id)                → [continue_<id>, <emit(cond)>,
+                                             JumpIfZero(cond_val, break_<id>),
+                                             <emit(body)>, Jump(continue_<id>), break_<id>]
+    ast.DoWhile(body,cond,id)             → [start_<id>, <emit(body)>, continue_<id>,
+                                             <emit(cond)>,
+                                             JumpIfNotZero(cond_val, start_<id>), break_<id>]
+    ast.For(init,cond,post,               → <emit(init)>
+            body,id)                        + [start_<id>, <emit(cond)>,
+                                               JumpIfZero(cond_val, break_<id>),
+                                               <emit(body)>, continue_<id>,
+                                               <emit(post)>, Jump(start_<id>), break_<id>]
+    ast.Break(target)                     → [Jump("break_"+ target)]
+    ast.Continue(target)                  → [Jump("continue_" + target)]
+    ast.Switch(ctrl,body,id)              → <emit(ctrl)>
+                                             + for each Case(v) in body (in order):
+                                                 [tmp = Binary(Equal, ctrl_val, v),
+                                                  JumpIfNotZero(tmp, "case_<id>_<v>")]
+                                             + [Jump("default_<id>")] if Default present
+                                             + [Jump("break_<id>")] otherwise
+                                             + <emit(body)>
+                                             + [break_<id>]
+    ast.Case(v, stmt, id)                 → [Label("case_<id>_<v>")] + <emit(stmt)>
+    ast.Default(stmt, id)                 → [Label("default_<id>")] + <emit(stmt)>
 
-The resulting ``tac.Program`` is a complete TAC AST ready for the assembly code
-generation stage.
+The resulting ``tac.Program`` is a complete TAC AST containing all ``TopLevel``
+definitions and is ready for the assembly code generation stage.
 """
 
 from itertools import count
 
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
+from compiler.syntax.ast.declarations import StorageClass
+from compiler.types.symbols import Initial, NoInitializer, StaticAttr, SymbolTable, Tentative
 from compiler.utils.exceptions import CodeGenerationError
 
 
-def generate(program: ast.Program) -> tac.Program:
+def generate(program: ast.Program, symbol_table: SymbolTable) -> tac.Program:
     """Translate an AST ``Program`` into a TAC ``Program``.
 
+    File-scope variable declarations and block-scope ``static``/``extern``
+    declarations are not translated directly from the AST.  Instead, after all
+    function bodies have been processed, ``_convert_symbols_to_tacky`` walks the
+    symbol table and emits a ``tac.StaticVariable`` for each entry that carries a
+    ``StaticAttr`` with an ``Initial`` or ``Tentative`` initial value.
+
     Args:
-        program: The ``Program`` node produced by the parser.
+        program: The ``Program`` node produced by the semantic analysis stage.
+        symbol_table: The symbol table populated by the semantic analysis stage.
 
     Returns:
         A ``tac.Program`` node representing the equivalent TAC program.
@@ -112,7 +122,36 @@ def generate(program: ast.Program) -> tac.Program:
         for decl in program.declarations
         if isinstance(decl, ast.FunDecl) and decl.function_declaration.body is not None
     ]
-    return tac.Program(functions=tuple(functions))
+    static_vars = _convert_symbols_to_tacky(symbol_table)
+    return tac.Program(top_level=tuple(static_vars) + tuple(functions))
+
+
+def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVariable]:
+    """Emit a ``tac.StaticVariable`` for every static-storage variable in the symbol table.
+
+    Walks all entries in ``symbol_table``.  Entries that carry a ``StaticAttr``
+    with an ``Initial`` or ``Tentative`` initial value produce a
+    ``tac.StaticVariable``; entries with ``NoInitializer`` (non-defining
+    ``extern`` declarations) or ``FunAttr`` entries are silently skipped.
+
+    Args:
+        symbol_table: The symbol table returned by the semantic analysis stage.
+
+    Returns:
+        A list of ``tac.StaticVariable`` nodes, in symbol-table insertion order.
+    """
+    result: list[tac.StaticVariable] = []
+    for name, entry in symbol_table.items():
+        match entry.attrs:
+            case StaticAttr(init=Initial(value=i), globl=globl):
+                result.append(tac.StaticVariable(name=name, globl=globl, init=i))
+            case StaticAttr(init=Tentative(), globl=globl):
+                result.append(tac.StaticVariable(name=name, globl=globl, init=0))
+            case StaticAttr(init=NoInitializer()):
+                pass
+            case _:
+                pass
+    return result
 
 
 def _translate_binary_op(op: ast.BinaryOperator) -> tac.BinaryOperator:
@@ -236,6 +275,7 @@ class _TacGenerator:
         instructions.append(tac.Return(tac.Constant(0)))
         return tac.Function(
             name=function.name,
+            globl=function.globl,
             params=tuple(p.name for p in function.params),
             body=tuple(instructions),
         )
@@ -276,7 +316,13 @@ class _TacGenerator:
         match item:
             case ast.S(statement=stmt):
                 return self.translate_statement(stmt)
-            case ast.D(declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name=name, init=init))):
+            case ast.D(
+                declaration=ast.VarDecl(
+                    variable_declaration=ast.VariableDeclaration(name=name, init=init, storage_class=sc)
+                )
+            ):
+                if sc in (StorageClass.Static, StorageClass.Extern):
+                    return []  # emitted as StaticVariable via symbol table; no inline instructions
                 if init is None:
                     return []
                 val, instrs = self.translate_exp(init)
