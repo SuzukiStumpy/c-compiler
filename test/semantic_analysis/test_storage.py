@@ -324,6 +324,42 @@ class TestBlockScopeStorageClass:
         assert isinstance(ret, ast.Return)
         assert ret.exp == ast.Var("g")
 
+    def test_block_scope_extern_shadows_outer_local_in_nested_block(self) -> None:
+        """``extern int a`` in a nested block resolves ``a`` to the global name, shadowing the outer local.
+
+        This is the key variable-visibility rule tested here: when an inner block
+        declares ``extern int a``, all subsequent references to ``a`` *within that
+        block* must resolve to the external symbol ``"a"``, not to the renamed local
+        ``"a"`` that exists in the enclosing function scope.
+        """
+        body: tuple[ast.BlockItem, ...] = (
+            # int a = 3;  — outer local, will be renamed to something like ".Va.0"
+            ast.D(ast.VarDecl(ast.VariableDeclaration("a", ast.Constant(3)))),
+            # { extern int a;  return a; }
+            ast.S(
+                ast.Compound(
+                    body=(
+                        ast.D(ast.VarDecl(ast.VariableDeclaration("a", None, ast.StorageClass.Extern))),
+                        ast.S(ast.Return(ast.Var("a"))),
+                    )
+                )
+            ),
+        )
+        resolved = _resolved_body(body)
+
+        # The outer local must have been renamed — its name should not be the bare "a".
+        outer_local_name = resolved[0].declaration.variable_declaration.name
+        assert outer_local_name != "a", "outer local 'a' was not renamed"
+
+        # The return inside the nested block must use the global "a", not the renamed local.
+        compound = resolved[1].statement
+        assert isinstance(compound, ast.Compound)
+        ret = compound.body[1].statement
+        assert isinstance(ret, ast.Return)
+        assert ret.exp == ast.Var("a"), (
+            f"expected return of global 'a', got {ret.exp!r} — outer local was {outer_local_name!r}"
+        )
+
     def test_block_scope_static_non_constant_init_raises(self) -> None:
         """A ``static`` local variable with a non-constant initialiser raises ``SemanticError``.
 

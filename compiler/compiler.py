@@ -123,7 +123,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
 
     if Stage.CODEGEN in stages:
         assert tac_program is not None
-        asm_program = generate(tac_program)
+        asm_program = generate(tac_program, symbol_table)
         if Stage.LINK not in stages:
             click.echo(pretty_print(asm_program))
 

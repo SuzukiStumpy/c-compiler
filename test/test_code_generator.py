@@ -778,3 +778,233 @@ class TestCmpFixup:
         cmp = cmp_instrs[0]
         assert cmp.op2 == asm.Register(asm.Registers.R11), "op2 should be routed through R11"
         assert isinstance(cmp.op1, asm.Stack), "op1 (Stack) should be unchanged"
+
+
+# ---------------------------------------------------------------------------
+# Pseudo replacement — static variables become Data operands
+# ---------------------------------------------------------------------------
+
+
+def _program_with_statics(*static_names: str, body: tuple[tac.Instruction, ...]) -> tac.Program:
+    """Build a ``tac.Program`` containing static variables and a ``main`` function.
+
+    Args:
+        *static_names: Names of static variables to include as ``tac.StaticVariable`` entries.
+        body: Instructions for the ``main`` function body.
+
+    Returns:
+        A ``tac.Program`` whose ``top_level`` begins with a ``StaticVariable`` for each
+        name in ``static_names``, followed by a single ``main`` function.
+    """
+    statics = tuple(tac.StaticVariable(name=n, globl=True, init=0) for n in static_names)
+    return tac.Program(top_level=statics + (tac.Function(name="main", body=body),))
+
+
+def _fn_instructions(program: tac.Program) -> tuple[asm.Instruction, ...]:
+    """Return the instructions of the first ``asm.Function`` in the generated program.
+
+    Args:
+        program: A ``tac.Program`` to pass through ``generate``.
+
+    Returns:
+        The ``instructions`` tuple of the first ``asm.Function`` definition produced.
+    """
+    return next(d for d in generate(program).definitions if isinstance(d, asm.Function)).instructions
+
+
+class TestStaticVariablePseudoReplacement:
+    """``tac.Var`` references to static-variable names become ``asm.Data``, not ``asm.Stack``."""
+
+    def test_static_var_read_produces_data_operand(self) -> None:
+        """Returning a static variable uses ``asm.Data`` as the source operand."""
+        program = _program_with_statics("g", body=(tac.Return(val=tac.Var("g")),))
+        instrs = _fn_instructions(program)
+        assert any(isinstance(i, asm.Mov) and i.src == asm.Data("g") for i in instrs)
+
+    def test_static_var_write_produces_data_dst_operand(self) -> None:
+        """Assigning to a static variable uses ``asm.Data`` as the destination operand."""
+        program = _program_with_statics(
+            "g",
+            body=(
+                tac.Copy(src=tac.Constant(7), dst=tac.Var("g")),
+                tac.Return(val=tac.Constant(0)),
+            ),
+        )
+        instrs = _fn_instructions(program)
+        # The copy becomes Mov(Imm(7), Data("g")), which is valid (imm → mem).
+        assert any(isinstance(i, asm.Mov) and i.dst == asm.Data("g") for i in instrs)
+
+    def test_static_var_does_not_consume_stack_slot(self) -> None:
+        """A static variable and a local variable each allocate distinct operand kinds.
+
+        The local gets a ``Stack`` slot; the static gets ``asm.Data``.  Verifies
+        that the static name does not accidentally consume a stack slot (which
+        would leave the local at the wrong offset, or allocate more frame space
+        than needed).
+        """
+        program = _program_with_statics(
+            "g",
+            body=(
+                tac.Copy(src=tac.Constant(1), dst=tac.Var("local")),
+                tac.Return(val=tac.Var("local")),
+            ),
+        )
+        instrs = _fn_instructions(program)
+        # "local" must occupy a stack slot.
+        assert any(isinstance(i, asm.Mov) and isinstance(i.dst, asm.Stack) for i in instrs)
+        # There must be no stack slot at -8 (which would indicate two locals were allocated,
+        # meaning "g" was wrongly treated as a local alongside "local").
+        all_stack_offsets = {
+            op.offset for i in instrs if isinstance(i, asm.Mov) for op in (i.src, i.dst) if isinstance(op, asm.Stack)
+        }
+        assert -8 not in all_stack_offsets, "static 'g' was incorrectly assigned a local stack slot"
+
+    def test_no_pseudo_operands_survive_with_static_variable(self) -> None:
+        """No ``Pseudo`` operands remain after code generation when a static variable is present."""
+        program = _program_with_statics("g", body=(tac.Return(val=tac.Var("g")),))
+        instrs = _fn_instructions(program)
+        for instr in instrs:
+            match instr:
+                case asm.Mov(src=src, dst=dst):
+                    assert not isinstance(src, asm.Pseudo), "Pseudo survived as Mov.src"
+                    assert not isinstance(dst, asm.Pseudo), "Pseudo survived as Mov.dst"
+                case asm.Unary(operand=op):
+                    assert not isinstance(op, asm.Pseudo), "Pseudo survived as Unary.operand"
+
+
+# ---------------------------------------------------------------------------
+# Instruction fixup — Data (static variable) as a memory operand
+# ---------------------------------------------------------------------------
+
+
+class TestDataOperandFixup:
+    """``_fix_instructions`` treats ``asm.Data`` as a memory operand, the same as ``asm.Stack``."""
+
+    def test_mov_data_data_no_mem_mem_after_fixup(self) -> None:
+        """``Copy(static_x, static_y)`` produces no ``Mov(mem, mem)`` after fixup."""
+        program = _program_with_statics(
+            "x",
+            "y",
+            body=(
+                tac.Copy(src=tac.Var("x"), dst=tac.Var("y")),
+                tac.Return(val=tac.Constant(0)),
+            ),
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Mov):
+                assert not (
+                    isinstance(instr.src, (asm.Stack, asm.Data)) and isinstance(instr.dst, (asm.Stack, asm.Data))
+                ), "Mov(mem, mem) survived fixup"
+
+    def test_mov_data_stack_no_mem_mem_after_fixup(self) -> None:
+        """``Copy(static_g, local)`` produces no ``Mov(Data, Stack)`` after fixup."""
+        program = _program_with_statics(
+            "g",
+            body=(
+                tac.Copy(src=tac.Var("g"), dst=tac.Var("local")),
+                tac.Return(val=tac.Var("local")),
+            ),
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Mov):
+                assert not (
+                    isinstance(instr.src, (asm.Stack, asm.Data)) and isinstance(instr.dst, (asm.Stack, asm.Data))
+                ), "Mov(mem, mem) survived fixup"
+
+    def test_mov_stack_data_no_mem_mem_after_fixup(self) -> None:
+        """``Copy(local, static_g)`` produces no ``Mov(Stack, Data)`` after fixup."""
+        program = _program_with_statics(
+            "g",
+            body=(
+                tac.Copy(src=tac.Var("local"), dst=tac.Var("g")),
+                tac.Return(val=tac.Constant(0)),
+            ),
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Mov):
+                assert not (
+                    isinstance(instr.src, (asm.Stack, asm.Data)) and isinstance(instr.dst, (asm.Stack, asm.Data))
+                ), "Mov(mem, mem) survived fixup"
+
+    def test_cmp_data_op1_routed_through_r10(self) -> None:
+        """When ``Cmp`` op1 is a ``Data`` operand (static variable), it is routed through ``%r10d``."""
+        program = _program_with_statics(
+            "x",
+            "y",
+            body=(
+                tac.Binary(
+                    operator=tac.Equal(),
+                    src1=tac.Var("x"),
+                    src2=tac.Var("y"),
+                    dst=tac.Var("tmp"),
+                ),
+                tac.Return(val=tac.Var("tmp")),
+            ),
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Cmp):
+                assert not isinstance(instr.op1, (asm.Stack, asm.Data)), "memory op1 survived Cmp fixup"
+
+
+# ---------------------------------------------------------------------------
+# Instruction fixup — Push with memory operands
+# ---------------------------------------------------------------------------
+
+
+def _seven_arg_call_program(*extra_top_level: tac.TopLevel, seventh_arg: tac.Val) -> tac.Program:
+    """Build a ``tac.Program`` whose ``main`` calls a seven-argument function.
+
+    The first six arguments are constants (consumed by ABI registers); the
+    seventh is ``seventh_arg`` and will be pushed onto the stack.
+
+    Args:
+        *extra_top_level: Additional ``tac.TopLevel`` entries (e.g. ``StaticVariable``) to
+            prepend before the ``main`` function.
+        seventh_arg: The TAC value to pass as the seventh (stack-pushed) argument.
+
+    Returns:
+        A ``tac.Program`` that calls ``foo`` with seven arguments.
+    """
+    fn = tac.Function(
+        name="main",
+        body=(
+            tac.FunCall(
+                name="foo",
+                args=(
+                    tac.Constant(1),
+                    tac.Constant(2),
+                    tac.Constant(3),
+                    tac.Constant(4),
+                    tac.Constant(5),
+                    tac.Constant(6),
+                    seventh_arg,
+                ),
+                dst=tac.Var("result"),
+            ),
+            tac.Return(val=tac.Var("result")),
+        ),
+    )
+    return tac.Program(top_level=tuple(extra_top_level) + (fn,))
+
+
+class TestPushMemOperandFixup:
+    """``Push(Stack)`` and ``Push(Data)`` are both expanded through ``%eax``/``%rax``."""
+
+    def test_push_stack_operand_expanded(self) -> None:
+        """A stack-passed local variable is not emitted as a direct ``Push(Stack)``."""
+        program = _seven_arg_call_program(seventh_arg=tac.Var("x"))
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Push):
+                assert not isinstance(instr.operand, (asm.Stack, asm.Data)), (
+                    "Push(mem) survived fixup — should be expanded through %eax/%rax"
+                )
+
+    def test_push_data_operand_expanded(self) -> None:
+        """A stack-passed static variable is not emitted as a direct ``Push(Data)``."""
+        static = tac.StaticVariable(name="g", globl=True, init=0)
+        program = _seven_arg_call_program(static, seventh_arg=tac.Var("g"))
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Push):
+                assert not isinstance(instr.operand, (asm.Stack, asm.Data)), (
+                    "Push(Data) survived fixup — should be expanded through %eax/%rax"
+                )

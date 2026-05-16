@@ -40,6 +40,7 @@ TAC → pseudo-asm mapping:
 
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
+from compiler.types.symbols import StaticAttr, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
 # System V AMD64 ABI integer argument registers, in order.
@@ -53,14 +54,23 @@ _ABI_REGS = [
 ]
 
 
-def generate(program: tac.Program) -> asm.Program:
+def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> asm.Program:
     """Translate a TAC ``Program`` into an assembly ``Program``.
 
     Applies all three translation passes (TAC lowering, pseudo replacement,
     and instruction fixup) and returns a fully resolved assembly AST.
 
+    The ``symbol_table`` is used to identify every name with static storage
+    duration, including ``extern``-only (``NoInitializer``) declarations that
+    produce no ``tac.StaticVariable`` node.  When ``symbol_table`` is ``None``
+    (e.g. in unit tests that construct TAC programs directly), the set is
+    derived solely from ``program.top_level``.
+
     Args:
         program: The ``tac.Program`` node produced by the TAC generation stage.
+        symbol_table: The program-wide symbol table produced by semantic
+            analysis.  All names carrying a ``StaticAttr`` entry are treated as
+            static variables and addressed via RIP-relative ``Data`` operands.
 
     Returns:
         An ``asm.Program`` node representing the equivalent assembly program.
@@ -68,12 +78,24 @@ def generate(program: tac.Program) -> asm.Program:
     Raises:
         CodeGenerationError: If any TAC construct cannot be translated.
     """
+    # Names from tac.StaticVariable nodes (Initial / Tentative variables).
+    tac_static_names: frozenset[str] = frozenset(
+        item.name for item in program.top_level if isinstance(item, tac.StaticVariable)
+    )
+    # Names from the symbol table for NoInitializer (extern-only) declarations that
+    # produce no tac.StaticVariable but must still be addressed via Data operands.
+    sym_static_names: frozenset[str] = (
+        frozenset(name for name, entry in symbol_table.items() if isinstance(entry.attrs, StaticAttr))
+        if symbol_table is not None
+        else frozenset()
+    )
+    static_names = tac_static_names | sym_static_names
     definitions: list[asm.TopLevel] = []
     for item in program.top_level:
         match item:
             case tac.Function():
                 raw_fn = _translate_function(item)
-                resolved_fn, stack_size = _replace_pseudos(raw_fn)
+                resolved_fn, stack_size = _replace_pseudos(raw_fn, static_names)
                 fixed_fn = _fix_instructions(resolved_fn)
                 definitions.append(_add_stack_allocation(fixed_fn, stack_size))
             case tac.StaticVariable(name=name, globl=globl, init=init):
@@ -397,15 +419,20 @@ def _translate_relational_op(op: tac.BinaryOperator) -> asm.CondCodes:
 # ==============================================================================
 
 
-def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
-    """Replace every ``Pseudo`` operand with a frame-relative ``Stack`` operand.
+def _replace_pseudos(fn: asm.Function, static_names: frozenset[str]) -> tuple[asm.Function, int]:
+    """Replace every ``Pseudo`` operand with a concrete operand.
 
-    Each distinct pseudo name is assigned a unique 4-byte slot in the stack
-    frame, starting at ``-4(%rbp)`` and growing downward.  The total number of
-    bytes used is returned so the caller can emit an ``AllocateStack``.
+    Pseudo operands whose names appear in ``static_names`` become RIP-relative
+    ``Data`` operands.  All other pseudos are assigned a unique 4-byte slot in
+    the stack frame, starting at ``-4(%rbp)`` and growing downward.  The total
+    number of stack bytes used is returned so the caller can emit an
+    ``AllocateStack``.
 
     Args:
         fn: The assembly function whose pseudo operands are to be resolved.
+        static_names: Names of all static/global variables in the program;
+            pseudos with these names are mapped to ``asm.Data`` rather than
+            a local stack slot.
 
     Returns:
         A tuple ``(resolved_function, stack_bytes)`` where ``stack_bytes`` is
@@ -421,6 +448,8 @@ def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
     def resolve(operand: asm.Operand) -> asm.Operand:
         if not isinstance(operand, asm.Pseudo):
             return operand
+        if operand.name in static_names:
+            return asm.Data(name=operand.name)
         if operand.name not in pseudo_offsets:
             next_offset[0] -= 4
             pseudo_offsets[operand.name] = next_offset[0]
@@ -463,8 +492,10 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
     """Rewrite instructions that are invalid in x86-64 assembly.
 
     The x86 ``movl`` instruction does not allow both operands to be memory
-    addresses.  Any such ``Mov`` is replaced by two moves that route the value
-    through ``%eax``.
+    addresses (``Stack`` or ``Data``).  Any such ``Mov`` is replaced by two
+    moves that route the value through ``%r10d``.  The same constraint applies
+    to ``Cmp`` when op1 is a memory address.  ``Push`` of a memory operand is
+    expanded through ``%eax``/``%rax``.
 
     Args:
         fn: The assembly function to fix up.
@@ -472,10 +503,14 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
     Returns:
         An ``asm.Function`` with all invalid instructions rewritten.
     """
+
+    def _is_mem(op: asm.Operand) -> bool:
+        return isinstance(op, (asm.Stack, asm.Data))
+
     fixed: list[asm.Instruction] = []
     for instr in fn.instructions:
         match instr:
-            case asm.Mov(src=asm.Stack() as src, dst=asm.Stack() as dst):
+            case asm.Mov(src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
                 fixed.append(asm.Mov(src=src, dst=asm.Register(asm.Registers.R10)))
                 fixed.append(asm.Mov(src=asm.Register(asm.Registers.R10), dst=dst))
             case asm.Idiv(operand=asm.Imm() as imm):
@@ -487,12 +522,12 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 fixed.append(asm.Mov(src=op2, dst=asm.Register(asm.Registers.R11)))
                 fixed.append(asm.Cmp(op1=op1, op2=asm.Register(asm.Registers.R11)))
             # op1 cannot be a memory address when op2 is also memory - route op1 through %r10d
-            case asm.Cmp(op1=asm.Stack() as op1, op2=op2):
+            case asm.Cmp(op1=op1, op2=op2) if _is_mem(op1):
                 fixed.append(asm.Mov(src=op1, dst=asm.Register(asm.Registers.R10)))
                 fixed.append(asm.Cmp(op1=asm.Register(asm.Registers.R10), op2=op2))
-            # pushq cannot address a 32-bit stack slot directly; load into %eax first.
+            # pushq cannot address a 32-bit memory slot directly; load into %eax first.
             # movl zero-extends to %rax in x86-64, so pushq %rax carries the correct value.
-            case asm.Push(operand=asm.Stack() as operand):
+            case asm.Push(operand=operand) if _is_mem(operand):
                 fixed.append(asm.Mov(src=operand, dst=asm.Register(asm.Registers.AX)))
                 fixed.append(asm.Push(operand=asm.Register(asm.Registers.AX, asm.Width.QWORD)))
             case _:

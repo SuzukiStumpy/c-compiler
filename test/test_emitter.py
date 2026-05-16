@@ -110,19 +110,19 @@ def test_function_emit_globl_directive() -> None:
 
 
 def test_function_emit_label() -> None:
-    """Function emission includes the label on the line after ``.globl``."""
+    """Function emission includes the label after the ``.globl`` and ``.text`` directives."""
     fn = Function(name="main", globl=True, instructions=(Ret(),))
     lines = fn.emit().splitlines()
-    assert lines[1] == "main:"
+    assert lines[2] == "main:"
 
 
 def test_function_emit_instructions() -> None:
     """Instruction lines follow the prologue in order."""
     fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=2), dst=Register(Registers.AX)), Ret()))
     lines = fn.emit().splitlines()
-    # lines[0] = .globl, [1] = label, [2] = pushq, [3] = movq (prologue)
-    assert lines[4] == "  movl $2, %eax"
-    assert lines[7] == "  ret"
+    # lines[0] = .globl, [1] = .text, [2] = label, [3] = pushq, [4] = movq (prologue)
+    assert lines[5] == "  movl $2, %eax"
+    assert lines[8] == "  ret"
 
 
 def test_function_emit_full() -> None:
@@ -130,6 +130,7 @@ def test_function_emit_full() -> None:
     fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
     expected = (
         "  .globl main\n"
+        "   .text\n"
         "main:\n"
         "  pushq %rbp\n"
         "  movq %rsp, %rbp\n"
