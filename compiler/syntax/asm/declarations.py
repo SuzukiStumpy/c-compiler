@@ -70,6 +70,7 @@ class Function(TopLevel):
         """
         lines = [
             f"  .globl {self.name}" if self.globl else "",
+            "   .text",
             f"{self.name}:",
             "  pushq %rbp",
             "  movq %rsp, %rbp",
@@ -99,7 +100,17 @@ class StaticVariable(TopLevel):
         Produces a .globl definition if required, followed by the label and initial
         value for the variable.
         """
-        return ""  # Placeholder for now
+        lines = []
+
+        if self.globl:
+            lines.append(f"   .globl {self.identifier}")
+
+        lines.append("   .bss" if self.init == 0 else "   .data")
+        lines.append("   .balign 4")
+        lines.append(f"{self.identifier}:")
+        lines.append("   .zero 4" if self.init == 0 else f"   .long {self.init}")
+
+        return "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)
