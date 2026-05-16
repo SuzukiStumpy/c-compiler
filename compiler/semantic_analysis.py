@@ -27,9 +27,11 @@ are *variable resolution*, *function declaration validation*, and *type checking
   name is not a local variable.
 * ``Var`` expressions are checked to ensure the name was declared as a variable
   rather than as a function.
-* Linkage is recorded for each binding: ``Linkage.NONE`` for local variables,
-  ``Linkage.INTERNAL`` for ``static`` variables, ``Linkage.EXTERNAL`` for all
-  functions and file-scope variables without ``static``.
+* Linkage is recorded for each binding: ``Linkage.NONE`` for local variables;
+  ``Linkage.INTERNAL`` for ``static`` variables and for ``extern`` declarations
+  that inherit a prior internal linkage (C11 §6.2.2p4); ``Linkage.EXTERNAL``
+  for functions and file-scope variables that have not established internal
+  linkage.
 
 The main entry point for external callers is ``resolve``, which constructs a
 ``SemanticAnalyser``, runs it over the program, and returns a semantically
@@ -90,9 +92,9 @@ class FunctionBinding(NamedTuple):
         param_types: The ordered tuple of parameter types established by the
             first declaration seen.  Every subsequent declaration must match
             this tuple exactly.
-        linkage: The linkage classification for this function.  All functions
-            in the current language subset have ``Linkage.EXTERNAL``; ``static``
-            functions (internal linkage) are not yet supported.
+        linkage: The linkage classification for this function.  Functions
+            declared without ``static`` carry ``Linkage.EXTERNAL``; those
+            declared with ``static`` carry ``Linkage.INTERNAL``.
     """
 
     has_definition: bool
@@ -130,10 +132,11 @@ class SemanticAnalyser:
             the map is restored to its saved snapshot.
         _function_map: Program-wide mapping from function names to
             ``FunctionBinding`` values.  Each binding records whether a
-            definition has been seen and the function's linkage (always
-            ``Linkage.EXTERNAL``).  Populated by a pre-pass in
-            ``_resolve_program`` and extended when ``FunDecl`` block items are
-            processed.  Never reset between functions.
+            definition has been seen and the function's linkage
+            (``Linkage.INTERNAL`` for ``static`` functions; ``Linkage.EXTERNAL``
+            otherwise).  Populated by a pre-pass in ``_resolve_program`` and
+            extended when ``FunDecl`` block items are processed.  Never reset
+            between functions.
         _label_set: Set of all label names declared in the function currently
             being analysed.  Populated by a first pass before resolution begins
             so that forward ``goto`` targets can be validated.
@@ -166,6 +169,16 @@ class SemanticAnalyser:
             the ``from_current_block`` flag on ``VariableBinding``.  Used to
             detect within-scope conflicts between a function declaration and a
             variable declaration sharing the same name.
+        _file_scope_linkage: Persistent mapping from file-scope names to their
+            established linkage.  Written by both file-scope variable declarations
+            and block-scope ``extern`` declarations; never reset between functions.
+            Enables cross-boundary linkage-conflict detection regardless of
+            declaration order.
+        _file_scope_definitions: Set of file-scope variable names for which a
+            definition (a declaration carrying an initialiser) has already been
+            seen.  A second definition of the same name is a constraint violation
+            in C.  Tentative definitions (declarations without initialisers) do
+            not add entries here and are always permitted to repeat.
     """
 
     def __init__(self) -> None:
@@ -174,6 +187,8 @@ class SemanticAnalyser:
         self._loop_counter: count[int] = count()
         self._variable_map: dict[str, VariableBinding] = {}
         self._function_map: dict[str, FunctionBinding] = {}
+        self._file_scope_linkage: dict[str, Linkage] = {}
+        self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
         self._label_set: set[str] = set()
         self._loop_stack: list[str] = []
@@ -317,11 +332,16 @@ class SemanticAnalyser:
                     f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
                 )
             if binding is not None and binding.from_current_block:
-                if binding.linkage != Linkage.EXTERNAL:
-                    raise SemanticError(f"'{var_decl.name}' previously declared without linkage in this scope.")
-                return var_decl  # repeated extern declaration of the same symbol — permitted
+                if binding.unique_name == var_decl.name:
+                    return var_decl  # repeated extern declaration (EXTERNAL or INTERNAL) — permitted
+                # Prior declaration was a renamed local or static local — block-scope extern conflicts.
+                raise SemanticError(f"'{var_decl.name}' previously declared without linkage in this scope.")
+            prior_linkage = self._file_scope_linkage.get(var_decl.name)
+            # Inherit whichever linkage was already established; default to EXTERNAL when unseen.
+            effective_linkage = prior_linkage if prior_linkage is not None else Linkage.EXTERNAL
+            self._file_scope_linkage[var_decl.name] = effective_linkage
             self._variable_map[var_decl.name] = VariableBinding(
-                var_decl.name, from_current_block=True, linkage=Linkage.EXTERNAL
+                var_decl.name, from_current_block=True, linkage=effective_linkage
             )
             return var_decl
         else:
@@ -366,14 +386,38 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If ``var_decl.name`` was previously declared as a
-                function (conflicting entity kind on the same external name).
+                function (conflicting entity kind on the same external name); or
+                if the initialiser is not a constant expression (file-scope
+                variables have static storage duration and must be initialised
+                at compile time).
         """
         if var_decl.name in self._function_map:
             raise SemanticError(
                 f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
             )
-        linkage = Linkage.INTERNAL if var_decl.storage_class == StorageClass.Static else Linkage.EXTERNAL
-        self._variable_map[var_decl.name] = VariableBinding(var_decl.name, from_current_block=False, linkage=linkage)
+        if var_decl.init is not None and not isinstance(var_decl.init, ast.Constant):
+            raise SemanticError(f"Initialiser of file-scope variable '{var_decl.name}' must be a constant expression.")
+        if var_decl.init is not None:
+            if var_decl.name in self._file_scope_definitions:
+                raise SemanticError(f"Duplicate definition of file-scope variable '{var_decl.name}'.")
+            self._file_scope_definitions.add(var_decl.name)
+        prior_linkage = self._file_scope_linkage.get(var_decl.name)
+        if var_decl.storage_class == StorageClass.Static:
+            new_linkage = Linkage.INTERNAL
+        elif var_decl.storage_class == StorageClass.Extern and prior_linkage is not None:
+            new_linkage = prior_linkage  # extern inherits whatever linkage was already established
+        else:
+            new_linkage = Linkage.EXTERNAL
+        if prior_linkage is not None and prior_linkage != new_linkage:
+            raise SemanticError(
+                f"'{var_decl.name}' previously declared with "
+                f"{'external' if prior_linkage == Linkage.EXTERNAL else 'internal'} linkage; "
+                f"cannot redeclare with {'internal' if new_linkage == Linkage.INTERNAL else 'external'} linkage."
+            )
+        self._file_scope_linkage[var_decl.name] = new_linkage
+        self._variable_map[var_decl.name] = VariableBinding(
+            var_decl.name, from_current_block=False, linkage=new_linkage
+        )
         return var_decl
 
     def _validate_params_unique(self, fun: ast.Function) -> None:
@@ -421,18 +465,32 @@ class SemanticAnalyser:
             raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
         new_param_types = tuple(p.param_type for p in fun.params)
         existing = self._function_map.get(fun.name)
+        if fun.storage_class == StorageClass.Static:
+            new_linkage = Linkage.INTERNAL
+        elif existing is not None:
+            new_linkage = existing.linkage  # inherit whatever linkage was already established
+        else:
+            new_linkage = Linkage.EXTERNAL
         if existing is not None:
             if existing.param_types != new_param_types:
                 raise SemanticError(
                     f"Conflicting declarations of '{fun.name}': parameter types do not match prior declaration."
                 )
+            if existing.linkage != new_linkage:
+                raise SemanticError(
+                    f"'{fun.name}' previously declared with "
+                    f"{'external' if existing.linkage == Linkage.EXTERNAL else 'internal'} linkage; "
+                    f"cannot redeclare with {'internal' if new_linkage == Linkage.INTERNAL else 'external'} linkage."
+                )
             if fun.body is not None and existing.has_definition:
                 raise SemanticError(f"Redefinition of function '{fun.name}'.")
             if fun.body is not None:
-                self._function_map[fun.name] = FunctionBinding(has_definition=True, param_types=new_param_types)
+                self._function_map[fun.name] = FunctionBinding(
+                    has_definition=True, param_types=new_param_types, linkage=new_linkage
+                )
         else:
             self._function_map[fun.name] = FunctionBinding(
-                has_definition=fun.body is not None, param_types=new_param_types
+                has_definition=fun.body is not None, param_types=new_param_types, linkage=new_linkage
             )
         self._current_block_funs.add(fun.name)
 
@@ -820,7 +878,8 @@ class SemanticAnalyser:
         the bodies that follow), then ``_resolve_function`` resolves the body if
         present.  For each ``VarDecl``, ``_resolve_file_scope_variable_declaration``
         validates linkage consistency and records the variable in
-        ``_file_scope_var_map`` so that subsequent function bodies can reference it.
+        ``_variable_map`` and ``_file_scope_linkage`` so that subsequent function
+        bodies can reference it.
 
         A function must therefore be declared or defined before any subsequent
         function body may call it; mutual recursion requires a forward declaration.

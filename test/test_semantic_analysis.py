@@ -2812,6 +2812,144 @@ class TestFileScopeVariableDeclarations:
         with pytest.raises(SemanticError, match="redeclared as a function"):
             resolve(_prog_with_decls(_file_var("foo", ast.Constant(3)), ast.FunDecl(foo_fn)))
 
+    def test_file_scope_variable_non_constant_init_raises(self) -> None:
+        """A file-scope variable with a non-constant initialiser raises ``SemanticError``.
+
+        All file-scope variables have static storage duration, so their
+        initialisers must be compile-time constants.  An expression referencing
+        another variable (e.g. ``int b = 1 + a``) is therefore invalid.
+        """
+        main_fn = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        with pytest.raises(SemanticError, match="constant expression"):
+            resolve(
+                _prog_with_decls(
+                    _file_var("a", ast.Constant(10)),
+                    _file_var("b", ast.Binary(ast.Add, ast.Constant(1), ast.Var("a"))),
+                    ast.FunDecl(main_fn),
+                )
+            )
+
+    def test_file_scope_variable_constant_init_is_valid(self) -> None:
+        """A file-scope variable with a ``Constant`` initialiser is accepted."""
+        analyser = SemanticAnalyser()
+        result = analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", ast.Constant(7)))
+        assert result.init == ast.Constant(7)
+
+    def test_file_scope_extern_then_static_raises(self) -> None:
+        """A ``static`` file-scope declaration conflicts with a prior ``extern`` declaration of the same name.
+
+        ``int x; static int x;`` changes the linkage from external to internal,
+        which is a constraint violation.
+        """
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", None))
+        with pytest.raises(SemanticError, match="linkage"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration("x", None, ast.StorageClass.Static)
+            )
+
+    def test_file_scope_static_then_extern_raises(self) -> None:
+        """A non-``static`` file-scope declaration conflicts with a prior ``static`` declaration of the same name."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Static))
+        with pytest.raises(SemanticError, match="linkage"):
+            analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("x", None))
+
+    def test_block_extern_then_file_static_raises(self) -> None:
+        """A ``static`` file-scope declaration conflicts with a block-scope ``extern`` in a preceding function.
+
+        The block-scope ``extern int x`` establishes external linkage for ``x``
+        in ``_file_scope_linkage``.  The subsequent ``static int x`` at file
+        scope attempts to change that linkage to internal, which C forbids.
+        """
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(
+                ast.D(ast.VarDecl(ast.VariableDeclaration("x", None, ast.StorageClass.Extern))),
+                ast.S(ast.Return(ast.Var("x"))),
+            ),
+        )
+        with pytest.raises(SemanticError, match="linkage"):
+            resolve(
+                _prog_with_decls(
+                    ast.FunDecl(main_fn),
+                    _file_var("x", ast.Constant(10), sc=ast.StorageClass.Static),
+                )
+            )
+
+    def test_file_static_then_block_extern_is_valid(self) -> None:
+        """A block-scope ``extern`` after a file-scope ``static`` declaration is valid.
+
+        C11 §6.2.2p4: an ``extern`` declaration in a scope where a prior
+        declaration is visible inherits the established linkage.  The block-scope
+        ``extern int x`` therefore refers to the same internal-linkage object as
+        ``static int x`` and is not a conflict.
+        """
+        main_fn = ast.Function(
+            name="main",
+            params=(),
+            body=(
+                ast.D(ast.VarDecl(ast.VariableDeclaration("x", None, ast.StorageClass.Extern))),
+                ast.S(ast.Return(ast.Var("x"))),
+            ),
+        )
+        resolved = resolve(
+            _prog_with_decls(
+                _file_var("x", ast.Constant(10), sc=ast.StorageClass.Static),
+                ast.FunDecl(main_fn),
+            )
+        )
+        assert resolved is not None
+
+    def test_file_scope_static_then_extern_specifier_is_valid(self) -> None:
+        """A file-scope ``extern`` declaration after a ``static`` declaration of the same name is valid.
+
+        C11 §6.2.2p4: the ``extern`` declaration inherits the prior internal
+        linkage; it is not a redeclaration with a conflicting linkage.
+        """
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("x", ast.Constant(1), ast.StorageClass.Static)
+        )
+        result = analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("x", None, ast.StorageClass.Extern)
+        )
+        assert result.name == "x"
+        assert analyser._variable_map["x"].linkage is Linkage.INTERNAL
+
+    def test_two_file_scope_definitions_raises(self) -> None:
+        """Two file-scope definitions of the same variable (both with initialisers) raise ``SemanticError``.
+
+        ``int foo = 3; int foo = 4;`` produces two definitions; C permits at
+        most one definition per name in a translation unit.
+        """
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", ast.Constant(3)))
+        with pytest.raises(SemanticError, match="Duplicate definition"):
+            analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", ast.Constant(4)))
+
+    def test_tentative_then_definition_is_valid(self) -> None:
+        """A tentative definition (no initialiser) followed by a definition is accepted."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", None))
+        result = analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", ast.Constant(4)))
+        assert result.init == ast.Constant(4)
+
+    def test_definition_then_tentative_is_valid(self) -> None:
+        """A definition followed by a tentative definition (no initialiser) is accepted."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", ast.Constant(3)))
+        result = analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", None))
+        assert result.init is None
+
+    def test_two_tentative_definitions_are_valid(self) -> None:
+        """Two tentative definitions (no initialisers) of the same name are permitted."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", None))
+        result = analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", None))
+        assert result.name == "foo"
+
 
 # ---------------------------------------------------------------------------
 # Block-scope storage class specifiers
@@ -2924,6 +3062,19 @@ class TestBlockScopeStorageClass:
         )
         assert result.init == ast.Constant(42)
 
+    def test_block_scope_extern_after_static_local_raises(self) -> None:
+        """A block-scope ``extern`` after a ``static`` local of the same name raises ``SemanticError``.
+
+        A block-scope ``static`` variable has no linkage (C11 §6.2.2p3 only
+        confers internal linkage on *file-scope* ``static``).  A subsequent
+        ``extern`` declaration in the same block therefore conflicts, exactly
+        as it would with a plain local variable.
+        """
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("x", ast.Constant(0), ast.StorageClass.Static))
+        with pytest.raises(SemanticError, match="without linkage"):
+            analyser.resolve_variable_declaration(ast.VariableDeclaration("x", None, ast.StorageClass.Extern))
+
     def test_block_scope_static_shadows_file_scope_variable(self) -> None:
         """A ``static`` local variable shadows a file-scope variable of the same name.
 
@@ -2947,3 +3098,140 @@ class TestBlockScopeStorageClass:
         ret = fn.body[1].statement
         assert isinstance(ret, ast.Return)
         assert ret.exp == ast.Var(static_name)
+
+
+# ---------------------------------------------------------------------------
+# Function linkage conflicts
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionLinkage:
+    """Function declarations must agree on linkage across the entire translation unit."""
+
+    def _fn(
+        self,
+        name: str,
+        body: tuple[ast.BlockItem, ...] | None = None,
+        static: bool = False,
+        extern: bool = False,
+    ) -> ast.Function:
+        """Build a ``Function`` node with an optional storage class.
+
+        Args:
+            name: The function name.
+            body: The function body block items, or ``None`` for a forward declaration.
+            static: If ``True``, sets ``storage_class=StorageClass.Static``.
+            extern: If ``True``, sets ``storage_class=StorageClass.Extern``.
+                Mutually exclusive with ``static``.
+
+        Returns:
+            An ``ast.Function`` with ``params=()`` and the given body and linkage.
+        """
+        if static:
+            sc: ast.StorageClass | None = ast.StorageClass.Static
+        elif extern:
+            sc = ast.StorageClass.Extern
+        else:
+            sc = None
+        return ast.Function(name=name, params=(), body=body, storage_class=sc)
+
+    def test_extern_then_static_function_raises(self) -> None:
+        """A ``static`` definition after a non-``static`` declaration raises ``SemanticError``.
+
+        ``int foo(void);`` gives ``foo`` external linkage.  The subsequent
+        ``static int foo(void) { ... }`` attempts to change it to internal
+        linkage, which C forbids.
+        """
+        program = _make_prog(
+            self._fn("foo", None),
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+        )
+        with pytest.raises(SemanticError, match="linkage"):
+            resolve(program)
+
+    def test_static_then_non_static_declaration_is_valid(self) -> None:
+        """A non-``static`` declaration after a ``static`` declaration of the same function is valid.
+
+        C11 §6.2.2p5: a function declaration with no storage-class specifier is
+        treated exactly as ``extern``.  §6.2.2p4: ``extern`` inherits the linkage
+        of the prior visible declaration.  ``int foo(void);`` after
+        ``static int foo(void) {...}`` therefore inherits internal linkage and is
+        not a conflict.
+        """
+        program = _make_prog(
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
+            self._fn("foo", None),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+        )
+        resolved = resolve(program)
+        assert len(resolved.declarations) == 3
+
+    def test_static_then_extern_specifier_declaration_is_valid(self) -> None:
+        """A file-scope ``extern`` declaration after a ``static`` declaration is valid.
+
+        The ``extern`` inherits the prior internal linkage; it is not a conflict.
+        """
+        program = _make_prog(
+            self._fn("foo", None, static=True),
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), extern=True),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+        )
+        resolved = resolve(program)
+        assert len(resolved.declarations) == 3
+
+    def test_block_scope_function_declaration_inherits_internal_linkage(self) -> None:
+        """A block-scope function declaration inherits the internal linkage of a prior file-scope declaration.
+
+        C11 §6.2.2p4/p5: the block-scope ``int my_fun(void);`` (treated as
+        ``extern``) inherits the internal linkage established by the earlier
+        ``static int my_fun(void);`` at file scope.
+        """
+        my_fun_decl = ast.D(ast.FunDecl(ast.Function(name="my_fun", params=(), body=None)))
+        caller_fn = ast.Function(
+            name="caller",
+            params=(),
+            body=(
+                my_fun_decl,
+                ast.S(ast.Return(ast.FunctionCall("my_fun", []))),
+            ),
+        )
+        program = _make_prog(
+            self._fn("my_fun", None, static=True),
+            caller_fn,
+            self._fn("my_fun", (ast.S(ast.Return(ast.Constant(0))),), static=True),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("my_fun", []))),)),
+        )
+        resolved = resolve(program)
+        assert resolved is not None
+
+    def test_static_function_definition_is_valid(self) -> None:
+        """A ``static`` function defined with no prior declaration is accepted."""
+        program = _make_prog(
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+        )
+        resolved = resolve(program)
+        assert len(resolved.declarations) == 2
+
+    def test_static_declaration_then_static_definition_is_valid(self) -> None:
+        """A ``static`` forward declaration followed by a ``static`` definition is accepted."""
+        program = _make_prog(
+            self._fn("foo", None, static=True),
+            self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+        )
+        resolved = resolve(program)
+        assert len(resolved.declarations) == 3
+
+    def test_function_binding_records_internal_linkage_for_static(self) -> None:
+        """``_function_map`` stores ``Linkage.INTERNAL`` for a ``static`` function."""
+        analyser = SemanticAnalyser()
+        analyser._register_fun_declaration(self._fn("foo", None, static=True))
+        assert analyser._function_map["foo"].linkage is Linkage.INTERNAL
+
+    def test_function_binding_records_external_linkage_for_non_static(self) -> None:
+        """``_function_map`` stores ``Linkage.EXTERNAL`` for a non-``static`` function."""
+        analyser = SemanticAnalyser()
+        analyser._register_fun_declaration(self._fn("foo", None))
+        assert analyser._function_map["foo"].linkage is Linkage.EXTERNAL
