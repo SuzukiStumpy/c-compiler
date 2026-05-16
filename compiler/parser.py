@@ -7,8 +7,9 @@ which are handled by precedence climbing.  The grammar is:
     declaration          ::= variable-declaration | function-declaration
     function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
     variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
-    param-list           ::= "void" | "int" identifier {"," "int" identifier}
-    specifier            ::= "int" | "static" | "extern"
+    param-list           ::= "void" | {type-specifier}+ identifier {"," {type-specifier}+ identifier}
+    type-specifier       ::= "int" | "long"
+    specifier            ::= type-specifier | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
     for_init             ::= variable-declaration | [exp] ";"
@@ -28,8 +29,12 @@ which are handled by precedence climbing.  The grammar is:
                            | "default" ":" statement
                            | ";"
     exp                  ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
-    factor               ::= prefix_unop factor | primary postfix_unop?
-    primary              ::= int | identifier | "(" exp ")"
+    factor               ::= prefix_unop factor
+                           | primary postfix_unop?
+    primary              ::= const
+                           | identifier
+                           | "(" {type-specifier}+ ")" factor
+                           | "(" exp ")"
                            | identifier "(" [argument-list] ")"
     argument-list        ::= exp {"," exp}
     prefix_unop          ::= "-" | "~" | "!" | "++" | "--"
@@ -38,8 +43,10 @@ which are handled by precedence climbing.  The grammar is:
                            | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
     assignop             ::= "+=" | "-=" | "*=" | "/=" | "%="
                            | "&=" | "|=" | "^=" | "<<=" | ">>="
+    const                ::= int | long
     identifier           ::= ? An identifier token ?
-    int                  ::= ? A constant token ?
+    int                  ::= ? An int token ?
+    long                 ::= ? An int or long token ?
 
 Each grammar rule (except ``exp``) maps directly to a private ``_parse_*``
 method on ``Parser``.  ``_parse_exp`` implements precedence climbing so that
@@ -64,10 +71,13 @@ from compiler.syntax.ast import (
     BlockItem,
     Break,
     Case,
+    Cast,
     Complement,
     Compound,
     Conditional,
     Constant,
+    ConstInt,
+    ConstLong,
     Continue,
     D,
     Declaration,
@@ -82,6 +92,7 @@ from compiler.syntax.ast import (
     Function,
     FunctionCall,
     FunDecl,
+    FunType,
     Goto,
     GreaterOrEqual,
     GreaterThan,
@@ -93,6 +104,7 @@ from compiler.syntax.ast import (
     LeftShift,
     LessOrEqual,
     LessThan,
+    LongType,
     Multiply,
     Negate,
     Not,
@@ -424,29 +436,42 @@ class Parser:
 
         Grammar::
 
-            specifier ::= "int" | "static" | "extern"
+            type-specifier ::= "int" | "long"
+            specifier      ::= type-specifier | "static" | "extern"
 
-        Consumes a run of specifier tokens in any order.  Exactly one type
-        specifier (``int``) must appear; at most one storage-class specifier
-        (``static`` or ``extern``) may appear.
+        Consumes a run of specifier tokens in any order.  At least one type
+        specifier must appear; ``int`` and ``long`` may appear together in
+        either order (meaning ``long int``); at most one storage-class
+        specifier (``static`` or ``extern``) may appear.
 
         Returns:
             A ``(type, storage_class)`` pair where ``storage_class`` is
             ``None`` when no storage-class specifier was present.
 
         Raises:
-            ParseError: If no type specifier is present, if ``int`` appears
-                more than once, or if two storage-class specifiers conflict.
+            ParseError: If no type specifier is present, if a type specifier
+                appears more than once, or if two storage-class specifiers
+                conflict.
         """
-        type_: Type | None = None
+        has_int = False
+        has_long = False
         storage: StorageClass | None = None
 
-        while self._peek() is not None and self._peek().type in (TokenType.INT, TokenType.STATIC, TokenType.EXTERN):
+        while self._peek() is not None and self._peek().type in (  # type: ignore[missing-attribute]
+            TokenType.INT,
+            TokenType.LONG,
+            TokenType.STATIC,
+            TokenType.EXTERN,
+        ):
             tok = self._consume()
             if tok.type == TokenType.INT:
-                if type_ is not None:
+                if has_int:
                     raise self._token_error("duplicate type specifier 'int'", tok)
-                type_ = IntType()
+                has_int = True
+            elif tok.type == TokenType.LONG:
+                if has_long:
+                    raise self._token_error("duplicate type specifier 'long'", tok)
+                has_long = True
             elif tok.type == TokenType.STATIC:
                 if storage is not None:
                     raise self._token_error("conflicting storage class specifiers", tok)
@@ -456,12 +481,14 @@ class Parser:
                     raise self._token_error("conflicting storage class specifiers", tok)
                 storage = StorageClass.Extern
 
-        if type_ is None:
+        if not has_int and not has_long:
             tok = self._peek()
             if tok is None:
                 raise self._eof_error("expected a type specifier, got end of input")
             raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
 
+        # "long" (with or without "int") resolves to LongType; "int" alone resolves to IntType.
+        type_: Type = LongType() if has_long else IntType()
         return type_, storage
 
     def _parse_params(self) -> tuple[Parameter, ...]:
@@ -547,7 +574,7 @@ class Parser:
             ParseError: If the item is malformed.
         """
         token = self._peek()
-        if token is not None and token.type in (TokenType.INT, TokenType.STATIC, TokenType.EXTERN):
+        if token is not None and token.type in (TokenType.INT, TokenType.LONG, TokenType.STATIC, TokenType.EXTERN):
             return D(declaration=self._parse_declaration())
         return S(statement=self._parse_statement())
 
@@ -572,7 +599,7 @@ class Parser:
             ParseError: If no type specifier is present, the identifier or
                 terminator is missing, or the initialiser expression is malformed.
         """
-        _, storage = self._parse_specifiers()
+        type_, storage = self._parse_specifiers()
         name_token = self._expect(TokenType.IDENTIFIER)
         if self._match(TokenType.LPAREN):
             self._consume()
@@ -584,7 +611,13 @@ class Parser:
             else:
                 body = self._parse_block()
             return FunDecl(
-                function_declaration=Function(name=name_token.value, params=params, body=body, storage_class=storage)
+                function_declaration=Function(
+                    name=name_token.value,
+                    params=params,
+                    body=body,
+                    fun_type=FunType(params=tuple(p.param_type for p in params), ret=type_),
+                    storage_class=storage,
+                )
             )
         init: Exp | None = None
         if self._match(TokenType.ASSIGNMENT):
@@ -592,7 +625,9 @@ class Parser:
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
-            variable_declaration=VariableDeclaration(name=name_token.value, init=init, storage_class=storage)
+            variable_declaration=VariableDeclaration(
+                name=name_token.value, init=init, var_type=type_, storage_class=storage
+            )
         )
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
@@ -641,7 +676,7 @@ class Parser:
             ParseError: If a function declaration is attempted, if the identifier
                 or semicolon is missing, or if the initialiser expression is malformed.
         """
-        _, storage = self._parse_specifiers()
+        type_, storage = self._parse_specifiers()
         name_token = self._expect(TokenType.IDENTIFIER)
         if self._match(TokenType.LPAREN):
             raise self._token_error(
@@ -654,7 +689,9 @@ class Parser:
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
-            variable_declaration=VariableDeclaration(name=name_token.value, init=init, storage_class=storage)
+            variable_declaration=VariableDeclaration(
+                name=name_token.value, init=init, var_type=type_, storage_class=storage
+            )
         )
 
     def _parse_for_init(self) -> ForInit:
@@ -681,7 +718,12 @@ class Parser:
             ParseError: If a function declaration is attempted, if the optional
                 expression is malformed, or if the trailing ``;`` is missing.
         """
-        if self._peek() is not None and self._peek().type in (TokenType.INT, TokenType.STATIC, TokenType.EXTERN):
+        if self._peek() is not None and self._peek().type in (  # type:ignore[missing-attribute]
+            TokenType.INT,
+            TokenType.LONG,
+            TokenType.STATIC,
+            TokenType.EXTERN,
+        ):
             return InitDecl(self._parse_variable_declaration())
         return InitExp(self._parse_optional_exp(TokenType.SEMICOLON))
 
@@ -981,7 +1023,7 @@ class Parser:
         match token.type:
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
                 return Unary(self._parse_unaryop(), self._parse_factor())
-            case TokenType.NUMBER:
+            case TokenType.NUMBER | TokenType.LONGINT:
                 primary: Exp = self._parse_constant()
             case TokenType.IDENTIFIER:
                 self._consume()
@@ -990,9 +1032,16 @@ class Parser:
                 else:
                     primary = Var(name=token.value)
             case TokenType.LPAREN:
-                self._consume()
-                primary = self._parse_exp()
-                self._expect(TokenType.RPAREN)
+                next_tok = self._peek(1)
+                if next_tok is not None and next_tok.type in (TokenType.INT, TokenType.LONG):
+                    self._consume()  # consume "("
+                    target_type = self._parse_type()
+                    self._expect(TokenType.RPAREN)
+                    primary = Cast(target_type=target_type, exp=self._parse_factor())
+                else:
+                    self._consume()
+                    primary = self._parse_exp()
+                    self._expect(TokenType.RPAREN)
             case _:
                 raise self._token_error("Syntax error: Malformed expression.", token)
 
@@ -1038,35 +1087,81 @@ class Parser:
         return FunctionCall(name=name, args=args)
 
     def _parse_constant(self) -> Constant:
-        """Parse an integer constant expression.
+        """Parse an integer or long constant expression.
+
+        Follows C11 §6.4.4.1: an unsuffixed decimal constant has the type of
+        the first of ``int``, ``long`` in which its value can be represented.
+        A constant with an ``l`` or ``L`` suffix is always ``long``.
 
         Returns:
-            A ``Constant`` node with the parsed integer value.
+            A ``Constant`` node wrapping a ``ConstInt`` or ``ConstLong``.
 
         Raises:
-            ParseError: If the next token is not a ``NUMBER``.
+            ParseError: If the next token is not a numeric constant, or if the
+                value exceeds the range of ``long`` (9,223,372,036,854,775,807).
         """
-        token = self._expect(TokenType.NUMBER)
-        return Constant(value=int(token.value))
+        token = self._peek()
+        if token is None:
+            raise self._eof_error("expected a constant, got end of input")
+        if token.type == TokenType.NUMBER:
+            self._consume()
+            val = int(token.value)
+            if val <= 2_147_483_647:
+                return Constant(value=ConstInt(val))
+            if val <= 9_223_372_036_854_775_807:
+                return Constant(value=ConstLong(val))
+            raise self._token_error(
+                f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
+            )
+        if token.type == TokenType.LONGINT:
+            self._consume()
+            val = int(token.value.rstrip("lL"))
+            if val > 9_223_372_036_854_775_807:
+                raise self._token_error(
+                    f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
+                )
+            return Constant(value=ConstLong(val))
+        raise self._token_error(f"expected a constant, got {token.type.name} '{token.value}'", token)
 
     def _parse_type(self) -> Type:
-        """Parse a C type annotation.
+        """Parse a C type annotation from one or more type-specifier tokens.
 
-        Currently only ``int`` is supported as a type.
+        Grammar::
+
+            type-specifier ::= "int" | "long"
+
+        Consumes a run of ``int`` and ``long`` tokens in any order.  ``int``
+        alone yields ``IntType``; ``long`` (with or without ``int``) yields
+        ``LongType``.
 
         Returns:
             A ``Type`` node.
 
         Raises:
-            ParseError: If the next token is not a recognised type keyword.
+            ParseError: If no recognised type-specifier token is present, or
+                if a specifier appears more than once.
         """
-        token = self._peek()
-        if token is None:
-            raise self._eof_error("expected a type, got end of input")
-        if token.type == TokenType.INT:
-            self._consume()
-            return IntType()
-        raise self._token_error(f"expected a type, got {token.type.name} '{token.value}'", token)
+        has_int = False
+        has_long = False
+
+        while self._peek() is not None and self._peek().type in (TokenType.INT, TokenType.LONG):  # type: ignore[missing-attribute]
+            tok = self._consume()
+            if tok.type == TokenType.INT:
+                if has_int:
+                    raise self._token_error("duplicate type specifier 'int'", tok)
+                has_int = True
+            else:
+                if has_long:
+                    raise self._token_error("duplicate type specifier 'long'", tok)
+                has_long = True
+
+        if not has_int and not has_long:
+            tok = self._peek()
+            if tok is None:
+                raise self._eof_error("expected a type, got end of input")
+            raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
+
+        return LongType() if has_long else IntType()
 
 
 def parse(token_stream: list[Token]) -> Program:

@@ -21,13 +21,15 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Default(statement body, identifier)
                          | Null
     declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
-    variable_declaration = (identifier name, exp? init, storage_class?)
-    function_declaration = (identifier name, parameter* params, block? body, storage_class?)
+    variable_declaration = (identifier name, exp? init, type var_type, storage_class?)
+    function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
+    type                 = Int | Long | FunType(type* params, type ret)
     storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
-    exp                  = Constant(int)
+    exp                  = Constant(const)
                          | Var(identifier)
+                         | Cast(type target_type, exp)
                          | Unary(unary_operator, exp)
                          | Binary(binary_operator, exp, exp)
                          | Assignment(exp, exp)
@@ -44,6 +46,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     linkage              = Linkage(NONE | EXTERNAL)
     block                = Block(block_item*)
     block_item           = S(statement) | D(declaration)
+    const                = ConstInt(int) | ConstLong(int)
 
 Nodes are organised into submodules by logical role:
 
@@ -74,6 +77,7 @@ dataclass subclassing the appropriate base. All nodes are immutable — once
 constructed an AST node cannot be modified.
 """
 
+from compiler.syntax.ast.constants import Const, ConstInt, ConstLong
 from compiler.syntax.ast.declarations import (
     Block,
     BlockItem,
@@ -96,6 +100,7 @@ from compiler.syntax.ast.declarations import (
 from compiler.syntax.ast.expressions import (
     Assignment,
     Binary,
+    Cast,
     Conditional,
     Constant,
     Exp,
@@ -149,9 +154,15 @@ from compiler.syntax.ast.statements import (
     Switch,
     While,
 )
-from compiler.syntax.ast.types import IntType, Linkage, Type
+from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type
 
 __all__ = [
+    "Const",
+    "ConstLong",
+    "ConstInt",
+    "Cast",
+    "LongType",
+    "FunType",
     "StorageClass",
     "Switch",
     "Case",

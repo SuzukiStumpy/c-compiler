@@ -32,6 +32,28 @@ class IntType(Type):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class LongType(Type):
+    """Represents the C ``long`` type.
+
+    Used wherever ``long`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class FunType(Type):
+    """Represents the type signature of a function definition.
+
+    Attributes:
+        params: An ordered list of types of each parameter to the function.
+        ret: The return type of the function.
+    """
+
+    params: tuple[Type, ...]
+    ret: Type
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 §6.2.2).
 

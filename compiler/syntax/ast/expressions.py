@@ -9,7 +9,9 @@ support is extended.
 from abc import ABC
 from dataclasses import dataclass
 
+from compiler.syntax.ast.constants import Const
 from compiler.syntax.ast.operators import BinaryOperator, UnaryOperator
+from compiler.syntax.ast.types import Type
 
 
 class Exp(ABC):
@@ -24,13 +26,13 @@ class Exp(ABC):
 
 @dataclass(frozen=True, slots=True)
 class Constant(Exp):
-    """An integer constant expression.
+    """A constant expression.
 
     Attributes:
-        value: The integer value of the constant as parsed from the source.
+        value: The value of the constant as parsed from the source.
     """
 
-    value: int
+    value: Const
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,19 @@ class Var(Exp):
     """
 
     name: str
+
+
+@dataclass(frozen=True, slots=True)
+class Cast(Exp):
+    """Represents a type cast expression.
+
+    Attributes:
+        target_type: The type we want to cast the expression to.
+        exp: The expression we are casting.
+    """
+
+    target_type: Type
+    exp: Exp
 
 
 @dataclass(frozen=True, slots=True)

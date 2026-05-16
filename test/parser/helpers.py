@@ -13,8 +13,11 @@ from compiler.syntax.ast import (  # noqa: F401
     BlockItem,
     Break,
     Case,
+    Cast,
     Compound,
     Constant,
+    ConstInt,
+    ConstLong,
     Continue,
     D,
     Default,
@@ -24,12 +27,14 @@ from compiler.syntax.ast import (  # noqa: F401
     Function,
     FunctionCall,
     FunDecl,
+    FunType,
     Goto,
     If,
     InitDecl,
     InitExp,
     IntType,
     Label,
+    LongType,
     Null,
     Parameter,
     Program,
@@ -147,6 +152,7 @@ _COLON = _tok(TokenType.COLON, ":")
 _COMMA = _tok(TokenType.COMMA, ",")
 _STATIC = _tok(TokenType.STATIC, "static")
 _EXTERN = _tok(TokenType.EXTERN, "extern")
+_LONG = _tok(TokenType.LONG, "long")
 
 
 def _ident(name: str) -> Token:
@@ -157,6 +163,11 @@ def _ident(name: str) -> Token:
 def _number(value: str) -> Token:
     """Return a NUMBER token with the given literal text."""
     return _tok(TokenType.NUMBER, value)
+
+
+def _longint(value: str) -> Token:
+    """Return a LONGINT token with the given literal text (e.g. ``"42L"``)."""
+    return _tok(TokenType.LONGINT, value)
 
 
 def _parsed_body(*body_tokens: Token) -> tuple[BlockItem, ...]:

@@ -5,11 +5,14 @@ import pytest
 from compiler.parser import parse
 from compiler.syntax.ast import (
     Constant,
+    ConstInt,
     D,
     Function,
     FunctionCall,
     FunDecl,
+    FunType,
     IntType,
+    LongType,
     Parameter,
     Program,
     Return,
@@ -63,7 +66,8 @@ class TestValidPrograms:
                     function_declaration=Function(
                         name="main",
                         params=(),
-                        body=(S(statement=Return(exp=Constant(value=0))),),
+                        body=(S(statement=Return(exp=Constant(value=ConstInt(0)))),),
+                        fun_type=FunType(params=(), ret=IntType()),
                     ),
                 ),
             )
@@ -84,7 +88,7 @@ class TestValidPrograms:
         result = parse(tokens)
         decl = result.declarations[0]
         assert isinstance(decl, FunDecl)
-        assert decl.function_declaration.body == (S(statement=Return(exp=Constant(value=42))),)
+        assert decl.function_declaration.body == (S(statement=Return(exp=Constant(value=ConstInt(42)))),)
 
     def test_single_int_parameter(self) -> None:
         """``int foo(int x) { return x; }`` — tests that a single typed parameter
@@ -144,8 +148,8 @@ class TestValidPrograms:
         decl = result.declarations[0]
         assert isinstance(decl, FunDecl)
         assert decl.function_declaration.body == (
-            S(statement=Return(exp=Constant(value=1))),
-            S(statement=Return(exp=Constant(value=2))),
+            S(statement=Return(exp=Constant(value=ConstInt(1)))),
+            S(statement=Return(exp=Constant(value=ConstInt(2)))),
         )
 
 
@@ -353,7 +357,9 @@ class TestFunctionForwardDeclarations:
         result = parse(tokens)
         decl = result.declarations[0]
         assert isinstance(decl, FunDecl)
-        assert decl.function_declaration == Function(name="foo", params=(), body=None)
+        assert decl.function_declaration == Function(
+            name="foo", params=(), body=None, fun_type=FunType(params=(), ret=IntType())
+        )
 
     def test_forward_declaration_with_params(self) -> None:
         """``int add(int a, int b);`` → forward declaration with two params and ``body=None``."""
@@ -404,29 +410,31 @@ class TestFunctionCallExpressions:
         assert result == FunctionCall(name="foo", args=[])
 
     def test_call_one_arg(self) -> None:
-        """``return foo(1);`` → ``FunctionCall(name="foo", args=[Constant(1)])``."""
+        """``return foo(1);`` → ``FunctionCall(name="foo", args=[Constant(ConstInt(1))])``."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Constant(1)])
+        assert result == FunctionCall(name="foo", args=[Constant(ConstInt(1))])
 
     def test_call_two_args(self) -> None:
         """``return foo(1, 2);`` → two-element args list."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _COMMA, _number("2"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Constant(1), Constant(2)])
+        assert result == FunctionCall(name="foo", args=[Constant(ConstInt(1)), Constant(ConstInt(2))])
 
     def test_call_three_args(self) -> None:
         """``return foo(1, 2, 3);`` → three-element args list."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _COMMA, _number("2"), _COMMA, _number("3"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Constant(1), Constant(2), Constant(3)])
+        assert result == FunctionCall(
+            name="foo", args=[Constant(ConstInt(1)), Constant(ConstInt(2)), Constant(ConstInt(3))]
+        )
 
     def test_call_with_expression_arg(self) -> None:
         """``return foo(a + 1);`` — binary expression as the sole argument."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _ident("a"), _PLUS, _number("1"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Binary(Add(), Var("a"), Constant(1))])
+        assert result == FunctionCall(name="foo", args=[Binary(Add(), Var("a"), Constant(ConstInt(1)))])
 
     def test_call_result_used_in_binary(self) -> None:
         """``return foo() + 1;`` — function call as left operand of addition."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN, _PLUS, _number("1"))
-        assert result == Binary(Add(), FunctionCall(name="foo", args=[]), Constant(1))
+        assert result == Binary(Add(), FunctionCall(name="foo", args=[]), Constant(ConstInt(1)))
 
     def test_call_with_postfix_increment(self) -> None:
         """``return foo()++;`` — postfix ``++`` applied to the call result."""
@@ -472,7 +480,9 @@ class TestStorageClassSpecifiers:
         result = parse(tokens)
         decl = result.declarations[0]
         assert isinstance(decl, VarDecl)
-        assert decl.variable_declaration == VariableDeclaration(name="x", init=None, storage_class=StorageClass.Static)
+        assert decl.variable_declaration == VariableDeclaration(
+            name="x", init=None, var_type=IntType(), storage_class=StorageClass.Static
+        )
 
     def test_extern_variable_declaration(self) -> None:
         """``extern int x;`` → ``VarDecl`` carrying ``StorageClass.Extern``."""
@@ -498,7 +508,7 @@ class TestStorageClassSpecifiers:
         assert isinstance(decl, VarDecl)
         vd = decl.variable_declaration
         assert vd.storage_class == StorageClass.Static
-        assert vd.init == Constant(5)
+        assert vd.init == Constant(ConstInt(5))
 
     def test_static_function_forward_declaration(self) -> None:
         """``static int foo(void);`` → ``FunDecl`` whose ``Function`` carries ``StorageClass.Static``."""
@@ -564,4 +574,101 @@ class TestStorageClassSpecifiers:
         """``static x;`` — absent type specifier raises ``ParseError``."""
         tokens = [_STATIC, _ident("x"), _SEMICOLON]
         with pytest.raises(ParseError, match="expected a type"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Long type specifiers
+# ---------------------------------------------------------------------------
+
+
+class TestLongTypeSpecifiers:
+    """Parser correctly handles ``long``, ``long int``, and ``int long`` specifiers."""
+
+    def test_long_variable_declaration(self) -> None:
+        """``long x;`` → ``VarDecl`` with ``var_type=LongType()``."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_LONG, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration == VariableDeclaration(name="x", init=None, var_type=LongType())
+
+    def test_long_int_variable_declaration(self) -> None:
+        """``long int x;`` → ``VarDecl`` with ``var_type=LongType()`` — C standard combination."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_LONG, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == LongType()
+
+    def test_int_long_variable_declaration(self) -> None:
+        """``int long x;`` → ``VarDecl`` with ``var_type=LongType()`` — specifiers in either order."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_INT, _LONG, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == LongType()
+
+    def test_long_variable_with_storage_class(self) -> None:
+        """``static long x;`` — storage class and ``long`` type are both recorded."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_STATIC, _LONG, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        vd = decl.variable_declaration
+        assert vd.var_type == LongType()
+        assert vd.storage_class == StorageClass.Static
+
+    def test_long_function_return_type(self) -> None:
+        """``long foo(void);`` → forward declaration with ``LongType`` return."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_LONG, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        fn = decl.function_declaration
+        assert isinstance(fn.fun_type, FunType)
+        assert fn.fun_type.ret == LongType()
+
+    def test_long_parameter(self) -> None:
+        """``int foo(long x) {}`` — parameter has ``param_type=LongType()``."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_INT, _ident("foo"), _LPAREN, _LONG, _ident("x"), _RPAREN, _LBRACE, _RBRACE]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == (Parameter(param_type=LongType(), name="x"),)
+
+    def test_long_int_parameter(self) -> None:
+        """``int foo(long int x) {}`` — ``long int`` parameter resolves to ``LongType``."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_INT, _ident("foo"), _LPAREN, _LONG, _INT, _ident("x"), _RPAREN, _LBRACE, _RBRACE]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params[0].param_type == LongType()
+
+    def test_duplicate_long_raises_parse_error(self) -> None:
+        """``long long x;`` — repeated ``long`` specifier raises ``ParseError``."""
+        from test.parser.helpers import _LONG
+
+        tokens = [_LONG, _LONG, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError, match="duplicate type specifier"):
+            parse(tokens)
+
+    def test_duplicate_int_raises_parse_error(self) -> None:
+        """``int int x;`` — repeated ``int`` specifier raises ``ParseError``."""
+        tokens = [_INT, _INT, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError, match="duplicate type specifier"):
             parse(tokens)

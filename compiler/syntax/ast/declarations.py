@@ -32,11 +32,13 @@ class VariableDeclaration:
         name: The name of the variable being declared.
         init: The initialisation expression, or ``None`` if the variable is
             declared without an initial value.
+        var_type: The type of this variable.
         storage_class: The storage class specifier, or ``None`` if omitted.
     """
 
     name: str
     init: Exp | None
+    var_type: Type
     storage_class: StorageClass | None = None
 
 
@@ -124,6 +126,8 @@ class Function:
             with ``void`` or ``()`` in the parameter list.
         body: The block comprising the function body, or ``None`` for a forward
             declaration.
+        fun_type: The type signature for this function (carries types for parameters
+            along with the return type).
         globl: ``True`` when the function has external linkage and should be
             visible to the linker.  Set by the semantic analysis stage; defaults
             to ``False`` before analysis runs.
@@ -133,6 +137,7 @@ class Function:
     name: str
     params: tuple[Parameter, ...]
     body: Block | None
+    fun_type: Type
     globl: bool = False
     storage_class: StorageClass | None = None
 

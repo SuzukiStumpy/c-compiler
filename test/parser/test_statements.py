@@ -9,6 +9,7 @@ from compiler.syntax.ast import (
     Case,
     Compound,
     Constant,
+    ConstInt,
     Continue,
     D,
     Default,
@@ -19,6 +20,7 @@ from compiler.syntax.ast import (
     If,
     InitDecl,
     InitExp,
+    IntType,
     Label,
     Null,
     Return,
@@ -75,9 +77,11 @@ class TestIfStatements:
     """Parser correctly builds ``If`` nodes for if/else statements."""
 
     def test_if_without_else(self) -> None:
-        """``if (1) return 0;`` → ``If(condition=Constant(1), then=Return(Constant(0)), else_=None)``."""
+        """
+        ``if (1) return 0;`` → ``If(condition=Constant(ConstInt(1)), then=Return(Constant(ConstInt(0))), else_=None)``.
+        """
         result = _parsed_stmt(_IF, _LPAREN, _number("1"), _RPAREN, _RETURN, _number("0"), _SEMICOLON)
-        assert result == If(condition=Constant(1), then=Return(exp=Constant(0)), else_=None)
+        assert result == If(condition=Constant(ConstInt(1)), then=Return(exp=Constant(ConstInt(0))), else_=None)
 
     def test_if_with_else(self) -> None:
         """``if (1) return 1; else return 0;`` → ``If`` with both branches populated."""
@@ -95,15 +99,15 @@ class TestIfStatements:
             _SEMICOLON,
         )
         assert result == If(
-            condition=Constant(1),
-            then=Return(exp=Constant(1)),
-            else_=Return(exp=Constant(0)),
+            condition=Constant(ConstInt(1)),
+            then=Return(exp=Constant(ConstInt(1))),
+            else_=Return(exp=Constant(ConstInt(0))),
         )
 
     def test_if_null_then_clause(self) -> None:
         """``if (1);`` → ``If`` whose ``then`` is a ``Null`` statement."""
         result = _parsed_stmt(_IF, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
-        assert result == If(condition=Constant(1), then=Null(), else_=None)
+        assert result == If(condition=Constant(ConstInt(1)), then=Null(), else_=None)
 
     def test_if_null_else_clause(self) -> None:
         """``if (1) return 1; else;`` → ``If`` whose ``else_`` is a ``Null`` statement."""
@@ -119,8 +123,8 @@ class TestIfStatements:
             _SEMICOLON,
         )
         assert result == If(
-            condition=Constant(1),
-            then=Return(exp=Constant(1)),
+            condition=Constant(ConstInt(1)),
+            then=Return(exp=Constant(ConstInt(1))),
             else_=Null(),
         )
 
@@ -141,7 +145,7 @@ class TestIfStatements:
         assert len(body) == 2
         item = body[1]
         assert isinstance(item, S)
-        assert item.statement == Return(exp=Constant(0))
+        assert item.statement == Return(exp=Constant(ConstInt(0)))
 
     def test_dangling_else_binds_to_nearest_if(self) -> None:
         """``if (1) if (2) return 2; else return 1;`` — else belongs to the inner if (C rule)."""
@@ -163,11 +167,11 @@ class TestIfStatements:
             _SEMICOLON,
         )
         assert result == If(
-            condition=Constant(1),
+            condition=Constant(ConstInt(1)),
             then=If(
-                condition=Constant(2),
-                then=Return(exp=Constant(2)),
-                else_=Return(exp=Constant(1)),
+                condition=Constant(ConstInt(2)),
+                then=Return(exp=Constant(ConstInt(2))),
+                else_=Return(exp=Constant(ConstInt(1))),
             ),
             else_=None,
         )
@@ -186,7 +190,7 @@ class TestIfStatements:
             _SEMICOLON,
         )
         assert result == If(
-            condition=Binary(GreaterThan(), Var("a"), Constant(1)),
+            condition=Binary(GreaterThan(), Var("a"), Constant(ConstInt(1))),
             then=Return(exp=Var("a")),
             else_=None,
         )
@@ -194,7 +198,7 @@ class TestIfStatements:
     def test_if_then_is_expression_statement(self) -> None:
         """``if (1) a;`` — expression statement (not return) in the then branch."""
         result = _parsed_stmt(_IF, _LPAREN, _number("1"), _RPAREN, _ident("a"), _SEMICOLON)
-        assert result == If(condition=Constant(1), then=Expression(exp=Var("a")), else_=None)
+        assert result == If(condition=Constant(ConstInt(1)), then=Expression(exp=Var("a")), else_=None)
 
     def test_if_missing_lparen(self) -> None:
         """``if 1) return 0;`` — no opening parenthesis raises ``ParseError``."""
@@ -277,9 +281,9 @@ class TestLabeledStatements:
     """Parser correctly builds ``Label`` nodes for labeled statements."""
 
     def test_label_wraps_return_statement(self) -> None:
-        """``foo: return 0;`` → ``Label(name="foo", statement=Return(Constant(0)))``."""
+        """``foo: return 0;`` → ``Label(name="foo", statement=Return(Constant(ConstInt(0))))``."""
         assert _parsed_stmt(_ident("foo"), _COLON, _RETURN, _number("0"), _SEMICOLON) == Label(
-            name="foo", statement=Return(exp=Constant(0))
+            name="foo", statement=Return(exp=Constant(ConstInt(0)))
         )
 
     def test_label_wraps_null_statement(self) -> None:
@@ -293,9 +297,9 @@ class TestLabeledStatements:
         )
 
     def test_nested_labels(self) -> None:
-        """``foo: bar: return 0;`` → ``Label("foo", Label("bar", Return(Constant(0))))``."""
+        """``foo: bar: return 0;`` → ``Label("foo", Label("bar", Return(Constant(ConstInt(0)))))``."""
         assert _parsed_stmt(_ident("foo"), _COLON, _ident("bar"), _COLON, _RETURN, _number("0"), _SEMICOLON) == Label(
-            name="foo", statement=Label(name="bar", statement=Return(exp=Constant(0)))
+            name="foo", statement=Label(name="bar", statement=Return(exp=Constant(ConstInt(0))))
         )
 
     def test_label_target_name_is_preserved(self) -> None:
@@ -324,19 +328,33 @@ class TestCompoundStatements:
     def test_compound_with_single_return(self) -> None:
         """``{ return 0; }`` → ``Compound`` wrapping a single ``Return``."""
         assert _parsed_stmt(_LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE) == Compound(
-            body=(S(statement=Return(exp=Constant(0))),)
+            body=(S(statement=Return(exp=Constant(ConstInt(0)))),)
         )
 
     def test_compound_with_declaration(self) -> None:
         """``{ int x; }`` → ``Compound`` whose body contains a single ``D`` item."""
         assert _parsed_stmt(_LBRACE, _INT, _ident("x"), _SEMICOLON, _RBRACE) == Compound(
-            body=(D(declaration=VarDecl(variable_declaration=VariableDeclaration(name="x", init=None))),)
+            body=(
+                D(
+                    declaration=VarDecl(
+                        variable_declaration=VariableDeclaration(name="x", init=None, var_type=IntType())
+                    )
+                ),
+            )
         )
 
     def test_compound_with_initialised_declaration(self) -> None:
         """``{ int x = 1; }`` → ``Compound`` with a ``D`` whose declaration carries an initialiser."""
         assert _parsed_stmt(_LBRACE, _INT, _ident("x"), _ASSIGNMENT, _number("1"), _SEMICOLON, _RBRACE) == Compound(
-            body=(D(declaration=VarDecl(variable_declaration=VariableDeclaration(name="x", init=Constant(1)))),)
+            body=(
+                D(
+                    declaration=VarDecl(
+                        variable_declaration=VariableDeclaration(
+                            name="x", init=Constant(ConstInt(1)), var_type=IntType()
+                        )
+                    )
+                ),
+            )
         )
 
     def test_compound_with_multiple_items(self) -> None:
@@ -354,7 +372,13 @@ class TestCompoundStatements:
             _RBRACE,
         ) == Compound(
             body=(
-                D(declaration=VarDecl(variable_declaration=VariableDeclaration(name="x", init=Constant(1)))),
+                D(
+                    declaration=VarDecl(
+                        variable_declaration=VariableDeclaration(
+                            name="x", init=Constant(ConstInt(1)), var_type=IntType()
+                        )
+                    )
+                ),
                 S(statement=Return(exp=Var("x"))),
             )
         )
@@ -362,13 +386,13 @@ class TestCompoundStatements:
     def test_nested_compound(self) -> None:
         """``{ { return 0; } }`` → outer ``Compound`` wrapping an inner ``Compound``."""
         assert _parsed_stmt(_LBRACE, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE, _RBRACE) == Compound(
-            body=(S(statement=Compound(body=(S(statement=Return(exp=Constant(0))),))),)
+            body=(S(statement=Compound(body=(S(statement=Return(exp=Constant(ConstInt(0)))),))),)
         )
 
     def test_compound_does_not_consume_subsequent_block_items(self) -> None:
         """``{ {} return 0; }`` — the compound's ``}`` does not swallow the following ``return``."""
         body = _parsed_body(_LBRACE, _RBRACE, _RETURN, _number("0"), _SEMICOLON)
-        assert body == (S(statement=Compound(body=())), S(statement=Return(exp=Constant(0))))
+        assert body == (S(statement=Compound(body=())), S(statement=Return(exp=Constant(ConstInt(0)))))
 
     def test_compound_as_if_then_branch(self) -> None:
         """``if (1) { return 0; }`` → ``If`` with a ``Compound`` as the then-branch."""
@@ -384,8 +408,8 @@ class TestCompoundStatements:
             _RBRACE,
         )
         assert result == If(
-            condition=Constant(1),
-            then=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+            condition=Constant(ConstInt(1)),
+            then=Compound(body=(S(statement=Return(exp=Constant(ConstInt(0)))),)),
             else_=None,
         )
 
@@ -407,9 +431,9 @@ class TestCompoundStatements:
             _RBRACE,
         )
         assert result == If(
-            condition=Constant(1),
-            then=Return(exp=Constant(1)),
-            else_=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+            condition=Constant(ConstInt(1)),
+            then=Return(exp=Constant(ConstInt(1))),
+            else_=Compound(body=(S(statement=Return(exp=Constant(ConstInt(0)))),)),
         )
 
     def test_label_wraps_compound(self) -> None:
@@ -417,7 +441,7 @@ class TestCompoundStatements:
         result = _parsed_stmt(_ident("foo"), _COLON, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE)
         assert result == Label(
             name="foo",
-            statement=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+            statement=Compound(body=(S(statement=Return(exp=Constant(ConstInt(0)))),)),
         )
 
     def test_compound_missing_closing_brace_raises_parse_error(self) -> None:
@@ -444,7 +468,7 @@ class TestCompoundStatements:
         assert isinstance(result.body, tuple)
         # Block is a type alias — verify the runtime type satisfies it
         b: Block = result.body
-        assert b == (S(statement=Return(exp=Constant(0))),)
+        assert b == (S(statement=Return(exp=Constant(ConstInt(0)))),)
 
 
 # ---------------------------------------------------------------------------
@@ -485,24 +509,24 @@ class TestWhileStatements:
     """Parser correctly builds ``While`` nodes for while loops."""
 
     def test_while_with_constant_condition(self) -> None:
-        """``while (1) return 0;`` → ``While(condition=Constant(1), body=Return(Constant(0)))``."""
+        """``while (1) return 0;`` → ``While(condition=Constant(ConstInt(1)), body=Return(Constant(ConstInt(0))))``."""
         result = _parsed_stmt(_WHILE, _LPAREN, _number("1"), _RPAREN, _RETURN, _number("0"), _SEMICOLON)
-        assert result == While(condition=Constant(1), body=Return(exp=Constant(0)))
+        assert result == While(condition=Constant(ConstInt(1)), body=Return(exp=Constant(ConstInt(0))))
 
     def test_while_with_compound_body(self) -> None:
         """``while (1) {}`` → ``While`` with an empty ``Compound`` body."""
         result = _parsed_stmt(_WHILE, _LPAREN, _number("1"), _RPAREN, _LBRACE, _RBRACE)
-        assert result == While(condition=Constant(1), body=Compound(body=()))
+        assert result == While(condition=Constant(ConstInt(1)), body=Compound(body=()))
 
     def test_while_body_is_null_statement(self) -> None:
         """``while (1) ;`` → ``While`` whose body is a ``Null`` statement."""
         result = _parsed_stmt(_WHILE, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
-        assert result == While(condition=Constant(1), body=Null())
+        assert result == While(condition=Constant(ConstInt(1)), body=Null())
 
     def test_while_condition_is_arbitrary_expression(self) -> None:
         """``while (a < 10) ;`` — comparison expression as condition."""
         result = _parsed_stmt(_WHILE, _LPAREN, _ident("a"), _LT, _number("10"), _RPAREN, _SEMICOLON)
-        assert result == While(condition=Binary(LessThan(), Var("a"), Constant(10)), body=Null())
+        assert result == While(condition=Binary(LessThan(), Var("a"), Constant(ConstInt(10))), body=Null())
 
     def test_while_missing_lparen_raises_parse_error(self) -> None:
         """``while 1) ;`` — missing opening parenthesis raises ``ParseError``."""
@@ -550,21 +574,23 @@ class TestDoWhileStatements:
     """Parser correctly builds ``DoWhile`` nodes for do/while loops."""
 
     def test_do_while_basic(self) -> None:
-        """``do return 0; while (1);`` → ``DoWhile(body=Return(Constant(0)), condition=Constant(1))``."""
+        """
+        ``do return 0; while (1);`` → ``DoWhile(body=Return(Constant(ConstInt(0))), condition=Constant(ConstInt(1)))``.
+        """
         result = _parsed_stmt(
             _DO, _RETURN, _number("0"), _SEMICOLON, _WHILE, _LPAREN, _number("1"), _RPAREN, _SEMICOLON
         )
-        assert result == DoWhile(body=Return(exp=Constant(0)), condition=Constant(1))
+        assert result == DoWhile(body=Return(exp=Constant(ConstInt(0))), condition=Constant(ConstInt(1)))
 
     def test_do_while_with_compound_body(self) -> None:
         """``do {} while (1);`` → ``DoWhile`` with an empty ``Compound`` body."""
         result = _parsed_stmt(_DO, _LBRACE, _RBRACE, _WHILE, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
-        assert result == DoWhile(body=Compound(body=()), condition=Constant(1))
+        assert result == DoWhile(body=Compound(body=()), condition=Constant(ConstInt(1)))
 
     def test_do_while_condition_is_arbitrary_expression(self) -> None:
         """``do ; while (a < 10);`` — comparison expression as condition."""
         result = _parsed_stmt(_DO, _SEMICOLON, _WHILE, _LPAREN, _ident("a"), _LT, _number("10"), _RPAREN, _SEMICOLON)
-        assert result == DoWhile(body=Null(), condition=Binary(LessThan(), Var("a"), Constant(10)))
+        assert result == DoWhile(body=Null(), condition=Binary(LessThan(), Var("a"), Constant(ConstInt(10))))
 
     def test_do_while_missing_while_keyword_raises_parse_error(self) -> None:
         """``do ; (1);`` — absent ``while`` keyword raises ``ParseError``."""
@@ -657,10 +683,14 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitDecl(declaration=VarDecl(variable_declaration=VariableDeclaration(name="i", init=Constant(0)))),
-            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            init=InitDecl(
+                declaration=VarDecl(
+                    variable_declaration=VariableDeclaration(name="i", init=Constant(ConstInt(0)), var_type=IntType())
+                )
+            ),
+            condition=Binary(LessThan(), Var("i"), Constant(ConstInt(10))),
             post=Unary(PostIncrement(), Var("i")),
-            body=Return(exp=Constant(0)),
+            body=Return(exp=Constant(ConstInt(0))),
         )
 
     def test_for_with_expression_init(self) -> None:
@@ -684,8 +714,8 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitExp(exp=Assignment(lvalue=Var("i"), rvalue=Constant(0))),
-            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            init=InitExp(exp=Assignment(lvalue=Var("i"), rvalue=Constant(ConstInt(0)))),
+            condition=Binary(LessThan(), Var("i"), Constant(ConstInt(10))),
             post=Unary(PostIncrement(), Var("i")),
             body=Null(),
         )
@@ -707,7 +737,7 @@ class TestForStatements:
         )
         assert result == For(
             init=InitExp(exp=None),
-            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            condition=Binary(LessThan(), Var("i"), Constant(ConstInt(10))),
             post=Unary(PostIncrement(), Var("i")),
             body=Null(),
         )
@@ -729,7 +759,11 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitDecl(declaration=VarDecl(variable_declaration=VariableDeclaration(name="i", init=Constant(0)))),
+            init=InitDecl(
+                declaration=VarDecl(
+                    variable_declaration=VariableDeclaration(name="i", init=Constant(ConstInt(0)), var_type=IntType())
+                )
+            ),
             condition=None,
             post=Unary(PostIncrement(), Var("i")),
             body=Null(),
@@ -753,8 +787,12 @@ class TestForStatements:
             _SEMICOLON,
         )
         assert result == For(
-            init=InitDecl(declaration=VarDecl(variable_declaration=VariableDeclaration(name="i", init=Constant(0)))),
-            condition=Binary(LessThan(), Var("i"), Constant(10)),
+            init=InitDecl(
+                declaration=VarDecl(
+                    variable_declaration=VariableDeclaration(name="i", init=Constant(ConstInt(0)), var_type=IntType())
+                )
+            ),
+            condition=Binary(LessThan(), Var("i"), Constant(ConstInt(10))),
             post=None,
             body=Null(),
         )
@@ -787,7 +825,7 @@ class TestForStatements:
             init=InitExp(exp=None),
             condition=None,
             post=None,
-            body=Compound(body=(S(statement=Return(exp=Constant(0))),)),
+            body=Compound(body=(S(statement=Return(exp=Constant(ConstInt(0)))),)),
         )
 
     def test_for_missing_lparen_raises_parse_error(self) -> None:
@@ -962,19 +1000,19 @@ class TestSwitchStatements:
     """Parser correctly builds ``Switch``, ``Case``, and ``Default`` nodes."""
 
     def test_switch_with_null_body(self) -> None:
-        """``switch (1) ;`` → ``Switch(control=Constant(1), body=Null())``."""
+        """``switch (1) ;`` → ``Switch(control=Constant(ConstInt(1)), body=Null())``."""
         result = _parsed_stmt(_SWITCH, _LPAREN, _number("1"), _RPAREN, _SEMICOLON)
-        assert result == Switch(control=Constant(1), body=Null())
+        assert result == Switch(control=Constant(ConstInt(1)), body=Null())
 
     def test_switch_with_empty_compound_body(self) -> None:
         """``switch (1) {}`` → ``Switch`` whose body is an empty ``Compound``."""
         result = _parsed_stmt(_SWITCH, _LPAREN, _number("1"), _RPAREN, _LBRACE, _RBRACE)
-        assert result == Switch(control=Constant(1), body=Compound(body=()))
+        assert result == Switch(control=Constant(ConstInt(1)), body=Compound(body=()))
 
     def test_switch_control_is_arbitrary_expression(self) -> None:
         """``switch (a + 1) ;`` — binary expression as the control value."""
         result = _parsed_stmt(_SWITCH, _LPAREN, _ident("a"), _PLUS, _number("1"), _RPAREN, _SEMICOLON)
-        assert result == Switch(control=Binary(Add(), Var("a"), Constant(1)), body=Null())
+        assert result == Switch(control=Binary(Add(), Var("a"), Constant(ConstInt(1))), body=Null())
 
     def test_switch_identifier_is_empty_before_semantic_analysis(self) -> None:
         """``Switch.identifier`` is the empty string until semantic analysis assigns one."""
@@ -983,14 +1021,14 @@ class TestSwitchStatements:
         assert result.identifier == ""
 
     def test_case_governing_null_statement(self) -> None:
-        """``case 1: ;`` → ``Case(value=Constant(1), statement=Null())``."""
+        """``case 1: ;`` → ``Case(value=Constant(ConstInt(1)), statement=Null())``."""
         result = _parsed_stmt(_CASE, _number("1"), _COLON, _SEMICOLON)
-        assert result == Case(value=Constant(1), statement=Null())
+        assert result == Case(value=Constant(ConstInt(1)), statement=Null())
 
     def test_case_governing_return_statement(self) -> None:
-        """``case 2: return 0;`` → ``Case(value=Constant(2), statement=Return(Constant(0)))``."""
+        """``case 2: return 0;`` → ``Case(value=Constant(ConstInt(2)), statement=Return(Constant(ConstInt(0))))``."""
         result = _parsed_stmt(_CASE, _number("2"), _COLON, _RETURN, _number("0"), _SEMICOLON)
-        assert result == Case(value=Constant(2), statement=Return(exp=Constant(0)))
+        assert result == Case(value=Constant(ConstInt(2)), statement=Return(exp=Constant(ConstInt(0))))
 
     def test_case_value_must_be_constant_expression_raises_parse_error(self) -> None:
         """``case a: ;`` — a non-constant case value raises ``ParseError``."""
@@ -1022,9 +1060,9 @@ class TestSwitchStatements:
         assert result == Default(statement=Null())
 
     def test_default_governing_return_statement(self) -> None:
-        """``default: return 0;`` → ``Default(statement=Return(Constant(0)))``."""
+        """``default: return 0;`` → ``Default(statement=Return(Constant(ConstInt(0))))``."""
         result = _parsed_stmt(_DEFAULT, _COLON, _RETURN, _number("0"), _SEMICOLON)
-        assert result == Default(statement=Return(exp=Constant(0)))
+        assert result == Default(statement=Return(exp=Constant(ConstInt(0))))
 
     def test_default_identifier_is_empty_before_semantic_analysis(self) -> None:
         """``Default.identifier`` is the empty string until semantic analysis assigns one."""
@@ -1041,8 +1079,8 @@ class TestSwitchStatements:
             _CASE, _number("1"), _COLON, _CASE, _number("2"), _COLON, _RETURN, _number("0"), _SEMICOLON
         )
         assert result == Case(
-            value=Constant(1),
-            statement=Case(value=Constant(2), statement=Return(exp=Constant(0))),
+            value=Constant(ConstInt(1)),
+            statement=Case(value=Constant(ConstInt(2)), statement=Return(exp=Constant(ConstInt(0)))),
         )
 
     def test_switch_with_case_in_compound_body(self) -> None:
@@ -1063,7 +1101,9 @@ class TestSwitchStatements:
         )
         assert result == Switch(
             control=Var("x"),
-            body=Compound(body=(S(statement=Case(value=Constant(1), statement=Return(exp=Constant(1)))),)),
+            body=Compound(
+                body=(S(statement=Case(value=Constant(ConstInt(1)), statement=Return(exp=Constant(ConstInt(1))))),)
+            ),
         )
 
     def test_switch_with_case_and_default_in_compound_body(self) -> None:
@@ -1091,8 +1131,8 @@ class TestSwitchStatements:
             control=Var("x"),
             body=Compound(
                 body=(
-                    S(statement=Case(value=Constant(1), statement=Return(exp=Constant(1)))),
-                    S(statement=Default(statement=Return(exp=Constant(0)))),
+                    S(statement=Case(value=Constant(ConstInt(1)), statement=Return(exp=Constant(ConstInt(1))))),
+                    S(statement=Default(statement=Return(exp=Constant(ConstInt(0))))),
                 )
             ),
         )
