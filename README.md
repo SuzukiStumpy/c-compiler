@@ -6,7 +6,14 @@ A homegrown C compiler written in Python, supporting a growing subset of the C l
 
 The compiler currently handles:
 
-- `int`-typed functions with a `return` statement
+### Types and declarations
+- `int` and `void` types
+- Local variable declarations (`int x;`, `int x = <expr>;`)
+- Global variable declarations with optional initialisers
+- Function declarations and definitions (multiple functions per translation unit)
+- Storage class specifiers: `static` and `extern`
+
+### Expressions
 - Integer constants and arithmetic: `+`, `-`, `*`, `/`, `%`
 - Bitwise operators: `~`, `&`, `|`, `^`, `<<`, `>>`
 - Logical operators with short-circuit evaluation: `!`, `&&`, `||`
@@ -15,11 +22,19 @@ The compiler currently handles:
 - Prefix increment and decrement: `++x`, `--x`
 - Postfix increment and decrement: `x++`, `x--`
 - Conditional (ternary) expressions: `<cond> ? <then> : <else>`
-- Local variable declarations (`int x;`, `int x = <expr>;`)
 - Variable assignment (`x = <expr>`)
 - Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+- Function calls
+
+### Statements
+- `return` statement
 - Expression statements (expressions evaluated for side effects)
 - `if` / `else` statements
+- `while` loops
+- `do` / `while` loops
+- `for` loops (with declaration or expression initialisers)
+- `switch` statements with `case` and `default` labels
+- `break` and `continue` statements
 - `goto` and labeled statements
 - Compound (block) statements with nested variable scoping (`{ ... }`)
 

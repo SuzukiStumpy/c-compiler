@@ -29,7 +29,7 @@
 | **Token** | A single classified unit of source text produced by the lexer, carrying type, value, and source position | Lexeme |
 | **Token type** | The classification of a token (e.g. `RETURN`, `IDENTIFIER`, `LPAREN`) | Token kind, token class |
 | **Token value** | The exact substring of source text matched by the token | Lexeme, matched text |
-| **Keyword** | A token whose type corresponds to a reserved C word (`int`, `void`, `return`, `if`, `else`, `goto`, `do`, `while`, `for`, `break`, `continue`) | Reserved word |
+| **Keyword** | A token whose type corresponds to a reserved C word (`int`, `void`, `return`, `if`, `else`, `goto`, `do`, `while`, `for`, `break`, `continue`, `switch`, `case`, `default`, `static`, `extern`) | Reserved word |
 | **Identifier** | A token representing a user-defined name that is not a keyword | Name, symbol |
 | **Integer constant** | A token representing a numeric literal composed of decimal digits | Number, numeric constant, literal |
 | **Token stream** | The ordered list of tokens produced by the lexer for a given preprocessed file | Token list, token sequence |
@@ -71,7 +71,7 @@
 | **Function body** | The block forming the body of a function definition; represented as the `body` field of a `Function` node | Function block |
 | **Block** | An ordered sequence of zero or more block items enclosed by braces; the grammar production `block = Block(block_item*)`. Implemented as the Python type alias `Block = tuple[BlockItem, ...]` | Body, block body |
 | **Block item** | A sum-type wrapper for items that may appear in a block; each is either a statement (`S`) or a declaration (`D`) | Body item |
-| **Statement** | An executable instruction appearing in a block; one of: return statement, expression statement, null statement, if statement, goto statement, labeled statement, or compound statement | Instruction, command |
+| **Statement** | An executable instruction appearing in a block; one of: return statement, expression statement, null statement, if statement, goto statement, labeled statement, compound statement, while statement, do-while statement, for statement, switch statement, case statement, default statement, break statement, or continue statement | Instruction, command |
 | **Return statement** | The statement form `return <exp>;` that transfers control back to the caller with a value | Return, return expression |
 | **Expression statement** | A statement consisting of a single expression evaluated for its side effects; the expression's value is discarded | — |
 | **Null statement** | An empty placeholder statement with no effect | Empty statement |
@@ -79,8 +79,23 @@
 | **Goto statement** | The unconditional jump statement `goto <identifier>;` that transfers control to a named label within the same function; represented by the `Goto` AST node | Jump statement |
 | **Labeled statement** | A statement prefixed with an identifier and colon (`<name>: <statement>`), marking a position that can be targeted by a goto; represented by the `Label` AST node | Label |
 | **Compound statement** | The statement form `{ block_item* }` that introduces a block as a statement; represented by the `Compound` AST node | Block statement |
-| **Declaration** | An AST node representing a variable declaration, carrying the variable name and an optional initialiser expression | Variable declaration |
-| **Expression** | A syntactic construct that evaluates to a value; one of: constant, variable, unary operation (including prefix/postfix increment and decrement), binary operation, or assignment | Value, rvalue |
+| **While statement** | The loop form `while (<cond>) <body>` that repeatedly executes the body while the condition is non-zero; represented by the `While` AST node carrying a loop label used by break and continue | — |
+| **Do-while statement** | The loop form `do <body> while (<cond>);` that executes the body at least once then continues while the condition is non-zero; represented by the `DoWhile` AST node | — |
+| **For statement** | The loop form `for (<init>; <cond>; <post>) <body>`; represented by the `For` AST node whose `init` is a `ForInit` (either a declaration or an expression), and whose `condition` and `post` are optional | — |
+| **For init** | The initialiser clause of a `for` statement; either an `InitDecl` (a variable declaration) or an `InitExp` (an optional expression) | Loop initialiser |
+| **Switch statement** | The multi-way branch `switch (<control>) <body>`; represented by the `Switch` AST node; the body typically contains `Case` and `Default` statements | — |
+| **Case statement** | A labeled branch within a switch body of the form `case <constant>: <statement>`; represented by the `Case` AST node carrying the constant value and a compiler-generated label | — |
+| **Default statement** | The fallback branch within a switch body of the form `default: <statement>`; represented by the `Default` AST node | — |
+| **Break statement** | The statement `break;` that exits the nearest enclosing loop or switch; represented by the `Break` AST node carrying the label of the enclosing construct, resolved during semantic analysis | — |
+| **Continue statement** | The statement `continue;` that skips the rest of the current loop iteration; represented by the `Continue` AST node carrying the label of the enclosing loop, resolved during semantic analysis | — |
+| **Declaration** | An AST node representing either a variable declaration (`VarDecl`) or a function declaration (`FunDecl`) | — |
+| **Variable declaration** | An AST node carrying a variable name, an optional initialiser expression, and an optional storage class | — |
+| **Function declaration** | An AST node carrying a function name, a parameter list, an optional body block, and an optional storage class; a declaration without a body is a forward declaration | Function prototype |
+| **Storage class** | An optional modifier on a declaration specifying linkage and lifetime: `Static` or `Extern` | Storage specifier |
+| **Static storage class** | The `static` keyword on a local variable gives it static storage duration (initialised once, persists for the program lifetime); on a file-scope declaration it restricts linkage to the current translation unit | — |
+| **Extern storage class** | The `extern` keyword declares that the name is defined in another translation unit and should be resolved at link time | — |
+| **Expression** | A syntactic construct that evaluates to a value; one of: constant, variable, unary operation (including prefix/postfix increment and decrement), binary operation, assignment, conditional, or function call | Value, rvalue |
+| **Function call expression** | The expression form `<name>(<arg>, ...)` that invokes a named function with zero or more argument expressions; represented by the `FunctionCall` AST node | — |
 | **Integer constant expression** | The expression form consisting of a single integer literal | Literal expression, number expression |
 | **Variable expression** | The expression form consisting of a reference to a declared variable by name | Variable reference |
 | **Unary expression** | The expression form consisting of a unary operator applied to a single sub-expression | — |
@@ -97,16 +112,32 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Variable** | A named storage location declared within a function body with an optional initial value | Identifier (when referring to a storage location) |
+| **Variable** | A named storage location declared with an optional initial value; may be local (block-scoped) or global (file-scoped) | Identifier (when referring to a storage location) |
+| **Local variable** | A variable declared within a function body; its lifetime is bounded by the enclosing block unless declared `static` | Auto variable |
+| **Global variable** | A variable declared at file scope, outside any function; it has static storage duration and external linkage unless declared `static` | File-scope variable |
+| **Static local variable** | A local variable declared with the `static` storage class; it is initialised exactly once and its value persists across calls; must be initialised with a constant expression | — |
 | **Variable resolution** | The semantic analysis pass that verifies every variable reference has a corresponding in-scope declaration and rewrites all names to unique internal names | Name resolution, scoping |
-| **Symbol table** | The per-function mapping from source-level variable names to their unique internal names, maintained during variable resolution | Name table, scope map |
-| **Unique internal name** | The compiler-generated identifier of the form `.V<name>.<n>` assigned to each declared variable; the leading `.V` prefix prevents collisions with any valid C identifier | Mangled name, renamed variable |
+| **Symbol table** | The per-program mapping from source-level names to their type, linkage, and unique internal name, maintained during semantic analysis | Name table, scope map |
+| **Unique internal name** | The compiler-generated identifier of the form `.V<name>.<n>` assigned to each declared local variable; the leading `.V` prefix prevents collisions with any valid C identifier | Mangled name, renamed variable |
 | **Initialiser** | The optional expression whose value is stored into a variable at the point of declaration | Initial value, init expression |
 | **Scope** | The region of a function body in which a declared variable is visible; each compound statement introduces a new nested scope, so a variable is visible from its declaration to the closing brace of the block that contains it | — |
 | **Block scope** | The scope introduced by a single compound statement; variables declared within a block are invisible outside it | — |
+| **File scope** | The scope of declarations made outside any function; these are visible from their declaration to the end of the translation unit | Global scope |
 | **Variable shadowing** | The act of declaring a variable in an inner block with the same source-level name as a variable in an enclosing block; the inner declaration creates a fresh unique internal name and takes precedence for the duration of the inner block, after which the outer binding is restored | Name shadowing |
 | **Duplicate declaration** | A semantic error raised when a variable name is declared more than once within the *same* block (same scope level); re-declaring the same name in an inner block is not an error — it is variable shadowing | Redeclaration |
 | **Undeclared variable** | A semantic error raised when a variable is referenced before any declaration is in scope | Undefined variable |
+
+## Functions
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Function definition** | A function declaration that includes a body block; defines what the function does | Function implementation |
+| **Function declaration** (forward) | A function declaration without a body; declares the function's signature so it may be called before its definition is seen | Prototype, forward declaration |
+| **Parameter** | A named, typed argument in a function's signature | Argument, arg |
+| **Argument** | An expression supplied by the caller at the call site; mapped positionally to the function's parameters | Parameter (at call site) |
+| **Linkage** | The property of a name that determines whether it refers to the same entity across translation units; either `EXTERNAL` (visible to the linker) or `NONE` (local to the translation unit) | — |
+| **External linkage** | A name with `EXTERNAL` linkage is accessible from other translation units and must resolve to a unique definition at link time | — |
+| **Internal linkage** | A function or global variable declared `static` has internal linkage; it is invisible to the linker and other translation units | — |
 
 ## Operators
 
@@ -183,9 +214,11 @@ Three-address code is the intermediate representation produced by TAC generation
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **TAC program** | The root TAC node, holding a single TAC function; the TAC equivalent of an AST `Program` | — |
-| **TAC function** | A TAC node representing a function's complete, flattened instruction sequence | — |
-| **TAC instruction** | An atomic operation in a TAC function body; one of: `Return`, `Unary`, `Binary`, `Copy`, `Jump`, `JumpIfZero`, `JumpIfNotZero`, or `Label` | TAC node, IR instruction |
+| **TAC program** | The root TAC node, holding a list of top-level items (functions and static variables); the TAC equivalent of an AST `Program` | — |
+| **TAC top-level** | A sum type for items that may appear at the top level of a TAC program: either a `Function` or a `StaticVariable` | — |
+| **TAC function** | A TAC node representing a function's complete, flattened instruction sequence; carries the function name, whether it has global linkage, its parameter list, and its instruction body | — |
+| **Static variable** | A TAC top-level node representing a file-scope or static-local variable; carries the variable name, a global linkage flag, and its integer initialiser value | — |
+| **TAC instruction** | An atomic operation in a TAC function body; one of: `Return`, `Unary`, `Binary`, `Copy`, `Jump`, `JumpIfZero`, `JumpIfNotZero`, `Label`, or `FunCall` | TAC node, IR instruction |
 | **TAC value** | An operand in a TAC instruction; either a `Constant` (an integer literal) or a `Var` (a named variable or temporary) | TAC operand |
 | **Temporary variable** | A TAC `Var` named `tmp.<n>`, created by the TAC generator to hold the result of a sub-expression; not present in the source | Temp, synthetic variable |
 | **Instruction flattening** | The process of converting a nested AST expression tree into a linear sequence of TAC instructions, each computing a single operation into a temporary | Lowering, linearisation |
@@ -194,6 +227,7 @@ Three-address code is the intermediate representation produced by TAC generation
 | **Jump** | A TAC instruction that unconditionally transfers control to a named label | Goto |
 | **JumpIfZero** | A TAC instruction that transfers control to a named label if a condition operand evaluates to zero | Conditional branch (false) |
 | **JumpIfNotZero** | A TAC instruction that transfers control to a named label if a condition operand evaluates to non-zero | Conditional branch (true) |
+| **FunCall instruction** | A TAC instruction that invokes a named function with a list of argument values and stores the return value into a destination operand | — |
 | **Short-circuit evaluation** | The TAC pattern for `&&` and `\|\|` that emits a conditional jump after each operand, skipping the remaining operands when the result is already determined | — |
 
 ## Relationships
@@ -206,24 +240,36 @@ Three-address code is the intermediate representation produced by TAC generation
 - A **TAC program** is transformed by **code generation** into an assembly AST.
 - An assembly AST is emitted and passed to **assembly and linking** to produce an **executable**.
 - A **token stream** contains zero or more **tokens**, each carrying a **token type**, a **token value**, and a **source position**.
-- An **abstract syntax tree** is rooted at a **Program** node, which holds one or more **function definitions**.
-- A **function definition** has a **type** (return type), a name, zero or more **parameters**, and a **function body**.
+- An **abstract syntax tree** is rooted at a **Program** node, which holds one or more **declarations** (variable or function) at file scope.
+- A **function definition** has a return **type**, a name, zero or more **parameters**, an optional **storage class**, and a **function body**.
 - A **parameter** has a **type** and a name.
 - A **function body** is a **block**; a **block** is an ordered sequence of zero or more **block items**; each **block item** wraps either a **statement** (`S`) or a **declaration** (`D`).
 - A **compound statement** also contains a **block**, allowing blocks to be nested arbitrarily deep.
-- A **declaration** carries a variable name and an optional **initialiser** expression; after **semantic analysis**, its name is a **unique internal name**.
+- A **variable declaration** carries a variable name, an optional **initialiser** expression, and an optional **storage class**; after **semantic analysis**, local variable names are **unique internal names**.
+- A **function declaration** without a body is a forward declaration; one with a body is a **function definition**.
 - A **return statement** holds an **expression**.
 - An **expression statement** holds an **expression** evaluated for its side effects.
 - A **compound statement** holds a **block** of zero or more **block items**.
 - A **goto statement** holds a target label name; a **labeled statement** holds a label name and the statement it governs.
+- A **while statement** holds a condition expression and a body statement, plus a compiler-generated loop label used by **break** and **continue**.
+- A **do-while statement** holds a body statement and a condition expression, plus a loop label.
+- A **for statement** holds a **for init**, an optional condition, an optional post expression, a body statement, and a loop label.
+- A **switch statement** holds a control expression, a body statement, and a switch label; its body contains **case statements** and an optional **default statement**.
+- A **break statement** carries the label of the nearest enclosing loop or switch, resolved during **semantic analysis**.
+- A **continue statement** carries the label of the nearest enclosing loop, resolved during **semantic analysis**.
 - An **assignment expression** requires its left-hand side to be an **lvalue** (currently only a **variable expression**).
+- A **function call expression** carries a function name and a list of **argument** expressions; the name must resolve to a visible **function declaration**.
 - A **source position** references the original **C source file**, not the **preprocessed file**, via **linemarkers**.
 - A **keyword** is a **token** whose **token type** has a distinct enum member (e.g. `RETURN`) — it is never classified as an **identifier**.
 - A **lexer error** carries a **source position** and an **error context** drawn from the original **C source file**.
-- **Semantic analysis** maintains a **symbol table** for each function; a **semantic error** is raised on a **duplicate declaration** or an **undeclared variable**.  Each **compound statement** introduces a new **block scope**: outer bindings remain accessible but are marked as inherited; a new declaration of the same name is **variable shadowing**, not a **duplicate declaration**.
+- **Semantic analysis** maintains a **symbol table** for the program; a **semantic error** is raised on a **duplicate declaration** or an **undeclared variable**. Each **compound statement** introduces a new **block scope**: outer bindings remain accessible but are marked as inherited; a new declaration of the same name is **variable shadowing**, not a **duplicate declaration**.
+- **Semantic analysis** resolves **break** and **continue** to the nearest enclosing loop (or switch for break) by annotating the AST node with a loop label.
+- **Static local variables** and **global variables** with constant initialisers are lowered to **static variable** TAC top-level nodes rather than local TAC vars.
+- A **TAC program** holds a list of **TAC top-level** items: **TAC functions** and **static variables**.
 - A **TAC function** body is a sequence of **TAC instructions**; each instruction operates on **TAC values** (constants and named variables).
 - **Temporary variables** are created during **instruction flattening** and do not correspond to any source-level name.
 - **Short-circuit evaluation** for `&&` and `||` is implemented in TAC using **JumpIfZero** and **JumpIfNotZero** instructions targeting generated **labels**.
+- A **FunCall instruction** passes arguments by value and stores the return value into a **temporary variable**.
 
 ## Example dialogue
 
