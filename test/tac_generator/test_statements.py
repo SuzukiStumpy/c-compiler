@@ -270,19 +270,19 @@ class TestTacGeneratorGotoStatement:
     """``ast.Goto`` translates to an unconditional ``tac.Jump``."""
 
     def test_goto_produces_jump(self) -> None:
-        """``goto foo;`` → ``Jump("foo")`` followed by the function guard."""
+        """``goto foo;`` → ``Jump("main.foo")`` followed by the function guard."""
         instrs = _stmt_instrs(ast.Goto(target="foo"))
         assert instrs == (
-            tac.Jump(target="foo"),
+            tac.Jump(target="main.foo"),
             tac.Return(val=tac.Constant(value=0)),
         )
 
     def test_goto_target_name_is_preserved(self) -> None:
-        """The target label name passes through to ``Jump.target`` unchanged."""
+        """The target label name is qualified with the function name in ``Jump.target``."""
         instrs = _stmt_instrs(ast.Goto(target="my_label"))
         jump = instrs[0]
         assert isinstance(jump, tac.Jump)
-        assert jump.target == "my_label"
+        assert jump.target == "main.my_label"
 
     def test_goto_does_not_produce_a_tac_label(self) -> None:
         """A ``Goto`` statement emits no ``tac.Label`` instruction."""
@@ -299,57 +299,57 @@ class TestTacGeneratorLabeledStatement:
     """``ast.Label`` emits a ``tac.Label`` instruction followed by the inner statement."""
 
     def test_label_wrapping_null_produces_only_label(self) -> None:
-        """``foo:;`` → ``Label("foo")`` then the function guard."""
+        """``foo:;`` → ``Label("main.foo")`` then the function guard."""
         instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Null()))
         assert instrs == (
-            tac.Label(name="foo"),
+            tac.Label(name="main.foo"),
             tac.Return(val=tac.Constant(value=0)),
         )
 
     def test_label_wrapping_return_full_sequence(self) -> None:
-        """``foo: return 1;`` → ``Label("foo")``, ``Return(1)``, guard."""
+        """``foo: return 1;`` → ``Label("main.foo")``, ``Return(1)``, guard."""
         instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Return(exp=ast.Constant(value=1))))
         assert instrs == (
-            tac.Label(name="foo"),
+            tac.Label(name="main.foo"),
             tac.Return(val=tac.Constant(value=1)),
             tac.Return(val=tac.Constant(value=0)),
         )
 
     def test_label_name_is_preserved(self) -> None:
-        """The source label name appears verbatim in the ``tac.Label`` instruction."""
+        """The source label name is qualified with the function name in the ``tac.Label`` instruction."""
         instrs = _stmt_instrs(ast.Label(name="my_label", statement=ast.Null()))
         label_instr = instrs[0]
         assert isinstance(label_instr, tac.Label)
-        assert label_instr.name == "my_label"
+        assert label_instr.name == "main.my_label"
 
     def test_nested_labels_produce_two_consecutive_label_instructions(self) -> None:
-        """``foo: bar: return 0;`` → ``Label("foo")``, ``Label("bar")``, ``Return(0)``, guard."""
+        """``foo: bar: return 0;`` → ``Label("main.foo")``, ``Label("main.bar")``, ``Return(0)``, guard."""
         instrs = _stmt_instrs(
             ast.Label(name="foo", statement=ast.Label(name="bar", statement=ast.Return(exp=ast.Constant(value=0))))
         )
         assert instrs == (
-            tac.Label(name="foo"),
-            tac.Label(name="bar"),
+            tac.Label(name="main.foo"),
+            tac.Label(name="main.bar"),
             tac.Return(val=tac.Constant(value=0)),
             tac.Return(val=tac.Constant(value=0)),
         )
 
     def test_goto_and_label_together_in_function(self) -> None:
-        """``goto end; end: return 0;`` produces ``Jump``, ``Label``, ``Return``, guard."""
+        """``goto end; end: return 0;`` produces ``Jump("main.end")``, ``Label("main.end")``, ``Return``, guard."""
         body = (
             ast.S(statement=ast.Goto(target="end")),
             ast.S(statement=ast.Label(name="end", statement=ast.Return(exp=ast.Constant(value=0)))),
         )
         instrs = _instrs_for_body(body)
         assert instrs == (
-            tac.Jump(target="end"),
-            tac.Label(name="end"),
+            tac.Jump(target="main.end"),
+            tac.Label(name="main.end"),
             tac.Return(val=tac.Constant(value=0)),
             tac.Return(val=tac.Constant(value=0)),
         )
 
     def test_label_wrapping_compound_block(self) -> None:
-        """``foo: { return 0; }`` → ``Label("foo")``, ``Return(0)``, guard."""
+        """``foo: { return 0; }`` → ``Label("main.foo")``, ``Return(0)``, guard."""
         instrs = _stmt_instrs(
             ast.Label(
                 name="foo",
@@ -357,7 +357,7 @@ class TestTacGeneratorLabeledStatement:
             )
         )
         assert instrs == (
-            tac.Label(name="foo"),
+            tac.Label(name="main.foo"),
             tac.Return(val=tac.Constant(value=0)),
             tac.Return(val=tac.Constant(value=0)),
         )
@@ -376,7 +376,7 @@ class TestTacGeneratorLabeledStatement:
         )
         instrs = _instrs_for_body(body)
         label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
-        assert "user_lbl" in label_names
+        assert "main.user_lbl" in label_names
         assert len(label_names) == len(set(label_names))
 
 
@@ -536,7 +536,7 @@ class TestTacGeneratorCompoundStatement:
             )
         )
         assert instrs == (
-            tac.Label(name="inner"),
+            tac.Label(name="main.inner"),
             tac.Return(val=tac.Constant(value=0)),
             tac.Return(val=tac.Constant(value=0)),
         )

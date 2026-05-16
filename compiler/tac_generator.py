@@ -238,6 +238,7 @@ class _TacGenerator:
         """Initialise the generator with zeroed temporary-variable and label counters."""
         self._counter = count()
         self._label_counter = count()
+        self._function_name: str = ""
 
     def _make_temp(self) -> tac.Var:
         """Create a fresh temporary variable and advance the counter.
@@ -270,6 +271,7 @@ class _TacGenerator:
         Raises:
             CodeGenerationError: If any block item in the body cannot be translated.
         """
+        self._function_name = function.name
         instructions = self.translate_block(function.body)
         # Guard instruction for functions that don't supply a return value
         instructions.append(tac.Return(tac.Constant(0)))
@@ -387,9 +389,9 @@ class _TacGenerator:
                     label_end,
                 ]
             case ast.Goto(target=target):
-                return [tac.Jump(target=target)]
+                return [tac.Jump(target=f"{self._function_name}.{target}")]
             case ast.Label(name=name, statement=inner):
-                return [tac.Label(name=name), *self.translate_statement(inner)]
+                return [tac.Label(name=f"{self._function_name}.{name}"), *self.translate_statement(inner)]
             case ast.Compound(body=body):
                 return self.translate_block(body)
             case ast.Break(identifier=identifier):
