@@ -315,3 +315,46 @@ def test_identifier_sharing_extern_prefix_is_not_a_keyword(preprocess_c_file: Pr
     # "externally" starts with "extern" — must not be classified as EXTERN
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.EXTERN for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# Long type keyword and long integer constants
+# ---------------------------------------------------------------------------
+
+
+def test_long_keyword_produces_long_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/long_type.c"))
+    long_token = next(t for t in tokens if t.value == "long")
+    assert long_token.type == TokenType.LONG
+
+
+def test_long_integer_constant_lowercase_suffix_produces_longint_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/long_type.c"))
+    assert any(t.type == TokenType.LONGINT and t.value == "42l" for t in tokens)
+
+
+def test_long_integer_constant_uppercase_suffix_produces_longint_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/long_type.c"))
+    assert any(t.type == TokenType.LONGINT and t.value == "100L" for t in tokens)
+
+
+def test_longint_token_is_distinct_from_number_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/long_type.c"))
+    longint_values = {t.value for t in tokens if t.type == TokenType.LONGINT}
+    number_values = {t.value for t in tokens if t.type == TokenType.NUMBER}
+    assert longint_values.isdisjoint(number_values)
+
+
+def test_longint_token_is_not_split_into_number_and_identifier(preprocess_c_file: Preprocessor) -> None:
+    # "42l" must be a single LONGINT, not NUMBER("42") followed by IDENTIFIER("l")
+    tokens = lexer(preprocess_c_file("valid/long_type.c"))
+    types = [t.type for t in tokens]
+    longint_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.LONGINT and t.value == "42l")
+    assert types[longint_idx - 1] != TokenType.NUMBER
+    assert types[longint_idx + 1] != TokenType.IDENTIFIER
+
+
+def test_identifier_sharing_long_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "longer" starts with "long" — must not be classified as LONG
+    tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
+    assert all(t.type != TokenType.LONG for t in tokens)

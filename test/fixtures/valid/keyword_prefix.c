@@ -7,3 +7,6 @@ int statically(void) {
 int externally(void) {
     return 0;
 }
+int longer(void) {
+    return 0;
+}

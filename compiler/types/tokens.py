@@ -30,9 +30,11 @@ class TokenType(Enum):
     DEFAULT = auto()
     STATIC = auto()
     EXTERN = auto()
+    LONG = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
+    LONGINT = auto()
     # Punctuation
     LPAREN = auto()
     RPAREN = auto()
