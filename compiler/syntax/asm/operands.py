@@ -150,3 +150,25 @@ class Stack(Operand):
             A string of the form ``<offset>(%rbp)``, e.g. ``-4(%rbp)``.
         """
         return f"{self.offset}(%rbp)"
+
+
+@dataclass(frozen=True, slots=True)
+class Data(Operand):
+    """A RIP-relative reference to a statically-allocated variable.
+
+    Used to address global and static variables via position-independent,
+    RIP-relative addressing on x86-64.
+
+    Attributes:
+        name: The symbol name of the static variable.
+    """
+
+    name: str
+
+    def emit(self) -> str:
+        """Return the RIP-relative reference in AT&T syntax.
+
+        Returns:
+            A string of the form ``<name>(%rip)``, e.g. ``x(%rip)``.
+        """
+        return f"{self.name}(%rip)"

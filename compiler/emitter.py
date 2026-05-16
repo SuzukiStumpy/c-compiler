@@ -79,21 +79,27 @@ def _apply_platform_conventions(program: asm.Program, platform: str) -> asm.Prog
         def _adjust_call(instr: asm.Instruction) -> asm.Instruction:
             return dataclasses.replace(instr, name=f"_{instr.name}") if isinstance(instr, asm.Call) else instr
 
-        def _adjust_function(fn: asm.Function) -> asm.Function:
-            return dataclasses.replace(
-                fn, name=f"_{fn.name}", instructions=tuple(_adjust_call(i) for i in fn.instructions)
-            )
+        def _adjust_darwin(item: asm.TopLevel) -> asm.TopLevel:
+            if isinstance(item, asm.Function):
+                return dataclasses.replace(
+                    item, name=f"_{item.name}", instructions=tuple(_adjust_call(i) for i in item.instructions)
+                )
+            if isinstance(item, asm.StaticVariable):
+                return dataclasses.replace(item, identifier=f"_{item.identifier}")
+            return item
 
-        return dataclasses.replace(program, functions=tuple(_adjust_function(fn) for fn in program.functions))
+        return dataclasses.replace(program, definitions=tuple(_adjust_darwin(d) for d in program.definitions))
 
     if platform.startswith("linux"):
 
         def _adjust_call_plt(instr: asm.Instruction) -> asm.Instruction:
             return dataclasses.replace(instr, name=f"{instr.name}@PLT") if isinstance(instr, asm.Call) else instr
 
-        def _adjust_function_plt(fn: asm.Function) -> asm.Function:
-            return dataclasses.replace(fn, instructions=tuple(_adjust_call_plt(i) for i in fn.instructions))
+        def _adjust_linux(item: asm.TopLevel) -> asm.TopLevel:
+            if isinstance(item, asm.Function):
+                return dataclasses.replace(item, instructions=tuple(_adjust_call_plt(i) for i in item.instructions))
+            return item
 
-        return dataclasses.replace(program, functions=tuple(_adjust_function_plt(fn) for fn in program.functions))
+        return dataclasses.replace(program, definitions=tuple(_adjust_linux(d) for d in program.definitions))
 
     return program

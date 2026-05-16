@@ -105,20 +105,20 @@ def test_ret_emit() -> None:
 
 def test_function_emit_globl_directive() -> None:
     """Function emission begins with a ``.globl`` directive."""
-    fn = Function(name="main", instructions=(Ret(),))
+    fn = Function(name="main", globl=True, instructions=(Ret(),))
     assert fn.emit().startswith("  .globl main\n")
 
 
 def test_function_emit_label() -> None:
     """Function emission includes the label on the line after ``.globl``."""
-    fn = Function(name="main", instructions=(Ret(),))
+    fn = Function(name="main", globl=True, instructions=(Ret(),))
     lines = fn.emit().splitlines()
     assert lines[1] == "main:"
 
 
 def test_function_emit_instructions() -> None:
     """Instruction lines follow the prologue in order."""
-    fn = Function(name="main", instructions=(Mov(src=Imm(value=2), dst=Register(Registers.AX)), Ret()))
+    fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=2), dst=Register(Registers.AX)), Ret()))
     lines = fn.emit().splitlines()
     # lines[0] = .globl, [1] = label, [2] = pushq, [3] = movq (prologue)
     assert lines[4] == "  movl $2, %eax"
@@ -127,7 +127,7 @@ def test_function_emit_instructions() -> None:
 
 def test_function_emit_full() -> None:
     """Full function emission matches the expected template exactly."""
-    fn = Function(name="main", instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+    fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
     expected = (
         "  .globl main\n"
         "main:\n"
@@ -149,7 +149,7 @@ def test_function_emit_full() -> None:
 def test_emit_program_linux_content(tmp_path: Path) -> None:
     """On Linux the file contains the expected instructions."""
     mov = Mov(src=Imm(value=3), dst=Register(Registers.AX))
-    program = Program(functions=(Function(name="main", instructions=(mov, Ret())),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(mov, Ret())),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -161,7 +161,7 @@ def test_emit_program_linux_content(tmp_path: Path) -> None:
 
 def test_emit_program_linux_gnu_stack(tmp_path: Path) -> None:
     """On Linux the GNU-stack section directive is appended."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -170,7 +170,7 @@ def test_emit_program_linux_gnu_stack(tmp_path: Path) -> None:
 
 def test_emit_program_linux_gnu_stack_is_last_line(tmp_path: Path) -> None:
     """The GNU-stack directive is the last non-empty line of the file."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
@@ -179,7 +179,7 @@ def test_emit_program_linux_gnu_stack_is_last_line(tmp_path: Path) -> None:
 
 def test_emit_program_linux_no_underscore_prefix(tmp_path: Path) -> None:
     """On Linux function names are NOT prefixed with an underscore."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -188,7 +188,7 @@ def test_emit_program_linux_no_underscore_prefix(tmp_path: Path) -> None:
 
 def test_emit_program_linux_trailing_newline(tmp_path: Path) -> None:
     """The emitted file ends with a newline character."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     assert out.read_text().endswith("\n")
@@ -201,7 +201,7 @@ def test_emit_program_linux_trailing_newline(tmp_path: Path) -> None:
 
 def test_emit_program_macos_underscore_prefix(tmp_path: Path) -> None:
     """On macOS the function name is prefixed with ``_``."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     content = out.read_text()
@@ -211,7 +211,7 @@ def test_emit_program_macos_underscore_prefix(tmp_path: Path) -> None:
 
 def test_emit_program_macos_no_gnu_stack(tmp_path: Path) -> None:
     """On macOS the GNU-stack section directive is NOT emitted."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     assert ".note.GNU-stack" not in out.read_text()
@@ -219,14 +219,14 @@ def test_emit_program_macos_no_gnu_stack(tmp_path: Path) -> None:
 
 def test_emit_program_macos_original_node_unchanged(tmp_path: Path) -> None:
     """``emit_program`` does not mutate the original ``Program`` node."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     emit_program(program, tmp_path / "main.s", platform="darwin")
-    assert program.functions[0].name == "main"
+    assert program.definitions[0].name == "main"
 
 
 def test_emit_program_writes_file(tmp_path: Path) -> None:
     """``emit_program`` creates the output file."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     out = tmp_path / "out.s"
     assert not out.exists()
     emit_program(program, out, platform="linux")
@@ -235,7 +235,7 @@ def test_emit_program_writes_file(tmp_path: Path) -> None:
 
 def test_emit_program_bad_path_raises(tmp_path: Path) -> None:
     """``emit_program`` raises ``OSError`` if the output path is not writable."""
-    program = Program(functions=(Function(name="main", instructions=(Ret(),)),))
+    program = Program(definitions=(Function(name="main", globl=True, instructions=(Ret(),)),))
     with pytest.raises(OSError):
         emit_program(program, tmp_path / "nonexistent_dir" / "out.s", platform="linux")
 
@@ -331,8 +331,8 @@ def test_call_emit() -> None:
 
 def test_emit_program_macos_call_prefix(tmp_path: Path) -> None:
     """On macOS, ``Call`` instruction targets are prefixed with ``_``."""
-    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
-    program = Program(functions=(fn,))
+    fn = Function(name="main", globl=True, instructions=(Call(name="foo"), Ret()))
+    program = Program(definitions=(fn,))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     content = out.read_text()
@@ -341,8 +341,8 @@ def test_emit_program_macos_call_prefix(tmp_path: Path) -> None:
 
 def test_emit_program_linux_call_plt_suffix(tmp_path: Path) -> None:
     """On Linux, ``Call`` instruction targets are suffixed with ``@PLT``."""
-    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
-    program = Program(functions=(fn,))
+    fn = Function(name="main", globl=True, instructions=(Call(name="foo"), Ret()))
+    program = Program(definitions=(fn,))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -351,8 +351,8 @@ def test_emit_program_linux_call_plt_suffix(tmp_path: Path) -> None:
 
 def test_emit_program_linux_call_no_underscore_prefix(tmp_path: Path) -> None:
     """On Linux, ``Call`` instruction targets are NOT prefixed with ``_``."""
-    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
-    program = Program(functions=(fn,))
+    fn = Function(name="main", globl=True, instructions=(Call(name="foo"), Ret()))
+    program = Program(definitions=(fn,))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
@@ -361,8 +361,8 @@ def test_emit_program_linux_call_no_underscore_prefix(tmp_path: Path) -> None:
 
 def test_emit_program_macos_call_no_plt(tmp_path: Path) -> None:
     """On macOS, ``Call`` instruction targets do NOT receive ``@PLT``."""
-    fn = Function(name="main", instructions=(Call(name="foo"), Ret()))
-    program = Program(functions=(fn,))
+    fn = Function(name="main", globl=True, instructions=(Call(name="foo"), Ret()))
+    program = Program(definitions=(fn,))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     assert "@PLT" not in out.read_text()

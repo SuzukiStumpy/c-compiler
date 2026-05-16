@@ -5,8 +5,9 @@ an assembly language program, produced by the code generator from the TAC AST
 and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
-    program             = Program(function_definition*)
-    function_definition = Function(identifier name, instruction* instructions)
+    program             = Program(top_level*)
+    top_level           = Function(identifier name, bool globl, instruction* instructions)
+                        | StaticVariable(identifier name, bool globl, int init)
     instruction         = Mov(operand src, operand dst)
                         | Unary(unary_operator, operand)
                         | Binary(binary_operator, operand src1, operand src2, operand dst)
@@ -30,6 +31,7 @@ for the supported assembly subset:
                         | Register(reg)
                         | Pseudo(identifier)
                         | Stack(int)
+                        | Data(identifier)
     cond_code           = E | NE | G | GE | L | LE
     reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11
 
@@ -54,7 +56,7 @@ modified.
 be replaced by ``Stack`` operands before the assembly is emitted.
 """
 
-from compiler.syntax.asm.declarations import Function, Program
+from compiler.syntax.asm.declarations import Function, Program, StaticVariable, TopLevel
 from compiler.syntax.asm.instructions import (
     AllocateStack,
     Binary,
@@ -76,10 +78,12 @@ from compiler.syntax.asm.instructions import (
     Shl,
     Unary,
 )
-from compiler.syntax.asm.operands import Imm, Operand, Pseudo, Register, Registers, Stack, Width
+from compiler.syntax.asm.operands import Data, Imm, Operand, Pseudo, Register, Registers, Stack, Width
 from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Neg, Not, Or, Sub, UnaryOperator, Xor
 
 __all__ = [
+    "TopLevel",
+    "StaticVariable",
     "UnaryOperator",
     "Neg",
     "Not",
@@ -97,6 +101,7 @@ __all__ = [
     "Width",
     "Pseudo",
     "Stack",
+    "Data",
     "CondCodes",
     "Instruction",
     "Mov",

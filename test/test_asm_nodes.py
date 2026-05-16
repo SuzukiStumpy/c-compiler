@@ -158,24 +158,24 @@ class TestFunction:
 
     def test_construction(self) -> None:
         """``Function`` stores its name and instruction tuple."""
-        fn = Function(name="main", instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+        fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
         assert fn.name == "main"
         assert len(fn.instructions) == 2
 
     def test_empty_instructions(self) -> None:
         """``Function`` accepts an empty instruction tuple."""
-        fn = Function(name="main", instructions=())
+        fn = Function(name="main", globl=False, instructions=())
         assert fn.instructions == ()
 
     def test_equality(self) -> None:
         """Two ``Function`` nodes with the same name and instructions are equal."""
-        fn1 = Function(name="foo", instructions=(Ret(),))
-        fn2 = Function(name="foo", instructions=(Ret(),))
+        fn1 = Function(name="foo", globl=False, instructions=(Ret(),))
+        fn2 = Function(name="foo", globl=False, instructions=(Ret(),))
         assert fn1 == fn2
 
     def test_immutable(self) -> None:
         """``Function`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
-        fn = Function(name="main", instructions=())
+        fn = Function(name="main", globl=False, instructions=())
         with pytest.raises(dataclasses.FrozenInstanceError):
             fn.name = "other"  # type: ignore[misc]
 
@@ -184,21 +184,21 @@ class TestProgram:
     """``Program`` is the root assembly AST node holding function definitions."""
 
     def test_construction(self) -> None:
-        """``Program`` stores its function definitions."""
-        fn = Function(name="main", instructions=(Ret(),))
-        prog = Program(functions=(fn,))
-        assert prog.functions == (fn,)
+        """``Program`` stores its top-level definitions."""
+        fn = Function(name="main", globl=True, instructions=(Ret(),))
+        prog = Program(definitions=(fn,))
+        assert prog.definitions == (fn,)
 
     def test_equality(self) -> None:
-        """Two ``Program`` nodes wrapping equal functions are equal."""
-        fn = Function(name="main", instructions=(Ret(),))
-        assert Program(functions=(fn,)) == Program(functions=(fn,))
+        """Two ``Program`` nodes wrapping equal definitions are equal."""
+        fn = Function(name="main", globl=True, instructions=(Ret(),))
+        assert Program(definitions=(fn,)) == Program(definitions=(fn,))
 
     def test_immutable(self) -> None:
         """``Program`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
-        prog = Program(functions=(Function(name="main", instructions=()),))
+        prog = Program(definitions=(Function(name="main", globl=False, instructions=()),))
         with pytest.raises(dataclasses.FrozenInstanceError):
-            prog.functions = ()  # type: ignore[misc]
+            prog.definitions = ()  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

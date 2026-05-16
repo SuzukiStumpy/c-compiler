@@ -68,13 +68,17 @@ def generate(program: tac.Program) -> asm.Program:
     Raises:
         CodeGenerationError: If any TAC construct cannot be translated.
     """
-    functions: list[asm.Function] = []
-    for tac_fn in program.functions:
-        raw_fn = _translate_function(tac_fn)
-        resolved_fn, stack_size = _replace_pseudos(raw_fn)
-        fixed_fn = _fix_instructions(resolved_fn)
-        functions.append(_add_stack_allocation(fixed_fn, stack_size))
-    return asm.Program(functions=tuple(functions))
+    definitions: list[asm.TopLevel] = []
+    for item in program.top_level:
+        match item:
+            case tac.Function():
+                raw_fn = _translate_function(item)
+                resolved_fn, stack_size = _replace_pseudos(raw_fn)
+                fixed_fn = _fix_instructions(resolved_fn)
+                definitions.append(_add_stack_allocation(fixed_fn, stack_size))
+            case tac.StaticVariable(name=name, globl=globl, init=init):
+                definitions.append(asm.StaticVariable(identifier=name, globl=globl, init=init))
+    return asm.Program(definitions=tuple(definitions))
 
 
 # ==============================================================================
@@ -114,7 +118,7 @@ def _translate_function(fn: tac.Function) -> asm.Function:
         instructions.extend(_translate_instruction(instr))
 
     params_asm = tuple(asm.Register(_ABI_REGS[i]) for i in range(min(len(fn.params), 6)))
-    return asm.Function(name=fn.name, params=params_asm, instructions=tuple(instructions))
+    return asm.Function(name=fn.name, globl=fn.globl, params=params_asm, instructions=tuple(instructions))
 
 
 def _translate_instruction(instr: tac.Instruction) -> list[asm.Instruction]:
@@ -445,7 +449,9 @@ def _replace_pseudos(fn: asm.Function) -> tuple[asm.Function, int]:
                 new_instructions.append(instr)
 
     stack_size = -next_offset[0]
-    return asm.Function(name=fn.name, params=fn.params, instructions=tuple(new_instructions)), stack_size
+    return asm.Function(
+        name=fn.name, globl=fn.globl, params=fn.params, instructions=tuple(new_instructions)
+    ), stack_size
 
 
 # ==============================================================================
@@ -491,7 +497,7 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 fixed.append(asm.Push(operand=asm.Register(asm.Registers.AX, asm.Width.QWORD)))
             case _:
                 fixed.append(instr)
-    return asm.Function(name=fn.name, params=fn.params, instructions=tuple(fixed))
+    return asm.Function(name=fn.name, globl=fn.globl, params=fn.params, instructions=tuple(fixed))
 
 
 # ==============================================================================
@@ -518,6 +524,7 @@ def _add_stack_allocation(fn: asm.Function, stack_size: int) -> asm.Function:
     aligned = (stack_size + 15) & ~15
     return asm.Function(
         name=fn.name,
+        globl=fn.globl,
         params=fn.params,
         instructions=(asm.AllocateStack(size=aligned), *fn.instructions),
     )
