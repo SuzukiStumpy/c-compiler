@@ -78,6 +78,7 @@ Usage: compiler [OPTIONS] SOURCE
   output. Without a flag the full pipeline runs and an executable is produced.
 
 Options:
+  -c          Don't link; produce an object file instead of an executable.
   --lex       Stop after lexing.
   --parse     Stop after parsing; print the AST.
   --validate  Stop after semantic analysis; print the resolved AST.
@@ -85,6 +86,8 @@ Options:
   --codegen   Stop after code generation; emit assembly but do not link.
   --help      Show this message and exit.
 ```
+
+The stage flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`) are mutually exclusive. The `-c` flag may be combined with stage flags or used alone.
 
 ### Example
 
@@ -120,7 +123,7 @@ The compiler runs six stages in sequence:
 | Semantic analysis | `--validate` | Verifies variable declarations and resolves all names to unique identifiers |
 | TAC generation | `--tacky` | Flattens the AST into a three-address-code (TAC) intermediate representation |
 | Code generation | `--codegen` | Translates TAC into an x86-64 assembly AST and emits a `.s` file |
-| Assembly and linking | *(default)* | Passes the `.s` file to `gcc` to produce a native executable |
+| Assembly and linking | *(default)* | Passes the `.s` file to `gcc`; produces an object file with `-c`, or a native executable otherwise |
 
 ## Development
 
