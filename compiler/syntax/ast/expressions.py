@@ -7,13 +7,14 @@ support is extended.
 """
 
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from compiler.syntax.ast.constants import Const
 from compiler.syntax.ast.operators import BinaryOperator, UnaryOperator
 from compiler.syntax.ast.types import Type
 
 
+@dataclass(frozen=True, slots=True)
 class Exp(ABC):
     """Abstract base for all expression nodes.
 
@@ -21,7 +22,13 @@ class Exp(ABC):
     concrete subclass. Consumers should use structural pattern matching
     (``match``/``case``) to dispatch on the concrete variant rather than
     inspecting fields directly.
+
+    Attributes:
+        exp_type: The resolved C type of this expression, populated by the
+            semantic analysis stage. ``None`` before type annotation is complete.
     """
+
+    exp_type: Type | None = field(default=None, kw_only=True, compare=False, hash=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

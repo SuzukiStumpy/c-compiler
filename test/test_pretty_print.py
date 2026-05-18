@@ -12,6 +12,7 @@ from compiler.syntax.ast import (
     For,
     Function,
     FunDecl,
+    FunType,
     InitExp,
     IntType,
     Null,
@@ -54,6 +55,7 @@ def test_minimal_program_indentation() -> None:
                     name="main",
                     params=(),
                     body=(Return(exp=Constant(value=2)),),
+                    fun_type=FunType(params=(), ret=IntType()),
                 ),
             ),
         )
@@ -69,6 +71,7 @@ def test_minimal_program_indentation() -> None:
         "                body=(\n"
         "                    Return(exp=Constant(value=2))\n"
         "                )\n"
+        "                fun_type=FunType(params=(), ret=IntType())\n"
         "                globl=False\n"
         "                storage_class=None\n"
         "            )\n"
@@ -88,6 +91,7 @@ def test_empty_params_tuple_inline() -> None:
                     name="main",
                     params=(),
                     body=(Return(exp=Constant(value=0)),),
+                    fun_type=FunType(params=(), ret=IntType()),
                 ),
             ),
         )
@@ -104,6 +108,7 @@ def test_single_param_inline() -> None:
                     name="foo",
                     params=(Parameter(param_type=IntType(), name="n"),),
                     body=(Return(exp=Constant(value=0)),),
+                    fun_type=FunType(params=(IntType(),), ret=IntType()),
                 ),
             ),
         )
@@ -121,6 +126,7 @@ def test_multiple_functions_each_indented() -> None:
                 name=name,
                 params=(),
                 body=(Return(exp=Constant(value=0)),),
+                fun_type=FunType(params=(), ret=IntType()),
             )
         )
 
@@ -147,6 +153,7 @@ def test_multiple_statements_in_body() -> None:
                         Return(exp=Constant(value=1)),
                         Return(exp=Constant(value=2)),
                     ),
+                    fun_type=FunType(params=(), ret=IntType()),
                 ),
             ),
         )
@@ -225,12 +232,23 @@ def test_for_identifier_appears_in_output() -> None:
 
 def test_function_with_none_body_renders_inline() -> None:
     """A forward-declaration ``Function`` with ``body=None`` renders inline."""
-    node = Function(name="foo", params=(), body=None)
-    assert pretty_print(node) == 'Function(name="foo", params=(), body=None, globl=False, storage_class=None)'
+    node = Function(name="foo", params=(), body=None, fun_type=FunType(params=(), ret=IntType()))
+    assert pretty_print(node) == (
+        'Function(name="foo", params=(), body=None, '
+        "fun_type=FunType(params=(), ret=IntType()), globl=False, storage_class=None)"
+    )
 
 
 def test_function_none_body_in_program() -> None:
     """A ``Program`` containing a forward-declaration function renders ``body=None``."""
-    program = Program(declarations=(FunDecl(function_declaration=Function(name="foo", params=(), body=None)),))
+    program = Program(
+        declarations=(
+            FunDecl(
+                function_declaration=Function(
+                    name="foo", params=(), body=None, fun_type=FunType(params=(), ret=IntType())
+                )
+            ),
+        )
+    )
     result = pretty_print(program)
     assert "body=None" in result

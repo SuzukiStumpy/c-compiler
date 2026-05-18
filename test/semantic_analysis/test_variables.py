@@ -24,42 +24,52 @@ class TestResolveDeclaration:
     def test_declaration_assigns_unique_suffix(self) -> None:
         """The first declaration in a fresh analyser receives the unique name ``.Vx.0``."""
         analyser = SemanticAnalyser()
-        result = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType())
+        )
         assert result.name == ".Vx.0"
 
     def test_declaration_preserves_none_init(self) -> None:
         """A declaration without an initialiser keeps ``init=None`` after resolution."""
         analyser = SemanticAnalyser()
-        result = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType())
+        )
         assert result.init is None
 
     def test_declaration_with_constant_init_passes_through(self) -> None:
         """A constant initialiser is returned unchanged."""
         analyser = SemanticAnalyser()
-        result = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=ast.Constant(value=5)))
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=ast.Constant(value=5), var_type=ast.IntType())
+        )
         assert result.init == ast.Constant(value=5)
 
     def test_declaration_with_var_init_renames_init_var(self) -> None:
         """An initialiser that references an already-declared variable is renamed."""
         analyser = SemanticAnalyser()
-        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="y", init=None))  # y → .Vy.0
-        result = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=ast.Var(name="y")))
+        analyser.resolve_variable_declaration(  # y → .Vy.0
+            ast.VariableDeclaration(name="y", init=None, var_type=ast.IntType())
+        )
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=ast.Var(name="y"), var_type=ast.IntType())
+        )
         assert result.init == ast.Var(name=".Vy.0")
 
     def test_two_declarations_receive_distinct_suffixes(self) -> None:
         """Successive declarations in the same analyser get incrementing suffixes."""
         analyser = SemanticAnalyser()
-        r1 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
-        r2 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="y", init=None))
+        r1 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType()))
+        r2 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="y", init=None, var_type=ast.IntType()))
         assert r1.name == ".Vx.0"
         assert r2.name == ".Vy.1"
 
     def test_duplicate_declaration_raises(self) -> None:
         """Declaring the same name twice in the same scope raises ``SemanticError``."""
         analyser = SemanticAnalyser()
-        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType()))
         with pytest.raises(SemanticError, match="Duplicate"):
-            analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+            analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType()))
 
     def test_self_referential_init_is_accepted(self) -> None:
         """``int x = x;`` is accepted: C scoping places ``x`` in scope before the initialiser.
@@ -68,7 +78,9 @@ class TestResolveDeclaration:
         but is not a constraint violation and must not be rejected by the analyser.
         """
         analyser = SemanticAnalyser()
-        result = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=ast.Var(name="x")))
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=ast.Var(name="x"), var_type=ast.IntType())
+        )
         assert result.name == ".Vx.0"
         assert result.init == ast.Var(name=".Vx.0")
 
@@ -77,7 +89,9 @@ class TestResolveDeclaration:
         analyser = SemanticAnalyser()
         result = analyser.resolve_variable_declaration(
             ast.VariableDeclaration(
-                name="a", init=ast.Binary(operator=ast.And(), left=ast.Constant(value=0), right=ast.Var(name="a"))
+                name="a",
+                init=ast.Binary(operator=ast.And(), left=ast.Constant(value=0), right=ast.Var(name="a")),
+                var_type=ast.IntType(),
             )
         )
         assert result.name == ".Va.0"
@@ -103,7 +117,7 @@ class TestResolveExp:
         """
         analyser = SemanticAnalyser()
         for name in names:
-            analyser.resolve_variable_declaration(ast.VariableDeclaration(name=name, init=None))
+            analyser.resolve_variable_declaration(ast.VariableDeclaration(name=name, init=None, var_type=ast.IntType()))
         return analyser
 
     def test_constant_is_returned_unchanged(self) -> None:
@@ -241,7 +255,7 @@ class TestResolveProgram:
         """A declared variable's name is replaced by its unique internal identifier."""
         body = (_vd("x"),)
         resolved = _resolved_body(body)
-        assert resolved[0] == ast.D(ast.VarDecl(ast.VariableDeclaration(".Vx.0", None)))
+        assert resolved[0] == ast.D(ast.VarDecl(ast.VariableDeclaration(".Vx.0", None, var_type=ast.IntType())))
 
     def test_declaration_and_use_renamed_consistently(self) -> None:
         """The same unique name is used in both the declaration and its subsequent reference."""
@@ -319,11 +333,13 @@ class TestResolveProgram:
                 _vd("x", ast.Constant(value=0)),
                 ast.S(statement=ast.Return(exp=ast.Var(name="x"))),
             ),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         fn2 = ast.Function(
             name="fn2",
             params=(),
             body=(ast.S(statement=ast.Return(exp=ast.Var(name="x"))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="Undeclared"):
             resolve(_make_prog(fn1, fn2))
@@ -339,16 +355,20 @@ class TestCounterIsolation:
 
     def test_two_instances_both_produce_zero_suffix(self) -> None:
         """Independent instances both produce ``.Vx.0`` for their first declaration of ``x``."""
-        r1 = SemanticAnalyser().resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
-        r2 = SemanticAnalyser().resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+        r1 = SemanticAnalyser().resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType())
+        )
+        r2 = SemanticAnalyser().resolve_variable_declaration(
+            ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType())
+        )
         assert r1.name == ".Vx.0"
         assert r2.name == ".Vx.0"
 
     def test_second_call_on_same_instance_increments(self) -> None:
         """A single instance increments its counter across consecutive declarations."""
         analyser = SemanticAnalyser()
-        r1 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="a", init=None))
-        r2 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="b", init=None))
+        r1 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="a", init=None, var_type=ast.IntType()))
+        r2 = analyser.resolve_variable_declaration(ast.VariableDeclaration(name="b", init=None, var_type=ast.IntType()))
         assert r1.name == ".Va.0"
         assert r2.name == ".Vb.1"
 
@@ -715,3 +735,272 @@ class TestResolveCompound:
         assert len({outer_name, mid_name, inner_name}) == 3
         # The return inside the innermost block uses the innermost binding.
         assert inner_compound.body[1] == ast.S(statement=ast.Return(exp=ast.Var(name=inner_name)))
+
+
+# ---------------------------------------------------------------------------
+# _type_check_exp — per-form type annotation
+# ---------------------------------------------------------------------------
+
+
+class TestTypeCheckExp:
+    """``_type_check_exp`` annotates expression nodes with their C types."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _analyser_with_vars(self, **vars_and_types: ast.Type) -> tuple[SemanticAnalyser, dict[str, str]]:
+        """Declare variables in a fresh analyser and return it alongside a name map.
+
+        Args:
+            **vars_and_types: Source-level variable names mapped to their declared C types.
+
+        Returns:
+            A ``(analyser, name_map)`` tuple where ``name_map`` maps each source name
+            to the unique internal name assigned during declaration.
+        """
+        analyser = SemanticAnalyser()
+        name_map: dict[str, str] = {}
+        for src_name, var_type in vars_and_types.items():
+            resolved = analyser.resolve_variable_declaration(ast.VariableDeclaration(src_name, None, var_type))
+            name_map[src_name] = resolved.name
+        return analyser, name_map
+
+    # ------------------------------------------------------------------
+    # Short-circuit: already-typed expressions
+    # ------------------------------------------------------------------
+
+    def test_already_typed_expression_returned_unchanged(self) -> None:
+        """An expression whose ``exp_type`` is already set is returned as the same object."""
+        analyser, name_map = self._analyser_with_vars(x=ast.IntType())
+        deliberately_wrong = ast.Var(name_map["x"], exp_type=ast.LongType())
+        result = analyser._type_check_exp(deliberately_wrong)
+        assert result is deliberately_wrong
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # Var
+    # ------------------------------------------------------------------
+
+    def test_var_int_variable_receives_int_type(self) -> None:
+        """A ``Var`` referencing a declared ``int`` variable is annotated with ``IntType``."""
+        analyser, name_map = self._analyser_with_vars(x=ast.IntType())
+        result = analyser._type_check_exp(ast.Var(name_map["x"]))
+        assert result.exp_type == ast.IntType()
+
+    def test_var_long_variable_receives_long_type(self) -> None:
+        """A ``Var`` referencing a declared ``long`` variable is annotated with ``LongType``."""
+        analyser, name_map = self._analyser_with_vars(x=ast.LongType())
+        result = analyser._type_check_exp(ast.Var(name_map["x"]))
+        assert result.exp_type == ast.LongType()
+
+    def test_var_with_function_name_raises(self) -> None:
+        """A ``Var`` whose resolved name maps to a ``FunAttr`` in the symbol table raises."""
+        analyser = SemanticAnalyser()
+        analyser._register_fun_declaration(
+            ast.Function("foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        )
+        with pytest.raises(SemanticError, match="Function name 'foo' used as a variable"):
+            analyser._type_check_exp(ast.Var("foo"))
+
+    def test_var_undeclared_raises(self) -> None:
+        """A ``Var`` whose name is absent from ``_type_table`` raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="Undeclared"):
+            analyser._type_check_exp(ast.Var("ghost"))
+
+    def test_var_type_propagated_through_resolve_exp(self) -> None:
+        """``resolve_exp`` produces a ``Var`` whose ``exp_type`` matches the declared type."""
+        analyser, _ = self._analyser_with_vars(x=ast.LongType())
+        result = analyser.resolve_exp(ast.Var("x"))
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # Constant
+    # ------------------------------------------------------------------
+
+    def test_const_int_receives_int_type(self) -> None:
+        """A ``Constant`` wrapping a ``ConstInt`` is annotated with ``IntType``."""
+        analyser = SemanticAnalyser()
+        result = analyser._type_check_exp(ast.Constant(ast.ConstInt(42)))
+        assert result.exp_type == ast.IntType()
+
+    def test_const_long_receives_long_type(self) -> None:
+        """A ``Constant`` wrapping a ``ConstLong`` is annotated with ``LongType``."""
+        analyser = SemanticAnalyser()
+        result = analyser._type_check_exp(ast.Constant(ast.ConstLong(42)))
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # Unary
+    # ------------------------------------------------------------------
+
+    def test_unary_not_always_produces_int(self) -> None:
+        """``Not`` applied to a ``long`` operand still yields ``IntType``."""
+        analyser = SemanticAnalyser()
+        long_const = ast.Constant(ast.ConstLong(1), exp_type=ast.LongType())
+        result = analyser._type_check_exp(ast.Unary(ast.Not(), long_const))
+        assert result.exp_type == ast.IntType()
+
+    def test_unary_negate_propagates_operand_type(self) -> None:
+        """``Negate`` applied to a ``long`` operand yields ``LongType``."""
+        analyser = SemanticAnalyser()
+        long_const = ast.Constant(ast.ConstLong(1), exp_type=ast.LongType())
+        result = analyser._type_check_exp(ast.Unary(ast.Negate(), long_const))
+        assert result.exp_type == ast.LongType()
+
+    def test_unary_complement_propagates_operand_type(self) -> None:
+        """``Complement`` applied to an ``int`` operand yields ``IntType``."""
+        analyser = SemanticAnalyser()
+        int_const = ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Unary(ast.Complement(), int_const))
+        assert result.exp_type == ast.IntType()
+
+    # ------------------------------------------------------------------
+    # Binary — arithmetic
+    # ------------------------------------------------------------------
+
+    def test_binary_int_plus_int_produces_int(self) -> None:
+        """``int + int`` is annotated with ``IntType``."""
+        analyser = SemanticAnalyser()
+        lhs = ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())
+        rhs = ast.Constant(ast.ConstInt(2), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Binary(ast.Add(), lhs, rhs))
+        assert result.exp_type == ast.IntType()
+
+    def test_binary_long_plus_int_produces_long(self) -> None:
+        """``long + int`` is annotated with ``LongType``."""
+        analyser = SemanticAnalyser()
+        lhs = ast.Constant(ast.ConstLong(1), exp_type=ast.LongType())
+        rhs = ast.Constant(ast.ConstInt(2), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Binary(ast.Add(), lhs, rhs))
+        assert result.exp_type == ast.LongType()
+
+    def test_binary_int_plus_long_produces_long(self) -> None:
+        """``int + long`` is annotated with ``LongType``."""
+        analyser = SemanticAnalyser()
+        lhs = ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())
+        rhs = ast.Constant(ast.ConstLong(2), exp_type=ast.LongType())
+        result = analyser._type_check_exp(ast.Binary(ast.Add(), lhs, rhs))
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # Binary — logical and comparison (always int)
+    # ------------------------------------------------------------------
+
+    def test_binary_comparison_long_operands_still_produces_int(self) -> None:
+        """Comparison operators always yield ``IntType``, even with ``long`` operands."""
+        analyser = SemanticAnalyser()
+        lhs = ast.Constant(ast.ConstLong(1), exp_type=ast.LongType())
+        rhs = ast.Constant(ast.ConstLong(2), exp_type=ast.LongType())
+        for op in (
+            ast.Equal(),
+            ast.NotEqual(),
+            ast.LessThan(),
+            ast.LessOrEqual(),
+            ast.GreaterThan(),
+            ast.GreaterOrEqual(),
+        ):
+            result = analyser._type_check_exp(ast.Binary(op, lhs, rhs))
+            assert result.exp_type == ast.IntType(), f"Expected IntType for {type(op).__name__}"
+
+    def test_binary_logical_long_operands_still_produces_int(self) -> None:
+        """Logical ``And`` and ``Or`` always yield ``IntType``, even with ``long`` operands."""
+        analyser = SemanticAnalyser()
+        lhs = ast.Constant(ast.ConstLong(1), exp_type=ast.LongType())
+        rhs = ast.Constant(ast.ConstLong(2), exp_type=ast.LongType())
+        for op in (ast.And(), ast.Or()):
+            result = analyser._type_check_exp(ast.Binary(op, lhs, rhs))
+            assert result.exp_type == ast.IntType(), f"Expected IntType for {type(op).__name__}"
+
+    # ------------------------------------------------------------------
+    # Assignment
+    # ------------------------------------------------------------------
+
+    def test_assignment_type_matches_lvalue(self) -> None:
+        """An ``Assignment`` is annotated with the type of its lvalue."""
+        analyser, name_map = self._analyser_with_vars(x=ast.LongType())
+        lvalue = ast.Var(name_map["x"], exp_type=ast.LongType())
+        rvalue = ast.Constant(ast.ConstInt(5), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Assignment(lvalue, rvalue))
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # Conditional
+    # ------------------------------------------------------------------
+
+    def test_conditional_int_branches_produce_int(self) -> None:
+        """A conditional with two ``int`` branches is annotated with ``IntType``."""
+        analyser = SemanticAnalyser()
+        cond = ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())
+        true_br = ast.Constant(ast.ConstInt(2), exp_type=ast.IntType())
+        false_br = ast.Constant(ast.ConstInt(3), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Conditional(cond, true_br, false_br))
+        assert result.exp_type == ast.IntType()
+
+    def test_conditional_long_true_branch_produces_long(self) -> None:
+        """A conditional with a ``long`` true branch is annotated with ``LongType``."""
+        analyser = SemanticAnalyser()
+        cond = ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())
+        true_br = ast.Constant(ast.ConstLong(2), exp_type=ast.LongType())
+        false_br = ast.Constant(ast.ConstInt(3), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Conditional(cond, true_br, false_br))
+        assert result.exp_type == ast.LongType()
+
+    def test_conditional_long_false_branch_produces_long(self) -> None:
+        """A conditional with a ``long`` false branch is annotated with ``LongType``."""
+        analyser = SemanticAnalyser()
+        cond = ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())
+        true_br = ast.Constant(ast.ConstInt(2), exp_type=ast.IntType())
+        false_br = ast.Constant(ast.ConstLong(3), exp_type=ast.LongType())
+        result = analyser._type_check_exp(ast.Conditional(cond, true_br, false_br))
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # Cast
+    # ------------------------------------------------------------------
+
+    def test_cast_annotated_with_target_type(self) -> None:
+        """A ``Cast`` node is annotated with its explicit target type."""
+        analyser = SemanticAnalyser()
+        int_const = ast.Constant(ast.ConstInt(5), exp_type=ast.IntType())
+        result = analyser._type_check_exp(ast.Cast(ast.LongType(), int_const))
+        assert result.exp_type == ast.LongType()
+
+    # ------------------------------------------------------------------
+    # FunctionCall
+    # ------------------------------------------------------------------
+
+    def test_function_call_annotated_with_return_type(self) -> None:
+        """A ``FunctionCall`` is annotated with the callee's declared return type."""
+        analyser = SemanticAnalyser()
+        analyser._register_fun_declaration(
+            ast.Function("foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.LongType()))
+        )
+        result = analyser._type_check_exp(ast.FunctionCall("foo", []))
+        assert result.exp_type == ast.LongType()
+
+    def test_function_call_int_return(self) -> None:
+        """A ``FunctionCall`` to an ``int``-returning function is annotated with ``IntType``."""
+        analyser = SemanticAnalyser()
+        analyser._register_fun_declaration(
+            ast.Function("bar", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        )
+        result = analyser._type_check_exp(ast.FunctionCall("bar", []))
+        assert result.exp_type == ast.IntType()
+
+    # ------------------------------------------------------------------
+    # Recursive type-checking of untyped children
+    # ------------------------------------------------------------------
+
+    def test_untyped_child_is_typed_recursively(self) -> None:
+        """When a child expression has no ``exp_type``, ``_type_check_exp`` recurses to set it."""
+        analyser = SemanticAnalyser()
+        # ConstInt with no exp_type — _type_check_exp must annotate it
+        untyped_int = ast.Constant(ast.ConstInt(1))
+        untyped_long = ast.Constant(ast.ConstLong(2))
+        result = analyser._type_check_exp(ast.Binary(ast.Add(), untyped_int, untyped_long))
+        assert result.exp_type == ast.LongType()
+        # Children should have been typed as a side-effect of building the result
+        assert result.left.exp_type == ast.IntType()
+        assert result.right.exp_type == ast.LongType()

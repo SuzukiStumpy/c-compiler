@@ -34,6 +34,7 @@ def _program_returning(exp: ast.Exp) -> ast.Program:
                     name="main",
                     params=(),
                     body=(ast.S(statement=ast.Return(exp=exp)),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
         )
@@ -75,6 +76,7 @@ def _instrs_for_body(body: tuple[ast.BlockItem, ...]) -> tuple[tac.Instruction, 
                             name="main",
                             params=(),
                             body=body,
+                            fun_type=ast.FunType(params=(), ret=ast.IntType()),
                         )
                     ),
                 )

@@ -149,6 +149,7 @@ class TestResolveLabeledStatement:
                 name=name,
                 params=(),
                 body=(ast.S(statement=ast.Label(name="lbl", statement=ast.Return(exp=ast.Constant(value=0)))),),
+                fun_type=ast.FunType(params=(), ret=ast.IntType()),
             )
 
         program = _make_prog(_fn("foo"), _fn("bar"))
@@ -556,7 +557,9 @@ class TestForInitStorageClass:
             ast.S(
                 ast.For(
                     init=ast.InitDecl(
-                        ast.VarDecl(ast.VariableDeclaration("i", ast.Constant(0), ast.StorageClass.Static))
+                        ast.VarDecl(
+                            ast.VariableDeclaration("i", ast.Constant(0), ast.IntType(), ast.StorageClass.Static)
+                        )
                     ),
                     condition=None,
                     post=None,
@@ -572,7 +575,9 @@ class TestForInitStorageClass:
         body = (
             ast.S(
                 ast.For(
-                    init=ast.InitDecl(ast.VarDecl(ast.VariableDeclaration("i", None, ast.StorageClass.Extern))),
+                    init=ast.InitDecl(
+                        ast.VarDecl(ast.VariableDeclaration("i", None, ast.IntType(), ast.StorageClass.Extern))
+                    ),
                     condition=None,
                     post=None,
                     body=ast.Null(),
@@ -587,7 +592,7 @@ class TestForInitStorageClass:
         body = (
             ast.S(
                 ast.For(
-                    init=ast.InitDecl(ast.VarDecl(ast.VariableDeclaration("i", ast.Constant(0)))),
+                    init=ast.InitDecl(ast.VarDecl(ast.VariableDeclaration("i", ast.Constant(0), ast.IntType()))),
                     condition=None,
                     post=None,
                     body=ast.Null(),

@@ -1107,9 +1107,9 @@ class Parser:
             self._consume()
             val = int(token.value)
             if val <= 2_147_483_647:
-                return Constant(value=ConstInt(val))
+                return Constant(value=ConstInt(val), exp_type=IntType())
             if val <= 9_223_372_036_854_775_807:
-                return Constant(value=ConstLong(val))
+                return Constant(value=ConstLong(val), exp_type=LongType())
             raise self._token_error(
                 f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
             )
@@ -1120,7 +1120,7 @@ class Parser:
                 raise self._token_error(
                     f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
                 )
-            return Constant(value=ConstLong(val))
+            return Constant(value=ConstLong(val), exp_type=LongType())
         raise self._token_error(f"expected a constant, got {token.type.name} '{token.value}'", token)
 
     def _parse_type(self) -> Type:

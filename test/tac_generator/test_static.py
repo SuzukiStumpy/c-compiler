@@ -95,7 +95,7 @@ class TestTacGeneratorStaticLocalDeclarations:
                 ast.D(
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
-                            name=".Vx.0", init=None, storage_class=ast.StorageClass.Static
+                            name=".Vx.0", init=None, var_type=ast.IntType(), storage_class=ast.StorageClass.Static
                         )
                     )
                 ),
@@ -110,7 +110,10 @@ class TestTacGeneratorStaticLocalDeclarations:
                 ast.D(
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
-                            name=".Vx.0", init=ast.Constant(value=5), storage_class=ast.StorageClass.Static
+                            name=".Vx.0",
+                            init=ast.Constant(value=5),
+                            var_type=ast.IntType(),
+                            storage_class=ast.StorageClass.Static,
                         )
                     )
                 ),
@@ -125,7 +128,7 @@ class TestTacGeneratorStaticLocalDeclarations:
                 ast.D(
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
-                            name="g", init=None, storage_class=ast.StorageClass.Extern
+                            name="g", init=None, var_type=ast.IntType(), storage_class=ast.StorageClass.Extern
                         )
                     )
                 ),
@@ -144,7 +147,12 @@ class TestTacGeneratorIntegrationWithSymbolTable:
 
     def _minimal_prog(self) -> ast.Program:
         """Return a minimal program with a single ``main`` function that returns 0."""
-        fn = ast.Function(name="main", params=(), body=(ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))
+        fn = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
         return ast.Program(declarations=(ast.FunDecl(fn),))
 
     def test_initial_symbol_produces_static_variable_in_top_level(self) -> None:
@@ -242,6 +250,7 @@ class TestTacFunctionGlobl:
             name=name,
             params=(),
             body=(ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
             globl=globl,
         )
 

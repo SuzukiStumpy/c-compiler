@@ -52,7 +52,18 @@ from typing import NamedTuple
 
 import compiler.syntax.ast as ast
 from compiler.syntax.ast.declarations import StorageClass
-from compiler.syntax.ast.types import Linkage
+from compiler.syntax.ast.operators import (
+    And,
+    Equal,
+    GreaterOrEqual,
+    GreaterThan,
+    LessOrEqual,
+    LessThan,
+    Not,
+    NotEqual,
+    Or,
+)
+from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type
 from compiler.types.symbols import (
     FunAttr,
     Initial,
@@ -76,6 +87,8 @@ class VariableBinding(NamedTuple):
             being analysed; ``False`` if it was inherited from an enclosing scope or the
             file scope.  Used by ``resolve_variable_declaration`` to distinguish shadowing
             (permitted) from a same-block duplicate (an error).
+        var_type: The declared C type of this variable.  Carried forward so that
+            ``resolve_exp`` can annotate ``Var`` expression nodes with their type.
         linkage: The linkage classification for this variable.  Local variables carry
             ``Linkage.NONE``; ``static`` variables carry ``Linkage.INTERNAL``; file-scope
             and ``extern``-declared variables carry ``Linkage.EXTERNAL``.
@@ -83,6 +96,7 @@ class VariableBinding(NamedTuple):
 
     unique_name: str
     from_current_block: bool
+    var_type: Type
     linkage: Linkage = Linkage.NONE
 
 
@@ -102,6 +116,8 @@ class FunctionBinding(NamedTuple):
         param_types: The ordered tuple of parameter types established by the
             first declaration seen.  Every subsequent declaration must match
             this tuple exactly.
+        ret_type: The declared return type of this function.  Used by
+            ``resolve_exp`` to annotate ``FunctionCall`` expression nodes.
         linkage: The linkage classification for this function.  Functions
             declared without ``static`` carry ``Linkage.EXTERNAL``; those
             declared with ``static`` carry ``Linkage.INTERNAL``.
@@ -109,6 +125,7 @@ class FunctionBinding(NamedTuple):
 
     has_definition: bool
     param_types: tuple[ast.Type, ...]
+    ret_type: ast.Type
     linkage: Linkage = Linkage.EXTERNAL
 
 
@@ -147,6 +164,20 @@ class SemanticAnalyser:
             otherwise).  Populated by a pre-pass in ``_resolve_program`` and
             extended when ``FunDecl`` block items are processed.  Never reset
             between functions.
+        _symbol_table: Program-wide mapping from every resolved identifier to a
+            ``SymbolTableEntry`` describing its storage attributes.  Functions
+            receive ``FunAttr``; variables with static storage duration receive
+            ``StaticAttr``; plain local variables receive no entry.  Consumed by
+            downstream stages (TAC generation) to emit ``StaticVariable``
+            constructs.
+        _type_table: Mapping from every resolved identifier name to its declared
+            C type.  Keyed by the *unique* name for local and static-local
+            variables (e.g. ``".Vx.0"``), and by the original source name for
+            file-scope variables and block-scope ``extern`` declarations.
+            Populated by ``resolve_variable_declaration`` and
+            ``_resolve_file_scope_variable_declaration`` so that
+            ``_type_check_exp`` can annotate ``Var`` expression nodes with their
+            type without needing to trace back through ``_variable_map``.
         _label_set: Set of all label names declared in the function currently
             being analysed.  Populated by a first pass before resolution begins
             so that forward ``goto`` targets can be validated.
@@ -198,6 +229,7 @@ class SemanticAnalyser:
         self._variable_map: dict[str, VariableBinding] = {}
         self._function_map: dict[str, FunctionBinding] = {}
         self._symbol_table: SymbolTable = {}
+        self._type_table: dict[str, Type] = {}
         self._file_scope_linkage: dict[str, Linkage] = {}
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
@@ -350,10 +382,14 @@ class SemanticAnalyser:
             prior_linkage = self._file_scope_linkage.get(var_decl.name)
             # Inherit whichever linkage was already established; default to EXTERNAL when unseen.
             effective_linkage = prior_linkage if prior_linkage is not None else Linkage.EXTERNAL
+            existing_type = self._type_table.get(var_decl.name)
+            if existing_type is not None and existing_type != var_decl.var_type:
+                raise SemanticError(f"'{var_decl.name}' redeclared with a conflicting type.")
             self._file_scope_linkage[var_decl.name] = effective_linkage
             self._variable_map[var_decl.name] = VariableBinding(
-                var_decl.name, from_current_block=True, linkage=effective_linkage
+                var_decl.name, from_current_block=True, var_type=var_decl.var_type, linkage=effective_linkage
             )
+            self._type_table[var_decl.name] = var_decl.var_type
             # Only add a symbol table entry when the name hasn't been seen yet; file-scope
             # declarations take precedence and should not be downgraded to NoInitializer.
             if var_decl.name not in self._symbol_table:
@@ -370,8 +406,11 @@ class SemanticAnalyser:
                     "in this scope."
                 )
             unique_name = self._make_unique(var_decl.name)
+            self._type_table[unique_name] = var_decl.var_type
             linkage = Linkage.INTERNAL if var_decl.storage_class == StorageClass.Static else Linkage.NONE
-            self._variable_map[var_decl.name] = VariableBinding(unique_name, from_current_block=True, linkage=linkage)
+            self._variable_map[var_decl.name] = VariableBinding(
+                unique_name, from_current_block=True, var_type=var_decl.var_type, linkage=linkage
+            )
             if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
                 if not isinstance(var_decl.init, ast.Constant):
                     raise SemanticError(
@@ -385,7 +424,7 @@ class SemanticAnalyser:
                     else Tentative()
                 )
                 self._symbol_table[unique_name] = SymbolTableEntry(StaticAttr(init=static_init, globl=False))
-            return ast.VariableDeclaration(unique_name, init, var_decl.storage_class)
+            return ast.VariableDeclaration(unique_name, init, var_decl.var_type, var_decl.storage_class)
 
     def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
         """Record a file-scope variable declaration in the identifier table.
@@ -408,10 +447,11 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If ``var_decl.name`` was previously declared as a
-                function (conflicting entity kind on the same external name); or
-                if the initialiser is not a constant expression (file-scope
-                variables have static storage duration and must be initialised
-                at compile time).
+                function (conflicting entity kind on the same external name); if
+                the initialiser is not a constant expression (file-scope variables
+                have static storage duration and must be initialised at compile
+                time); if a prior declaration of the same name carried a different
+                C type; or if linkage conflicts with a prior declaration.
         """
         if var_decl.name in self._function_map:
             raise SemanticError(
@@ -436,10 +476,14 @@ class SemanticAnalyser:
                 f"{'external' if prior_linkage == Linkage.EXTERNAL else 'internal'} linkage; "
                 f"cannot redeclare with {'internal' if new_linkage == Linkage.INTERNAL else 'external'} linkage."
             )
+        existing_type = self._type_table.get(var_decl.name)
+        if existing_type is not None and existing_type != var_decl.var_type:
+            raise SemanticError(f"'{var_decl.name}' redeclared with a conflicting type.")
         self._file_scope_linkage[var_decl.name] = new_linkage
         self._variable_map[var_decl.name] = VariableBinding(
-            var_decl.name, from_current_block=False, linkage=new_linkage
+            var_decl.name, from_current_block=False, var_type=var_decl.var_type, linkage=new_linkage
         )
+        self._type_table[var_decl.name] = var_decl.var_type
         globl = new_linkage == Linkage.EXTERNAL
         existing_entry = self._symbol_table.get(var_decl.name)
         if var_decl.init is not None:
@@ -506,6 +550,7 @@ class SemanticAnalyser:
         if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
             raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
         new_param_types = tuple(p.param_type for p in fun.params)
+        ret_type: Type = fun.fun_type.ret if isinstance(fun.fun_type, FunType) else IntType()
         existing = self._function_map.get(fun.name)
         if fun.storage_class == StorageClass.Static:
             new_linkage = Linkage.INTERNAL
@@ -528,11 +573,11 @@ class SemanticAnalyser:
                 raise SemanticError(f"Redefinition of function '{fun.name}'.")
             if fun.body is not None:
                 self._function_map[fun.name] = FunctionBinding(
-                    has_definition=True, param_types=new_param_types, linkage=new_linkage
+                    has_definition=True, param_types=new_param_types, ret_type=ret_type, linkage=new_linkage
                 )
         else:
             self._function_map[fun.name] = FunctionBinding(
-                has_definition=fun.body is not None, param_types=new_param_types, linkage=new_linkage
+                has_definition=fun.body is not None, param_types=new_param_types, ret_type=ret_type, linkage=new_linkage
             )
         fun_globl = new_linkage == Linkage.EXTERNAL
         prior_sym = self._symbol_table.get(fun.name)
@@ -587,69 +632,168 @@ class SemanticAnalyser:
         self._current_block_funs = saved_funs
         return result
 
-    def resolve_exp(self, e: ast.Exp) -> ast.Exp:
-        """Resolve all variable and function references within an expression.
+    def _type_check_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
+        """Annotate an already-name-resolved expression with its C type.
 
-        Recursively walks the expression tree, substituting every ``ast.Var``
-        node with a new ``ast.Var`` whose name is the unique internal identifier
-        recorded in ``_variable_map``.  Assignment expressions are additionally
-        validated to ensure their left-hand side is an ``ast.Var`` (i.e. a
-        simple lvalue).  ``FunctionCall`` expressions are validated to ensure
-        the callee name appears in ``_function_map``.
+        If ``e.exp_type`` is already set, the expression is returned unchanged.
+        Otherwise, the type is determined by the expression form:
+
+        * ``Var`` — looks up the variable's type from ``_type_table`` by the
+          resolved unique name.  If the name maps to a ``FunAttr`` entry in
+          ``_symbol_table``, a ``SemanticError`` is raised (function name used
+          as a variable).
+        * ``Constant`` — ``ConstLong`` constants receive ``LongType``; all
+          others receive ``IntType``.
+        * ``Unary`` — ``Not`` always produces ``IntType``; all other unary
+          operators propagate the operand's type.
+        * ``Binary`` — logical (``And``, ``Or``) and comparison operators
+          always produce ``IntType``; arithmetic and bitwise operators produce
+          ``LongType`` when either operand is ``LongType``, otherwise the type
+          of the left operand.
+        * ``Assignment`` — the type of the lvalue operand.
+        * ``Conditional`` — ``LongType`` if either branch is ``LongType``;
+          otherwise the type of the true branch.
+        * ``FunctionCall`` — the declared return type of the callee, looked up
+          from ``_function_map``.  Validates that the callee is a known
+          function, that the name does not refer to a local variable, and that
+          the argument count matches the declared arity.
+        * ``Cast`` — the explicit target type.
+
+        Child expressions that are not yet typed are recursively type-checked
+        before the parent's type is determined, so this method may be called on
+        expressions at any point after name resolution.
+
+        Args:
+            e: An expression node, already name-resolved, to type-check.
+
+        Returns:
+            A copy of ``e`` with ``exp_type`` set to the correct C type, or
+            ``e`` itself when ``exp_type`` was already present.
+
+        Raises:
+            SemanticError: If a ``Var`` maps to a ``FunAttr`` in
+                ``_symbol_table`` (function name used as a variable); if a
+                ``Var`` name is absent from ``_type_table`` (undeclared); if a
+                ``FunctionCall`` names a local variable (variable called as a
+                function); if a ``FunctionCall`` names an undeclared function;
+                or if the argument count does not match the declared arity.
+        """
+        if e.exp_type is not None:
+            return e
+        match e:
+            case ast.Var(name=name):
+                sym_entry = self._symbol_table.get(name)
+                if sym_entry is not None and isinstance(sym_entry.attrs, FunAttr):
+                    raise SemanticError(f"Function name '{name}' used as a variable.")
+                var_type = self._type_table.get(name)
+                if var_type is None:
+                    raise SemanticError(f"Undeclared variable {name}!")
+                return ast.Var(name, exp_type=var_type)
+            case ast.Constant(value=ast.ConstLong()):
+                return ast.Constant(e.value, exp_type=LongType())
+            case ast.Constant():
+                return ast.Constant(e.value, exp_type=IntType())
+            case ast.Unary(operator=op, exp=exp):
+                typed_exp = self._type_check_exp(exp)
+                exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
+                return ast.Unary(op, typed_exp, exp_type=exp_type)
+            case ast.Binary(operator=op, left=left, right=right):
+                typed_left = self._type_check_exp(left)
+                typed_right = self._type_check_exp(right)
+                if isinstance(op, (And, Or, Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual)):
+                    bin_type: Type | None = IntType()
+                elif isinstance(typed_left.exp_type, LongType) or isinstance(typed_right.exp_type, LongType):
+                    bin_type = LongType()
+                else:
+                    bin_type = typed_left.exp_type
+                return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
+            case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
+                typed_lv = self._type_check_exp(lvalue)
+                typed_rv = self._type_check_exp(rvalue)
+                return ast.Assignment(typed_lv, typed_rv, exp_type=typed_lv.exp_type)
+            case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
+                typed_cond = self._type_check_exp(cond)
+                typed_true = self._type_check_exp(exp_true)
+                typed_false = self._type_check_exp(exp_false)
+                if isinstance(typed_true.exp_type, LongType) or isinstance(typed_false.exp_type, LongType):
+                    cond_type: Type | None = LongType()
+                else:
+                    cond_type = typed_true.exp_type
+                return ast.Conditional(typed_cond, typed_true, typed_false, exp_type=cond_type)
+            case ast.FunctionCall(name=name, args=args):
+                if name in self._variable_map and name not in self._current_block_funs:
+                    raise SemanticError(f"Variable '{name}' called as a function.")
+                if name not in self._function_map:
+                    raise SemanticError(f"Call to undeclared function '{name}'.")
+                fn_binding = self._function_map[name]
+                expected = len(fn_binding.param_types)
+                if len(args) != expected:
+                    raise SemanticError(
+                        f"Function '{name}' called with {len(args)} argument(s) but declared with {expected}."
+                    )
+                typed_args = [self._type_check_exp(arg) for arg in args]
+                return ast.FunctionCall(name, typed_args, exp_type=fn_binding.ret_type)
+            case ast.Cast(target_type=target_type, exp=exp):
+                return ast.Cast(target_type, self._type_check_exp(exp), exp_type=target_type)
+            case _:
+                raise SemanticError("Unhandled expression type in type checker")
+
+    def resolve_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
+        """Resolve all variable references within an expression and annotate it with its C type.
+
+        Recursively renames every ``ast.Var`` node from its source-level name to
+        the unique internal identifier recorded in ``_variable_map``, then
+        delegates type annotation to ``_type_check_exp``.  Assignment
+        expressions are validated here to ensure their left-hand side is an
+        ``ast.Var`` (simple lvalue); ``FunctionCall`` validation (declared
+        function, correct arity, not a local variable) is performed by
+        ``_type_check_exp``.
 
         Args:
             e: The expression node to resolve.
 
         Returns:
-            A new expression node structurally identical to ``e`` but with all
-            ``ast.Var`` references rewritten to use unique internal names.
+            A new expression node with all ``ast.Var`` references rewritten to
+            unique internal names and ``exp_type`` set to the correct C type.
 
         Raises:
-            SemanticError: If a ``Var`` node names an identifier present in
-                ``_current_block_funs`` or in ``_function_map`` but not
-                ``_variable_map`` (function name used as a variable); if a
-                variable reference cannot be found in ``_variable_map``
-                (undeclared variable); if the left-hand side of an assignment
-                is not a plain ``ast.Var`` (invalid lvalue); if a
-                ``FunctionCall`` names an identifier present in
-                ``_variable_map`` but not shadowed by a block-scope function
-                declaration in ``_current_block_funs`` (variable called as a
-                function); if a ``FunctionCall`` names a function not present
-                in ``_function_map`` (undeclared function); or if the number
-                of arguments does not match the function's declared arity.
+            SemanticError: If a ``Var`` node names a function rather than a
+                variable; if a variable reference is undeclared; if the
+                left-hand side of an assignment is not a plain ``ast.Var``; or
+                if any sub-expression contains a semantic violation detected by
+                ``_type_check_exp``.
         """
         match e:
             case ast.Assignment(lvalue=ast.Var() as lvalue_var, rvalue=rvalue):
-                return ast.Assignment(self.resolve_exp(lvalue_var), self.resolve_exp(rvalue))
+                resolved_lvalue = self.resolve_exp(lvalue_var)
+                resolved_rvalue = self.resolve_exp(rvalue)
+                return self._type_check_exp(ast.Assignment(resolved_lvalue, resolved_rvalue))
             case ast.Assignment():
                 raise SemanticError("Invalid lvalue in assignment expression.")
             case ast.Var(name=name):
                 if name in self._current_block_funs:
                     raise SemanticError(f"Function name '{name}' used as a variable.")
                 if name in self._variable_map:
-                    return ast.Var(self._variable_map[name].unique_name)
-                if name in self._function_map:
+                    unique_name = self._variable_map[name].unique_name
+                elif name in self._function_map:
                     raise SemanticError(f"Function name '{name}' used as a variable.")
-                raise SemanticError(f"Undeclared variable {name}!")
+                else:
+                    raise SemanticError(f"Undeclared variable {name}!")
+                return self._type_check_exp(ast.Var(unique_name))
             case ast.Constant():
-                return e
+                return self._type_check_exp(e)
             case ast.Unary(operator=op, exp=exp):
-                return ast.Unary(op, self.resolve_exp(exp))
+                return self._type_check_exp(ast.Unary(op, self.resolve_exp(exp)))
             case ast.Binary(operator=op, left=left, right=right):
-                return ast.Binary(op, self.resolve_exp(left), self.resolve_exp(right))
+                return self._type_check_exp(ast.Binary(op, self.resolve_exp(left), self.resolve_exp(right)))
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
-                return ast.Conditional(self.resolve_exp(cond), self.resolve_exp(exp_true), self.resolve_exp(exp_false))
+                return self._type_check_exp(
+                    ast.Conditional(self.resolve_exp(cond), self.resolve_exp(exp_true), self.resolve_exp(exp_false))
+                )
             case ast.FunctionCall(name=name, args=args):
-                if name in self._variable_map and name not in self._current_block_funs:
-                    raise SemanticError(f"Variable '{name}' called as a function.")
-                if name not in self._function_map:
-                    raise SemanticError(f"Call to undeclared function '{name}'.")
-                expected = len(self._function_map[name].param_types)
-                if len(args) != expected:
-                    raise SemanticError(
-                        f"Function '{name}' called with {len(args)} argument(s) but declared with {expected}."
-                    )
-                return ast.FunctionCall(name, [self.resolve_exp(arg) for arg in args])
+                return self._type_check_exp(ast.FunctionCall(name, [self.resolve_exp(arg) for arg in args]))
+            case ast.Cast(target_type=target_type, exp=exp):
+                return self._type_check_exp(ast.Cast(target_type, self.resolve_exp(exp)))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -910,7 +1054,9 @@ class SemanticAnalyser:
 
         resolved_params: list[ast.Parameter] = []
         for param in function.params:
-            resolved_var = self.resolve_variable_declaration(ast.VariableDeclaration(param.name, None))
+            resolved_var = self.resolve_variable_declaration(
+                ast.VariableDeclaration(param.name, None, param.param_type)
+            )
             resolved_params.append(ast.Parameter(param_type=param.param_type, name=resolved_var.name))
 
         self._collect_labels(function.body)
@@ -920,6 +1066,7 @@ class SemanticAnalyser:
             name=function.name,
             params=tuple(resolved_params),
             body=tuple(self._resolve_block_item(item) for item in function.body),
+            fun_type=function.fun_type,
             globl=globl,
             storage_class=function.storage_class,
         )

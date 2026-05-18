@@ -97,7 +97,13 @@ class TestTacGeneratorDeclarations:
     def test_declaration_without_init_produces_no_instructions(self) -> None:
         """A bare ``int x;`` declaration emits no TAC instructions; only the function guard is present."""
         instrs = _instrs_for_body(
-            (ast.D(declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name="x", init=None))),)
+            (
+                ast.D(
+                    declaration=ast.VarDecl(
+                        variable_declaration=ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType())
+                    )
+                ),
+            )
         )
         assert instrs == (tac.Return(val=tac.Constant(value=0)),)
 
@@ -107,7 +113,9 @@ class TestTacGeneratorDeclarations:
             (
                 ast.D(
                     declaration=ast.VarDecl(
-                        variable_declaration=ast.VariableDeclaration(name="x", init=ast.Constant(value=5))
+                        variable_declaration=ast.VariableDeclaration(
+                            name="x", init=ast.Constant(value=5), var_type=ast.IntType()
+                        )
                     )
                 ),
             )
@@ -123,7 +131,9 @@ class TestTacGeneratorDeclarations:
             (
                 ast.D(
                     declaration=ast.VarDecl(
-                        variable_declaration=ast.VariableDeclaration(name=".Vmy_var.3", init=ast.Constant(value=0))
+                        variable_declaration=ast.VariableDeclaration(
+                            name=".Vmy_var.3", init=ast.Constant(value=0), var_type=ast.IntType()
+                        )
                     )
                 ),
             )
@@ -140,6 +150,7 @@ class TestTacGeneratorDeclarations:
                         variable_declaration=ast.VariableDeclaration(
                             name="x",
                             init=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
+                            var_type=ast.IntType(),
                         )
                     )
                 ),
@@ -407,7 +418,11 @@ class TestTacGeneratorCompoundStatement:
             ast.Compound(
                 body=(
                     ast.D(
-                        declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name=".Vx.0", init=None))
+                        declaration=ast.VarDecl(
+                            variable_declaration=ast.VariableDeclaration(
+                                name=".Vx.0", init=None, var_type=ast.IntType()
+                            )
+                        )
                     ),
                 )
             )
@@ -421,7 +436,9 @@ class TestTacGeneratorCompoundStatement:
                 body=(
                     ast.D(
                         declaration=ast.VarDecl(
-                            variable_declaration=ast.VariableDeclaration(name=".Vx.0", init=ast.Constant(value=5))
+                            variable_declaration=ast.VariableDeclaration(
+                                name=".Vx.0", init=ast.Constant(value=5), var_type=ast.IntType()
+                            )
                         )
                     ),
                 )
@@ -439,7 +456,9 @@ class TestTacGeneratorCompoundStatement:
                 body=(
                     ast.D(
                         declaration=ast.VarDecl(
-                            variable_declaration=ast.VariableDeclaration(name=".Vx.0", init=ast.Constant(value=1))
+                            variable_declaration=ast.VariableDeclaration(
+                                name=".Vx.0", init=ast.Constant(value=1), var_type=ast.IntType()
+                            )
                         )
                     ),
                     ast.S(statement=ast.Return(exp=ast.Var(name=".Vx.0"))),
@@ -457,7 +476,9 @@ class TestTacGeneratorCompoundStatement:
         body = (
             ast.D(
                 declaration=ast.VarDecl(
-                    variable_declaration=ast.VariableDeclaration(name=".Va.0", init=ast.Constant(value=1))
+                    variable_declaration=ast.VariableDeclaration(
+                        name=".Va.0", init=ast.Constant(value=1), var_type=ast.IntType()
+                    )
                 )
             ),
             ast.S(
@@ -465,7 +486,9 @@ class TestTacGeneratorCompoundStatement:
                     body=(
                         ast.D(
                             declaration=ast.VarDecl(
-                                variable_declaration=ast.VariableDeclaration(name=".Vb.1", init=ast.Constant(value=2))
+                                variable_declaration=ast.VariableDeclaration(
+                                    name=".Vb.1", init=ast.Constant(value=2), var_type=ast.IntType()
+                                )
                             )
                         ),
                     )

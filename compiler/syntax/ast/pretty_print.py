@@ -80,7 +80,7 @@ def _render(value: object, depth: int) -> str:
 
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         cls_name = type(value).__name__
-        fields = dataclasses.fields(value)
+        fields = [f for f in dataclasses.fields(value) if f.repr]
         if not fields:
             return f"{cls_name}()"
         field_renders = [(f.name, _render(getattr(value, f.name), depth + 1)) for f in fields]

@@ -31,7 +31,7 @@ class TestFunctionDeclarations:
         Returns:
             An ``ast.Function`` with ``params=()`` and the given body.
         """
-        return ast.Function(name=name, params=(), body=body)
+        return ast.Function(name=name, params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
 
     def test_top_level_declaration_only_is_valid(self) -> None:
         """A single top-level function declaration (no body) resolves without error."""
@@ -75,7 +75,11 @@ class TestFunctionDeclarations:
 
     def test_block_level_function_declaration_is_valid(self) -> None:
         """A function declaration appearing as a block item inside another function is accepted."""
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(ast.Return(ast.Constant(0))),
@@ -94,7 +98,11 @@ class TestFunctionDeclarations:
                 return foo();
             }
         """
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             foo_decl,
@@ -105,7 +113,11 @@ class TestFunctionDeclarations:
 
     def test_call_to_declared_function_is_valid(self) -> None:
         """A ``FunctionCall`` to a function that has been declared resolves without error."""
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(ast.Return(ast.FunctionCall("foo", []))),
@@ -121,11 +133,13 @@ class TestFunctionDeclarations:
             name="foo",
             params=(),
             body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         bar = ast.Function(
             name="bar",
             params=(),
             body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         program = _make_prog(foo, bar)
         resolved = resolve(program)
@@ -143,11 +157,13 @@ class TestFunctionDeclarations:
             name="bar",
             params=(),
             body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         foo = ast.Function(
             name="foo",
             params=(),
             body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         program = _make_prog(bar, foo)
         with pytest.raises(SemanticError, match="undeclared function"):
@@ -167,6 +183,7 @@ class TestFunctionDeclarations:
                     name="foo",
                     params=(ast.Parameter(param_type=ast.IntType(), name="a"),),
                     body=None,
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             )
         )
@@ -197,6 +214,7 @@ class TestFunctionParameters:
             name="foo",
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=(ast.S(ast.Return(ast.Var("x"))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         resolved = resolve(_make_prog(fn))
         param = _get_fn(resolved).params[0]
@@ -208,6 +226,7 @@ class TestFunctionParameters:
             name="foo",
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=(ast.S(ast.Return(ast.Var("x"))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         resolved = resolve(_make_prog(fn))
         param_name = _get_fn(resolved).params[0].name
@@ -224,13 +243,14 @@ class TestFunctionParameters:
                 ast.Parameter(param_type=ast.IntType(), name="x"),
             ),
             body=(ast.S(ast.Return(ast.Var("x"))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="Duplicate"):
             resolve(_make_prog(fn))
 
     def test_declaration_body_is_none_skips_resolution(self) -> None:
         """A ``Function`` node with ``body=None`` is returned unchanged — no resolution needed."""
-        fn = ast.Function(name="foo", params=(), body=None)
+        fn = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         resolved = resolve(_make_prog(fn))
         assert _get_fn(resolved) is fn
 
@@ -246,11 +266,13 @@ class TestFunctionParameters:
                 ast.Parameter(param_type=ast.IntType(), name="a"),
             ),
             body=None,
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         main_def = ast.Function(
             name="main",
             params=(),
             body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="Duplicate parameter name 'a'"):
             resolve(_make_prog(foo_decl, main_def))
@@ -269,6 +291,7 @@ class TestFunctionParameters:
                         ast.Parameter(param_type=ast.IntType(), name="a"),
                     ),
                     body=None,
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             )
         )
@@ -288,11 +311,13 @@ class TestFunctionParameters:
                 ast.Parameter(param_type=ast.IntType(), name="b"),
             ),
             body=None,
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         main_def = ast.Function(
             name="main",
             params=(),
             body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         resolved = resolve(_make_prog(foo_decl, main_def))
         assert len(resolved.declarations) == 2
@@ -303,11 +328,13 @@ class TestFunctionParameters:
             name="foo",
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=None,
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         foo_def = ast.Function(
             name="foo",
             params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
             body=(ast.S(ast.Return(ast.Var("x"))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         resolved = resolve(_make_prog(foo_decl, foo_def))
         assert len(resolved.declarations) == 2
@@ -324,6 +351,7 @@ class TestFunctionParameters:
                     name="inner",
                     params=(),
                     body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             )
         )
@@ -342,6 +370,7 @@ class TestFunctionParameters:
                     name="inner",
                     params=(),
                     body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             )
         )
@@ -360,7 +389,11 @@ class TestFunctionParameters:
 
     def test_block_scope_function_declaration_no_body_is_valid(self) -> None:
         """A forward declaration (no body) at block scope is still permitted."""
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(ast.Return(ast.Constant(0))),
@@ -371,7 +404,15 @@ class TestFunctionParameters:
     def test_block_scope_static_function_declaration_raises(self) -> None:
         """A block-scope function declaration with ``static`` storage class raises ``SemanticError``."""
         foo_decl = ast.D(
-            ast.FunDecl(ast.Function(name="foo", params=(), body=None, storage_class=ast.StorageClass.Static))
+            ast.FunDecl(
+                ast.Function(
+                    name="foo",
+                    params=(),
+                    body=None,
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                    storage_class=ast.StorageClass.Static,
+                )
+            )
         )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
@@ -395,54 +436,90 @@ class TestConflictingDeclarations:
 
     def test_forward_decl_and_definition_different_param_count_raises(self) -> None:
         """A forward declaration with one parameter and a definition with two raises ``SemanticError``."""
-        foo_decl = ast.Function(name="foo", params=(self._int_param("a"),), body=None)
+        foo_decl = ast.Function(
+            name="foo", params=(self._int_param("a"),), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+        )
         foo_def = ast.Function(
             name="foo",
             params=(self._int_param("a"), self._int_param("b")),
             body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
-        main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(5))),))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Constant(5))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
         with pytest.raises(SemanticError, match="Conflicting declarations"):
             resolve(_make_prog(foo_decl, main, foo_def))
 
     def test_two_declarations_different_param_count_raises(self) -> None:
         """Two forward declarations of the same function with different arities raise ``SemanticError``."""
-        foo_zero = ast.Function(name="foo", params=(), body=None)
-        foo_one = ast.Function(name="foo", params=(self._int_param("a"),), body=None)
-        main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        foo_zero = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        foo_one = ast.Function(
+            name="foo", params=(self._int_param("a"),), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+        )
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
         with pytest.raises(SemanticError, match="Conflicting declarations"):
             resolve(_make_prog(foo_zero, foo_one, main))
 
     def test_block_level_declaration_conflicts_with_top_level_raises(self) -> None:
         """A block-scope declaration that disagrees with the top-level declaration raises ``SemanticError``."""
-        foo_top = ast.Function(name="foo", params=(self._int_param("a"),), body=None)
-        foo_inner = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_top = ast.Function(
+            name="foo", params=(self._int_param("a"),), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+        )
+        foo_inner = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_inner,
             ast.S(ast.Return(ast.Constant(0))),
         )
-        main = ast.Function(name="main", params=(), body=body)
+        main = ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         with pytest.raises(SemanticError, match="Conflicting declarations"):
             resolve(_make_prog(foo_top, main))
 
     def test_matching_declarations_are_valid(self) -> None:
         """Repeated declarations of the same function with identical parameter types are accepted."""
-        foo_decl_a = ast.Function(name="foo", params=(self._int_param("a"),), body=None)
-        foo_decl_b = ast.Function(name="foo", params=(self._int_param("x"),), body=None)
+        foo_decl_a = ast.Function(
+            name="foo", params=(self._int_param("a"),), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+        )
+        foo_decl_b = ast.Function(
+            name="foo", params=(self._int_param("x"),), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+        )
         foo_def = ast.Function(
             name="foo",
             params=(self._int_param("p"),),
             body=(ast.S(ast.Return(ast.Var("p"))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
-        main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
         resolved = resolve(_make_prog(foo_decl_a, foo_decl_b, foo_def, main))
         assert len(resolved.declarations) == 4
 
     def test_zero_param_matching_declarations_are_valid(self) -> None:
         """Two forward declarations of the same zero-parameter function are accepted."""
-        foo_a = ast.Function(name="foo", params=(), body=None)
-        foo_b = ast.Function(name="foo", params=(), body=None)
-        main = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        foo_a = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        foo_b = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
         resolved = resolve(_make_prog(foo_a, foo_b, main))
         assert len(resolved.declarations) == 3
 
@@ -458,7 +535,11 @@ class TestArgumentCount:
     def _fn_decl(self, name: str, n_params: int) -> ast.D:
         """Return a block-scope forward declaration of ``name`` with ``n_params`` int params."""
         params = tuple(ast.Parameter(param_type=ast.IntType(), name=f"p{i}") for i in range(n_params))
-        return ast.D(ast.FunDecl(ast.Function(name=name, params=params, body=None)))
+        return ast.D(
+            ast.FunDecl(
+                ast.Function(name=name, params=params, body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
 
     def test_too_few_arguments_raises(self) -> None:
         """Calling a one-parameter function with zero arguments raises ``SemanticError``."""
@@ -515,20 +596,26 @@ class TestFunctionShadowsVariable:
         function" check even though ``"foo"`` is also present in
         ``_variable_map`` from the outer scope.
         """
-        foo_top = ast.Function(name="foo", params=(), body=None)
+        foo_top = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         body: tuple[ast.BlockItem, ...] = (
             _vd("foo", ast.Constant(3)),
             ast.S(
                 statement=ast.Compound(
                     body=(
-                        ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None))),
+                        ast.D(
+                            ast.FunDecl(
+                                ast.Function(
+                                    name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+                                )
+                            )
+                        ),
                         ast.S(ast.Expression(ast.FunctionCall("foo", []))),
                         ast.S(ast.Return(ast.Constant(0))),
                     )
                 )
             ),
         )
-        main = ast.Function(name="main", params=(), body=body)
+        main = ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         resolved = resolve(_make_prog(foo_top, main))
         assert len(resolved.declarations) == 2
 
@@ -538,20 +625,26 @@ class TestFunctionShadowsVariable:
         ``return foo;`` after the inner block should resolve to the outer
         variable, not raise "function name used as variable".
         """
-        foo_top = ast.Function(name="foo", params=(), body=None)
+        foo_top = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         body: tuple[ast.BlockItem, ...] = (
             _vd("foo", ast.Constant(3)),
             ast.S(
                 statement=ast.Compound(
                     body=(
-                        ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None))),
+                        ast.D(
+                            ast.FunDecl(
+                                ast.Function(
+                                    name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+                                )
+                            )
+                        ),
                         ast.S(ast.Return(ast.Constant(0))),
                     )
                 )
             ),
             ast.S(ast.Return(ast.Var("foo"))),
         )
-        main = ast.Function(name="main", params=(), body=body)
+        main = ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         resolved = resolve(_make_prog(foo_top, main))
         outer_name = _get_fn(resolved, 1).body[0].declaration.variable_declaration.name
         ret_stmt = _get_fn(resolved, 1).body[2].statement
@@ -564,19 +657,25 @@ class TestFunctionShadowsVariable:
         ``_current_block_funs`` contains ``"foo"`` (the inner function
         declaration), so the ``Var("foo")`` path raises immediately.
         """
-        foo_top = ast.Function(name="foo", params=(), body=None)
+        foo_top = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         body: tuple[ast.BlockItem, ...] = (
             _vd("foo", ast.Constant(3)),
             ast.S(
                 statement=ast.Compound(
                     body=(
-                        ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None))),
+                        ast.D(
+                            ast.FunDecl(
+                                ast.Function(
+                                    name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+                                )
+                            )
+                        ),
                         ast.S(ast.Return(ast.Var("foo"))),
                     )
                 )
             ),
         )
-        main = ast.Function(name="main", params=(), body=body)
+        main = ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         with pytest.raises(SemanticError, match="Function name 'foo' used as a variable"):
             resolve(_make_prog(foo_top, main))
 
@@ -595,7 +694,11 @@ class TestTypeChecking:
         ``foo`` is declared as a function; using it bare (without a call) in a
         ``return`` expression is a type error.
         """
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(ast.Return(ast.Var("foo"))),
@@ -617,7 +720,11 @@ class TestTypeChecking:
 
     def test_function_name_in_binary_expression_raises(self) -> None:
         """A function name appearing in an arithmetic expression raises ``SemanticError``."""
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(ast.Return(ast.Binary(ast.Add(), ast.Var("foo"), ast.Constant(1)))),
@@ -634,6 +741,7 @@ class TestTypeChecking:
             name="foo",
             params=(ast.Parameter(param_type=ast.IntType(), name="p"),),
             body=(ast.S(ast.Return(ast.FunctionCall("p", []))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="Variable 'p' called as a function"):
             resolve(_make_prog(fn))
@@ -644,7 +752,11 @@ class TestTypeChecking:
         Inside the block, ``foo`` refers to the local ``int`` variable.
         After the block exits the function-name binding is visible again.
         """
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(
@@ -669,7 +781,11 @@ class TestTypeChecking:
         outer ``int foo(void);``), but ``foo()`` inside that block sees ``foo`` as a
         variable and raises a type error.
         """
-        foo_decl = ast.D(ast.FunDecl(ast.Function(name="foo", params=(), body=None)))
+        foo_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             ast.S(
@@ -696,7 +812,7 @@ class TestLinkage:
     def test_variable_binding_has_no_linkage(self) -> None:
         """A local variable declaration carries ``Linkage.NONE``."""
         analyser = SemanticAnalyser()
-        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType()))
         binding = analyser._variable_map["x"]
         assert isinstance(binding, VariableBinding)
         assert binding.linkage is Linkage.NONE
@@ -704,7 +820,9 @@ class TestLinkage:
     def test_function_binding_has_external_linkage(self) -> None:
         """A function declaration carries ``Linkage.EXTERNAL``."""
         analyser = SemanticAnalyser()
-        analyser._register_fun_declaration(ast.Function(name="foo", params=(), body=None))
+        analyser._register_fun_declaration(
+            ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        )
         binding = analyser._function_map["foo"]
         assert isinstance(binding, FunctionBinding)
         assert binding.linkage is Linkage.EXTERNAL
@@ -713,7 +831,12 @@ class TestLinkage:
         """A function definition (with a body) also carries ``Linkage.EXTERNAL``."""
         analyser = SemanticAnalyser()
         analyser._register_fun_declaration(
-            ast.Function(name="bar", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+            ast.Function(
+                name="bar",
+                params=(),
+                body=(ast.S(ast.Return(ast.Constant(0))),),
+                fun_type=ast.FunType(params=(), ret=ast.IntType()),
+            )
         )
         binding = analyser._function_map["bar"]
         assert binding.linkage is Linkage.EXTERNAL
@@ -721,7 +844,7 @@ class TestLinkage:
     def test_variable_linkage_preserved_across_scope_entry(self) -> None:
         """``Linkage.NONE`` is preserved on a binding when a new nested scope is entered."""
         analyser = SemanticAnalyser()
-        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None))
+        analyser.resolve_variable_declaration(ast.VariableDeclaration(name="x", init=None, var_type=ast.IntType()))
         analyser._enter_scope()
         binding = analyser._variable_map["x"]
         assert binding.linkage is Linkage.NONE
@@ -734,6 +857,7 @@ class TestLinkage:
                 name="foo",
                 params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
                 body=None,
+                fun_type=ast.FunType(params=(), ret=ast.IntType()),
             )
         )
         binding = analyser._function_map["foo"]
@@ -742,7 +866,9 @@ class TestLinkage:
     def test_function_binding_no_params_records_empty_tuple(self) -> None:
         """A function with no parameters stores an empty ``param_types`` tuple."""
         analyser = SemanticAnalyser()
-        analyser._register_fun_declaration(ast.Function(name="foo", params=(), body=None))
+        analyser._register_fun_declaration(
+            ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+        )
         assert analyser._function_map["foo"].param_types == ()
 
 
@@ -779,7 +905,9 @@ class TestFunctionLinkage:
             sc = ast.StorageClass.Extern
         else:
             sc = None
-        return ast.Function(name=name, params=(), body=body, storage_class=sc)
+        return ast.Function(
+            name=name, params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()), storage_class=sc
+        )
 
     def test_extern_then_static_function_raises(self) -> None:
         """A ``static`` definition after a non-``static`` declaration raises ``SemanticError``.
@@ -833,7 +961,11 @@ class TestFunctionLinkage:
         ``extern``) inherits the internal linkage established by the earlier
         ``static int my_fun(void);`` at file scope.
         """
-        my_fun_decl = ast.D(ast.FunDecl(ast.Function(name="my_fun", params=(), body=None)))
+        my_fun_decl = ast.D(
+            ast.FunDecl(
+                ast.Function(name="my_fun", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            )
+        )
         caller_fn = ast.Function(
             name="caller",
             params=(),
@@ -841,6 +973,7 @@ class TestFunctionLinkage:
                 my_fun_decl,
                 ast.S(ast.Return(ast.FunctionCall("my_fun", []))),
             ),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         program = _make_prog(
             self._fn("my_fun", None, static=True),

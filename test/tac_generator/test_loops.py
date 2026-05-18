@@ -292,7 +292,9 @@ class TestTacGeneratorForLoop:
             ast.For(
                 init=ast.InitDecl(
                     declaration=ast.VarDecl(
-                        variable_declaration=ast.VariableDeclaration(name=".Vi.0", init=ast.Constant(value=0))
+                        variable_declaration=ast.VariableDeclaration(
+                            name=".Vi.0", init=ast.Constant(value=0), var_type=ast.IntType()
+                        )
                     )
                 ),
                 condition=None,
@@ -309,7 +311,9 @@ class TestTacGeneratorForLoop:
         instrs = _stmt_instrs(
             ast.For(
                 init=ast.InitDecl(
-                    declaration=ast.VarDecl(variable_declaration=ast.VariableDeclaration(name=".Vi.0", init=None))
+                    declaration=ast.VarDecl(
+                        variable_declaration=ast.VariableDeclaration(name=".Vi.0", init=None, var_type=ast.IntType())
+                    )
                 ),
                 condition=None,
                 post=None,

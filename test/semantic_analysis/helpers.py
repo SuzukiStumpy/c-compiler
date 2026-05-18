@@ -13,17 +13,18 @@ from compiler.semantic_analysis import resolve
 # ---------------------------------------------------------------------------
 
 
-def _vd(name: str, init: ast.Exp | None = None) -> ast.D:
+def _vd(name: str, init: ast.Exp | None = None, var_type: ast.Type | None = None) -> ast.D:
     """Return a ``D`` block item wrapping a variable declaration.
 
     Args:
         name: The source-level variable name.
         init: Optional initialiser expression.
+        var_type: The declared type; defaults to ``IntType`` when omitted.
 
     Returns:
-        An ``ast.D`` wrapping ``ast.VarDecl(ast.VariableDeclaration(name, init))``.
+        An ``ast.D`` wrapping ``ast.VarDecl(ast.VariableDeclaration(name, init, var_type))``.
     """
-    return ast.D(ast.VarDecl(ast.VariableDeclaration(name, init)))
+    return ast.D(ast.VarDecl(ast.VariableDeclaration(name, init, var_type or ast.IntType())))
 
 
 def _program(body: tuple[ast.BlockItem, ...]) -> ast.Program:
@@ -43,6 +44,7 @@ def _program(body: tuple[ast.BlockItem, ...]) -> ast.Program:
                     name="main",
                     params=(),
                     body=body,
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
         )
@@ -90,18 +92,24 @@ def _resolved_body(body: tuple[ast.BlockItem, ...]) -> tuple[ast.BlockItem, ...]
     return _get_fn(resolve(_program(body))).body
 
 
-def _file_var(name: str, init: ast.Exp | None = None, sc: ast.StorageClass | None = None) -> ast.VarDecl:
+def _file_var(
+    name: str,
+    init: ast.Exp | None = None,
+    sc: ast.StorageClass | None = None,
+    var_type: ast.Type | None = None,
+) -> ast.VarDecl:
     """Return a top-level ``VarDecl`` with the given name, optional initialiser, and optional storage class.
 
     Args:
         name: The variable name.
         init: Optional initialiser expression.
         sc: Optional storage class specifier.
+        var_type: The declared type; defaults to ``IntType`` when omitted.
 
     Returns:
         An ``ast.VarDecl`` wrapping a ``VariableDeclaration``.
     """
-    return ast.VarDecl(ast.VariableDeclaration(name, init, sc))
+    return ast.VarDecl(ast.VariableDeclaration(name, init, var_type or ast.IntType(), sc))
 
 
 def _prog_with_decls(*decls: ast.Declaration) -> ast.Program:

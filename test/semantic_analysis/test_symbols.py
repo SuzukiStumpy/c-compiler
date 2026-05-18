@@ -84,7 +84,7 @@ class TestSymbolTablePopulation:
         """A block-scope ``static int x = 5;`` produces ``StaticAttr(Initial(5), globl=False)``
         keyed by the unique renamed identifier."""
         body = (
-            ast.D(ast.VarDecl(ast.VariableDeclaration("x", ast.Constant(5), ast.StorageClass.Static))),
+            ast.D(ast.VarDecl(ast.VariableDeclaration("x", ast.Constant(5), ast.IntType(), ast.StorageClass.Static))),
             ast.S(ast.Return(ast.Constant(0))),
         )
         _, symbols = resolve_with_symbols(_program(body))
@@ -103,7 +103,7 @@ class TestSymbolTablePopulation:
     def test_block_scope_static_without_init_produces_tentative_entry(self) -> None:
         """A block-scope ``static int x;`` produces ``StaticAttr(Tentative, globl=False)``."""
         body = (
-            ast.D(ast.VarDecl(ast.VariableDeclaration("x", None, ast.StorageClass.Static))),
+            ast.D(ast.VarDecl(ast.VariableDeclaration("x", None, ast.IntType(), ast.StorageClass.Static))),
             ast.S(ast.Return(ast.Constant(0))),
         )
         _, symbols = resolve_with_symbols(_program(body))
@@ -117,7 +117,7 @@ class TestSymbolTablePopulation:
         """A block-scope ``extern int x;`` produces ``StaticAttr(NoInitializer, globl=True)``
         keyed by the original (unrenamed) name."""
         body = (
-            ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))),
+            ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.IntType(), ast.StorageClass.Extern))),
             ast.S(ast.Return(ast.Constant(0))),
         )
         _, symbols = resolve_with_symbols(_program(body))
@@ -131,12 +131,14 @@ class TestSymbolTablePopulation:
         """When a file-scope definition ``int g = 4;`` exists and a block-scope ``extern int g;``
         also appears, the symbol table retains ``Initial(4)`` rather than ``NoInitializer``."""
         body = (
-            ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.StorageClass.Extern))),
+            ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.IntType(), ast.StorageClass.Extern))),
             ast.S(ast.Return(ast.Constant(0))),
         )
         program = _prog_with_decls(
             _file_var("g", ast.Constant(4)),
-            ast.FunDecl(ast.Function(name="main", params=(), body=body)),
+            ast.FunDecl(
+                ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            ),
         )
         _, symbols = resolve_with_symbols(program)
         entry = symbols["g"]
@@ -151,8 +153,17 @@ class TestSymbolTablePopulation:
     def test_function_forward_declaration_produces_not_defined_fun_attr(self) -> None:
         """A forward declaration ``void foo(void);`` produces ``FunAttr(defined=False, globl=True)``."""
         program = _prog_with_decls(
-            ast.FunDecl(ast.Function(name="foo", params=(), body=None)),
-            ast.FunDecl(ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))),
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            ),
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                )
+            ),
         )
         _, symbols = resolve_with_symbols(program)
         entry = symbols["foo"]
@@ -162,7 +173,12 @@ class TestSymbolTablePopulation:
 
     def test_function_definition_produces_defined_fun_attr(self) -> None:
         """A function definition produces ``FunAttr(defined=True, globl=True)``."""
-        fn = ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))
+        fn = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
         _, symbols = resolve_with_symbols(_prog_with_decls(ast.FunDecl(fn)))
         entry = symbols["main"]
         assert isinstance(entry.attrs, FunAttr)
@@ -177,10 +193,18 @@ class TestSymbolTablePopulation:
                     name="helper",
                     params=(),
                     body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                     storage_class=ast.StorageClass.Static,
                 )
             ),
-            ast.FunDecl(ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))),
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                )
+            ),
         )
         _, symbols = resolve_with_symbols(program)
         entry = symbols["helper"]
@@ -191,9 +215,25 @@ class TestSymbolTablePopulation:
     def test_forward_decl_then_definition_produces_defined_fun_attr(self) -> None:
         """A forward declaration followed by a definition yields ``FunAttr(defined=True)``."""
         program = _prog_with_decls(
-            ast.FunDecl(ast.Function(name="foo", params=(), body=None)),
-            ast.FunDecl(ast.Function(name="foo", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))),
-            ast.FunDecl(ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))),
+            ast.FunDecl(
+                ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+            ),
+            ast.FunDecl(
+                ast.Function(
+                    name="foo",
+                    params=(),
+                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                )
+            ),
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                )
+            ),
         )
         _, symbols = resolve_with_symbols(program)
         entry = symbols["foo"]
@@ -207,7 +247,14 @@ class TestSymbolTablePopulation:
     def test_resolved_external_function_has_globl_true(self) -> None:
         """A function without ``static`` is resolved with ``globl=True`` on its ``ast.Function`` node."""
         program = _prog_with_decls(
-            ast.FunDecl(ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),)))
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                )
+            )
         )
         resolved, _ = resolve_with_symbols(program)
         fn = _get_fn(resolved)
@@ -221,10 +268,18 @@ class TestSymbolTablePopulation:
                     name="helper",
                     params=(),
                     body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
                     storage_class=ast.StorageClass.Static,
                 )
             ),
-            ast.FunDecl(ast.Function(name="main", params=(), body=(ast.S(ast.Return(ast.Constant(0))),))),
+            ast.FunDecl(
+                ast.Function(
+                    name="main",
+                    params=(),
+                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                )
+            ),
         )
         resolved, _ = resolve_with_symbols(program)
         helper_fn = _get_fn(resolved, index=0)

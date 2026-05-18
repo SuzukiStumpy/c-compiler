@@ -223,6 +223,7 @@ class TestTacGeneratorErrors:
             name="main",
             params=(),
             body=(ast.S(statement=_FakeStmt()),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(CodeGenerationError):
             generate(ast.Program(declarations=(ast.FunDecl(fn),)), {})

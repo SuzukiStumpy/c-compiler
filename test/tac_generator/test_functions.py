@@ -21,7 +21,7 @@ def _make_function(name: str, body: ast.Block, params: tuple[ast.Parameter, ...]
     Returns:
         An ``ast.Function`` node with the given name, params, and body.
     """
-    return ast.Function(name=name, params=params, body=body)
+    return ast.Function(name=name, params=params, body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
 
 
 class TestTacGeneratorMultipleFunctions:
@@ -54,7 +54,11 @@ class TestTacGeneratorMultipleFunctions:
         """A function with ``body=None`` (forward declaration) is excluded from the TAC output."""
         prog = ast.Program(
             declarations=(
-                ast.FunDecl(ast.Function(name="declared_only", params=(), body=None)),
+                ast.FunDecl(
+                    ast.Function(
+                        name="declared_only", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+                    )
+                ),
                 ast.FunDecl(_make_function("defined", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
             )
         )
@@ -66,8 +70,12 @@ class TestTacGeneratorMultipleFunctions:
         """A program consisting solely of forward declarations yields an empty ``functions`` tuple."""
         prog = ast.Program(
             declarations=(
-                ast.FunDecl(ast.Function(name="f", params=(), body=None)),
-                ast.FunDecl(ast.Function(name="g", params=(), body=None)),
+                ast.FunDecl(
+                    ast.Function(name="f", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+                ),
+                ast.FunDecl(
+                    ast.Function(name="g", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
+                ),
             )
         )
         result = generate(prog, {})
@@ -163,7 +171,11 @@ class TestTacGeneratorFunDeclBlockItem:
 
     def test_fun_decl_block_item_produces_no_instructions(self) -> None:
         """A forward declaration inside a block contributes no TAC instructions."""
-        forward = ast.FunDecl(function_declaration=ast.Function(name="helper", params=(), body=None))
+        forward = ast.FunDecl(
+            function_declaration=ast.Function(
+                name="helper", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
+            )
+        )
         instrs = _instrs_for_body((ast.D(declaration=forward),))
         assert instrs == (tac.Return(val=tac.Constant(value=0)),)
 
