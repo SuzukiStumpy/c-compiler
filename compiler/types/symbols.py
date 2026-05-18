@@ -6,9 +6,10 @@ passes.
 
 Grammar::
 
-    symbol_table_entry = SymbolTableEntry(attrs)
+    symbol_table_entry = SymbolTableEntry(type, attrs)
     attrs              = StaticAttr(initial_value, bool globl)
                        | FunAttr(bool defined, bool globl)
+                       | LocalAttr
     initial_value      = Initial(int)
                        | Tentative
                        | NoInitializer
@@ -29,6 +30,8 @@ or ``extern`` variables.
 
 from abc import ABC
 from dataclasses import dataclass
+
+from compiler.syntax.ast.types import Type
 
 
 class InitialValue(ABC):
@@ -75,6 +78,16 @@ class StaticAttr(SymbolAttrs):
 
 
 @dataclass(frozen=True, slots=True)
+class LocalAttr(SymbolAttrs):
+    """Attributes for a local (automatic-storage-duration) variable or compiler temporary.
+
+    Carries no fields — its presence in the symbol table records the variable's
+    type (via ``SymbolTableEntry.t``) so that downstream passes can determine
+    register width without inspecting the original declaration.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class FunAttr(SymbolAttrs):
     """Attributes for a function declaration or definition.
 
@@ -92,10 +105,12 @@ class SymbolTableEntry:
     """A single entry in the program-wide symbol table.
 
     Attributes:
+        t: The C type of the symbol, carried through from the AST.
         attrs: The attribute variant that describes how this symbol should be
                treated by downstream compilation passes.
     """
 
+    t: Type
     attrs: SymbolAttrs
 
 

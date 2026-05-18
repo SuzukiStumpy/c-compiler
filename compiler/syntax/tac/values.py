@@ -1,12 +1,14 @@
 """Value nodes for the tac AST.
 
-Defines the ``Val`` abstract base class and its concrete variants.
-Each instruction form supported by the code generator is represented as a
-subclass of ``Val``.
+Defines the ``Val`` abstract base class and its concrete variants, plus the
+``StaticInit`` abstract base class and its concrete variants used to represent
+the initial value of a static variable in the data segment.
 """
 
 from abc import ABC
 from dataclasses import dataclass
+
+from compiler.syntax.ast.constants import Const
 
 
 class Val(ABC):
@@ -20,13 +22,14 @@ class Val(ABC):
 
 @dataclass(frozen=True, slots=True)
 class Constant(Val):
-    """Class representing an integer constant within the tac.
+    """Class representing a typed constant within the tac.
 
     Attributes:
-        value: The value of the constant
+        value: The constant, carrying both the integer value and its C type
+            (``ConstInt`` or ``ConstLong``).
     """
 
-    value: int
+    value: Const
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,3 +41,35 @@ class Var(Val):
     """
 
     value: str
+
+
+class StaticInit(ABC):
+    """Abstract base for static variable initialiser nodes.
+
+    Concrete variants carry the initial value for a static variable as it
+    appears in the data segment. They are distinct from ``Constant`` and
+    ``Var``: those are instruction operands; these are data-segment
+    initialisers only.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class IntInit(StaticInit):
+    """Initialiser for a static variable of C ``int`` type.
+
+    Attributes:
+        value: The initial integer value, as a plain Python int.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class LongInit(StaticInit):
+    """Initialiser for a static variable of C ``long`` type.
+
+    Attributes:
+        value: The initial integer value, as a plain Python int.
+    """
+
+    value: int

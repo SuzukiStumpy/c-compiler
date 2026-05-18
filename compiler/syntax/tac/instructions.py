@@ -65,6 +65,32 @@ class Binary(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class SignExtend(Instruction):
+    """Sign-extend a value from C ``int`` to C ``long``.
+
+    Attributes:
+        src: The ``int``-typed source value.
+        dst: The ``long``-typed destination value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class Truncate(Instruction):
+    """Truncate a value from C ``long`` to C ``int``.
+
+    Attributes:
+        src: The ``long``-typed source value.
+        dst: The ``int``-typed destination value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
 class Copy(Instruction):
     """Represents a copy operation with the tac
 

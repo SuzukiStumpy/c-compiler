@@ -15,52 +15,56 @@ class TestConvertSymbolsToTacky:
     """``_convert_symbols_to_tacky`` emits ``StaticVariable`` nodes from symbol-table entries."""
 
     def test_initial_entry_produces_static_variable_with_value(self) -> None:
-        """An ``Initial(7)`` entry produces ``StaticVariable(name, globl, 7)``."""
-        symbols = {"x": SymbolTableEntry(StaticAttr(init=Initial(7), globl=True))}
+        """An ``Initial(7)`` entry produces ``StaticVariable(name, globl, IntInit(7))``."""
+        symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(7), globl=True))}
         result = _convert_symbols_to_tacky(symbols)
-        assert result == [tac.StaticVariable(name="x", globl=True, init=7)]
+        assert result == [tac.StaticVariable(name="x", globl=True, t=ast.IntType(), init=tac.IntInit(7))]
 
     def test_tentative_entry_produces_static_variable_with_zero(self) -> None:
-        """A ``Tentative`` entry produces ``StaticVariable`` with ``init=0``."""
-        symbols = {"x": SymbolTableEntry(StaticAttr(init=Tentative(), globl=False))}
+        """A ``Tentative`` entry produces ``StaticVariable`` with ``init=IntInit(0)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False))}
         result = _convert_symbols_to_tacky(symbols)
-        assert result == [tac.StaticVariable(name="x", globl=False, init=0)]
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.IntType(), init=tac.IntInit(0))]
 
     def test_no_initializer_entry_is_skipped(self) -> None:
         """A ``NoInitializer`` entry (non-defining ``extern`` declaration) produces nothing."""
-        symbols = {"x": SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=True))}
+        symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=NoInitializer(), globl=True))}
         result = _convert_symbols_to_tacky(symbols)
         assert result == []
 
     def test_fun_attr_entry_is_skipped(self) -> None:
         """A ``FunAttr`` entry produces no ``StaticVariable``."""
-        symbols = {"foo": SymbolTableEntry(FunAttr(defined=True, globl=True))}
+        symbols = {
+            "foo": SymbolTableEntry(
+                t=ast.FunType(params=(), ret=ast.IntType()), attrs=FunAttr(defined=True, globl=True)
+            )
+        }
         result = _convert_symbols_to_tacky(symbols)
         assert result == []
 
     def test_globl_true_is_preserved(self) -> None:
         """``globl=True`` on the entry is reflected in the emitted ``StaticVariable``."""
-        symbols = {"g": SymbolTableEntry(StaticAttr(init=Initial(0), globl=True))}
+        symbols = {"g": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(0), globl=True))}
         result = _convert_symbols_to_tacky(symbols)
         assert result[0].globl is True
 
     def test_globl_false_is_preserved(self) -> None:
         """``globl=False`` on the entry is reflected in the emitted ``StaticVariable``."""
-        symbols = {"s": SymbolTableEntry(StaticAttr(init=Initial(0), globl=False))}
+        symbols = {"s": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(0), globl=False))}
         result = _convert_symbols_to_tacky(symbols)
         assert result[0].globl is False
 
     def test_name_is_preserved(self) -> None:
         """The symbol name is used verbatim as the ``StaticVariable.name``."""
-        symbols = {".Vstatic.3": SymbolTableEntry(StaticAttr(init=Tentative(), globl=False))}
+        symbols = {".Vstatic.3": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False))}
         result = _convert_symbols_to_tacky(symbols)
         assert result[0].name == ".Vstatic.3"
 
     def test_multiple_static_entries_all_emitted(self) -> None:
         """Multiple ``StaticAttr`` entries all produce corresponding ``StaticVariable`` nodes."""
         symbols = {
-            "a": SymbolTableEntry(StaticAttr(init=Initial(1), globl=True)),
-            "b": SymbolTableEntry(StaticAttr(init=Tentative(), globl=False)),
+            "a": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(1), globl=True)),
+            "b": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False)),
         }
         result = _convert_symbols_to_tacky(symbols)
         assert len(result) == 2
@@ -70,9 +74,11 @@ class TestConvertSymbolsToTacky:
     def test_mixed_entries_only_static_attr_emitted(self) -> None:
         """Only ``StaticAttr`` entries with ``Initial`` or ``Tentative`` produce output."""
         symbols = {
-            "g": SymbolTableEntry(StaticAttr(init=Initial(5), globl=True)),
-            "foo": SymbolTableEntry(FunAttr(defined=True, globl=True)),
-            "ext": SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=True)),
+            "g": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(5), globl=True)),
+            "foo": SymbolTableEntry(
+                t=ast.FunType(params=(), ret=ast.IntType()), attrs=FunAttr(defined=True, globl=True)
+            ),
+            "ext": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=NoInitializer(), globl=True)),
         }
         result = _convert_symbols_to_tacky(symbols)
         assert len(result) == 1
@@ -101,7 +107,7 @@ class TestTacGeneratorStaticLocalDeclarations:
                 ),
             )
         )
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
     def test_static_local_with_init_produces_no_instructions(self) -> None:
         """``static int x = 5;`` inside a function body contributes no inline instructions."""
@@ -111,7 +117,7 @@ class TestTacGeneratorStaticLocalDeclarations:
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
                             name=".Vx.0",
-                            init=ast.Constant(value=5),
+                            init=ast.Constant(value=ast.ConstInt(5)),
                             var_type=ast.IntType(),
                             storage_class=ast.StorageClass.Static,
                         )
@@ -119,7 +125,7 @@ class TestTacGeneratorStaticLocalDeclarations:
                 ),
             )
         )
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
     def test_extern_local_produces_no_instructions(self) -> None:
         """``extern int x;`` inside a function body contributes no instructions beyond the guard."""
@@ -134,7 +140,7 @@ class TestTacGeneratorStaticLocalDeclarations:
                 ),
             )
         )
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
 
 # ---------------------------------------------------------------------------
@@ -150,37 +156,37 @@ class TestTacGeneratorIntegrationWithSymbolTable:
         fn = ast.Function(
             name="main",
             params=(),
-            body=(ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+            body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         return ast.Program(declarations=(ast.FunDecl(fn),))
 
     def test_initial_symbol_produces_static_variable_in_top_level(self) -> None:
         """A symbol table entry with ``Initial`` produces a ``StaticVariable`` in ``top_level``."""
-        symbols = {"g": SymbolTableEntry(StaticAttr(init=Initial(42), globl=True))}
+        symbols = {"g": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(42), globl=True))}
         result = generate(self._minimal_prog(), symbols)
         static_vars = [t for t in result.top_level if isinstance(t, tac.StaticVariable)]
         assert len(static_vars) == 1
-        assert static_vars[0] == tac.StaticVariable(name="g", globl=True, init=42)
+        assert static_vars[0] == tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=tac.IntInit(42))
 
     def test_tentative_symbol_produces_zero_initialized_static_variable(self) -> None:
-        """A ``Tentative`` entry produces a ``StaticVariable`` with ``init=0``."""
-        symbols = {"t": SymbolTableEntry(StaticAttr(init=Tentative(), globl=False))}
+        """A ``Tentative`` entry produces a ``StaticVariable`` with ``init=IntInit(0)``."""
+        symbols = {"t": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False))}
         result = generate(self._minimal_prog(), symbols)
         static_vars = [t for t in result.top_level if isinstance(t, tac.StaticVariable)]
         assert len(static_vars) == 1
-        assert static_vars[0].init == 0
+        assert static_vars[0].init == tac.IntInit(0)
 
     def test_no_initializer_symbol_produces_no_static_variable(self) -> None:
         """A ``NoInitializer`` entry (non-defining ``extern``) produces no ``StaticVariable``."""
-        symbols = {"ext": SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=True))}
+        symbols = {"ext": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=NoInitializer(), globl=True))}
         result = generate(self._minimal_prog(), symbols)
         static_vars = [t for t in result.top_level if isinstance(t, tac.StaticVariable)]
         assert static_vars == []
 
     def test_static_variables_appear_before_functions_in_top_level(self) -> None:
         """``StaticVariable`` nodes precede ``Function`` nodes in ``top_level``."""
-        symbols = {"g": SymbolTableEntry(StaticAttr(init=Initial(1), globl=True))}
+        symbols = {"g": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial(1), globl=True))}
         result = generate(self._minimal_prog(), symbols)
         assert isinstance(result.top_level[0], tac.StaticVariable)
         assert isinstance(result.top_level[1], tac.Function)
@@ -209,7 +215,7 @@ class TestTacProgramFunctionsProperty:
         """``StaticVariable`` entries are excluded from ``.functions``."""
         program = tac.Program(
             top_level=(
-                tac.StaticVariable(name="g", globl=True, init=0),
+                tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=tac.IntInit(0)),
                 tac.Function(name="main"),
             )
         )
@@ -218,7 +224,9 @@ class TestTacProgramFunctionsProperty:
 
     def test_functions_empty_when_only_static_variables(self) -> None:
         """If ``top_level`` contains only ``StaticVariable`` nodes, ``.functions`` is empty."""
-        program = tac.Program(top_level=(tac.StaticVariable(name="g", globl=True, init=0),))
+        program = tac.Program(
+            top_level=(tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=tac.IntInit(0)),)
+        )
         assert program.functions == ()
 
     def test_functions_preserves_order(self) -> None:
@@ -249,7 +257,7 @@ class TestTacFunctionGlobl:
         return ast.Function(
             name=name,
             params=(),
-            body=(ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+            body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
             globl=globl,
         )

@@ -8,7 +8,9 @@ one form.
 from abc import ABC
 from dataclasses import dataclass
 
+from compiler.syntax.ast.types import Type
 from compiler.syntax.tac.instructions import Instruction
+from compiler.syntax.tac.values import StaticInit
 
 
 class TopLevel(ABC):
@@ -40,17 +42,20 @@ class Function(TopLevel):
 
 @dataclass(frozen=True, slots=True)
 class StaticVariable(TopLevel):
-    """A globpyally defined static variable declaration.
+    """A globally defined static variable declaration.
 
     Attributes:
-        name: The symbol representing the variable
+        name: The symbol representing the variable.
         globl: Whether the variable is declared with the ``.globl`` directive in the assembly.
-        init: The initial value of the variable
+        t: The C type of the variable, carried through from the main AST.
+        init: The initial value of the variable. Defaults to ``IntInit(0)`` or ``LongInit(0)``
+            when the source declaration carries no explicit initialiser.
     """
 
     name: str
     globl: bool
-    init: int
+    t: Type
+    init: StaticInit
 
 
 @dataclass(frozen=True, slots=True)

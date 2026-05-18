@@ -324,7 +324,7 @@ def _translate_val(val: tac.Val) -> asm.Operand:
     """
     match val:
         case tac.Constant(value=v):
-            return asm.Imm(value=v)
+            return asm.Imm(value=v.val)
         case tac.Var(value=name):
             return asm.Pseudo(name=name)
         case _:

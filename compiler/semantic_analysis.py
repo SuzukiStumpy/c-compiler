@@ -393,7 +393,9 @@ class SemanticAnalyser:
             # Only add a symbol table entry when the name hasn't been seen yet; file-scope
             # declarations take precedence and should not be downgraded to NoInitializer.
             if var_decl.name not in self._symbol_table:
-                self._symbol_table[var_decl.name] = SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=True))
+                self._symbol_table[var_decl.name] = SymbolTableEntry(
+                    t=var_decl.var_type, attrs=StaticAttr(init=NoInitializer(), globl=True)
+                )
             return var_decl
         else:
             if binding is not None and binding.from_current_block:
@@ -423,7 +425,9 @@ class SemanticAnalyser:
                     if isinstance(var_decl.init, ast.Constant)
                     else Tentative()
                 )
-                self._symbol_table[unique_name] = SymbolTableEntry(StaticAttr(init=static_init, globl=False))
+                self._symbol_table[unique_name] = SymbolTableEntry(
+                    t=var_decl.var_type, attrs=StaticAttr(init=static_init, globl=False)
+                )
             return ast.VariableDeclaration(unique_name, init, var_decl.var_type, var_decl.storage_class)
 
     def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
@@ -489,13 +493,15 @@ class SemanticAnalyser:
         if var_decl.init is not None:
             assert isinstance(var_decl.init, ast.Constant)
             self._symbol_table[var_decl.name] = SymbolTableEntry(
-                StaticAttr(init=Initial(var_decl.init.value), globl=globl)
+                t=var_decl.var_type, attrs=StaticAttr(init=Initial(var_decl.init.value), globl=globl)
             )
         elif var_decl.storage_class == StorageClass.Extern:
             # A non-defining extern declaration — add a NoInitializer entry only when the name
             # is entirely new; any existing Initial or Tentative entry takes precedence.
             if existing_entry is None:
-                self._symbol_table[var_decl.name] = SymbolTableEntry(StaticAttr(init=NoInitializer(), globl=globl))
+                self._symbol_table[var_decl.name] = SymbolTableEntry(
+                    t=var_decl.var_type, attrs=StaticAttr(init=NoInitializer(), globl=globl)
+                )
         else:
             # Tentative definition — upgrade from NoInitializer but never downgrade from Initial.
             if (
@@ -503,7 +509,9 @@ class SemanticAnalyser:
                 or isinstance(existing_entry.attrs, StaticAttr)
                 and isinstance(existing_entry.attrs.init, NoInitializer)
             ):
-                self._symbol_table[var_decl.name] = SymbolTableEntry(StaticAttr(init=Tentative(), globl=globl))
+                self._symbol_table[var_decl.name] = SymbolTableEntry(
+                    t=var_decl.var_type, attrs=StaticAttr(init=Tentative(), globl=globl)
+                )
         return var_decl
 
     def _validate_params_unique(self, fun: ast.Function) -> None:
@@ -585,7 +593,8 @@ class SemanticAnalyser:
             isinstance(prior_sym.attrs, FunAttr) and prior_sym.attrs.defined if prior_sym is not None else False
         )
         self._symbol_table[fun.name] = SymbolTableEntry(
-            FunAttr(defined=prior_defined or fun.body is not None, globl=fun_globl)
+            t=FunType(params=new_param_types, ret=ret_type),
+            attrs=FunAttr(defined=prior_defined or fun.body is not None, globl=fun_globl),
         )
         self._current_block_funs.add(fun.name)
 

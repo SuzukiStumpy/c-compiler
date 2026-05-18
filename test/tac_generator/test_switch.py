@@ -50,7 +50,7 @@ class TestTacGeneratorSwitch:
 
     def test_switch_no_cases_jumps_straight_to_break(self) -> None:
         """An empty switch body emits no comparisons and jumps directly to the break label."""
-        instrs = _stmt_instrs(_switch_stmt(ast.Constant(value=1), ()))
+        instrs = _stmt_instrs(_switch_stmt(ast.Constant(value=ast.ConstInt(1)), ()))
         label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
         assert f"break_{_SWITCH_ID}" in label_names
         # Only jump should be the unconditional one to break
@@ -62,14 +62,14 @@ class TestTacGeneratorSwitch:
         instrs = _stmt_instrs(
             _switch_stmt(
                 ast.Var(name="x"),
-                (ast.Case(value=ast.Constant(value=1), statement=ast.Null(), identifier=_SWITCH_ID),),
+                (ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null(), identifier=_SWITCH_ID),),
             )
         )
         binaries = [i for i in instrs if isinstance(i, tac.Binary)]
         assert len(binaries) == 1
         assert isinstance(binaries[0].operator, tac.Equal)
         assert binaries[0].src1 == tac.Var(value="x")
-        assert binaries[0].src2 == tac.Constant(value=1)
+        assert binaries[0].src2 == tac.Constant(value=ast.ConstInt(1))
         cond_jumps = [i for i in instrs if isinstance(i, tac.JumpIfNotZero)]
         assert len(cond_jumps) == 1
         assert cond_jumps[0].target == f"case_{_SWITCH_ID}_1"
@@ -80,8 +80,8 @@ class TestTacGeneratorSwitch:
             _switch_stmt(
                 ast.Var(name="x"),
                 (
-                    ast.Case(value=ast.Constant(value=1), statement=ast.Null(), identifier=_SWITCH_ID),
-                    ast.Case(value=ast.Constant(value=2), statement=ast.Null(), identifier=_SWITCH_ID),
+                    ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null(), identifier=_SWITCH_ID),
+                    ast.Case(value=ast.Constant(value=ast.ConstInt(2)), statement=ast.Null(), identifier=_SWITCH_ID),
                 ),
             )
         )
@@ -96,7 +96,7 @@ class TestTacGeneratorSwitch:
         instrs = _stmt_instrs(
             _switch_stmt(
                 ast.Var(name="x"),
-                (ast.Case(value=ast.Constant(value=1), statement=ast.Null(), identifier=_SWITCH_ID),),
+                (ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null(), identifier=_SWITCH_ID),),
             )
         )
         unconditional_jumps = [i for i in instrs if isinstance(i, tac.Jump)]
@@ -108,7 +108,7 @@ class TestTacGeneratorSwitch:
             _switch_stmt(
                 ast.Var(name="x"),
                 (
-                    ast.Case(value=ast.Constant(value=1), statement=ast.Null(), identifier=_SWITCH_ID),
+                    ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null(), identifier=_SWITCH_ID),
                     ast.Default(statement=ast.Null(), identifier=_SWITCH_ID),
                 ),
             )
@@ -121,7 +121,7 @@ class TestTacGeneratorSwitch:
         instrs = _stmt_instrs(
             _switch_stmt(
                 ast.Var(name="x"),
-                (ast.Case(value=ast.Constant(value=1), statement=ast.Null(), identifier=_SWITCH_ID),),
+                (ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null(), identifier=_SWITCH_ID),),
             )
         )
         labels = [i for i in instrs if isinstance(i, tac.Label)]
@@ -132,7 +132,7 @@ class TestTacGeneratorSwitch:
         instrs = _stmt_instrs(
             _switch_stmt(
                 ast.Var(name="x"),
-                (ast.Case(value=ast.Constant(value=42), statement=ast.Null(), identifier=_SWITCH_ID),),
+                (ast.Case(value=ast.Constant(value=ast.ConstInt(42)), statement=ast.Null(), identifier=_SWITCH_ID),),
             )
         )
         label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
@@ -155,8 +155,8 @@ class TestTacGeneratorSwitch:
             _switch_stmt(
                 ast.Var(name="x"),
                 (
-                    ast.Case(value=ast.Constant(value=10), statement=ast.Null(), identifier=_SWITCH_ID),
-                    ast.Case(value=ast.Constant(value=20), statement=ast.Null(), identifier=_SWITCH_ID),
+                    ast.Case(value=ast.Constant(value=ast.ConstInt(10)), statement=ast.Null(), identifier=_SWITCH_ID),
+                    ast.Case(value=ast.Constant(value=ast.ConstInt(20)), statement=ast.Null(), identifier=_SWITCH_ID),
                 ),
             )
         )
@@ -171,7 +171,7 @@ class TestTacGeneratorSwitch:
                 ast.Var(name="x"),
                 (
                     ast.Case(
-                        value=ast.Constant(value=1),
+                        value=ast.Constant(value=ast.ConstInt(1)),
                         statement=ast.Break(identifier=_SWITCH_ID),
                         identifier=_SWITCH_ID,
                     ),
@@ -188,35 +188,35 @@ class TestTacGeneratorSwitch:
                 ast.Var(name="x"),
                 (
                     ast.Case(
-                        value=ast.Constant(value=1),
-                        statement=ast.Return(exp=ast.Constant(value=1)),
+                        value=ast.Constant(value=ast.ConstInt(1)),
+                        statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(1))),
                         identifier=_SWITCH_ID,
                     ),
                     ast.Case(
-                        value=ast.Constant(value=2),
-                        statement=ast.Return(exp=ast.Constant(value=2)),
+                        value=ast.Constant(value=ast.ConstInt(2)),
+                        statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(2))),
                         identifier=_SWITCH_ID,
                     ),
                     ast.Default(
-                        statement=ast.Return(exp=ast.Constant(value=0)),
+                        statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))),
                         identifier=_SWITCH_ID,
                     ),
                 ),
             )
         )
         # Dispatch: cmp x==1, jump; cmp x==2, jump; jump default
-        assert isinstance(instrs[0], tac.Binary) and instrs[0].src2 == tac.Constant(value=1)
+        assert isinstance(instrs[0], tac.Binary) and instrs[0].src2 == tac.Constant(value=ast.ConstInt(1))
         assert isinstance(instrs[1], tac.JumpIfNotZero) and instrs[1].target == f"case_{_SWITCH_ID}_1"
-        assert isinstance(instrs[2], tac.Binary) and instrs[2].src2 == tac.Constant(value=2)
+        assert isinstance(instrs[2], tac.Binary) and instrs[2].src2 == tac.Constant(value=ast.ConstInt(2))
         assert isinstance(instrs[3], tac.JumpIfNotZero) and instrs[3].target == f"case_{_SWITCH_ID}_2"
         assert isinstance(instrs[4], tac.Jump) and instrs[4].target == f"default_{_SWITCH_ID}"
         # Body: case 1 label, return 1, case 2 label, return 2, default label, return 0
         assert isinstance(instrs[5], tac.Label) and instrs[5].name == f"case_{_SWITCH_ID}_1"
-        assert isinstance(instrs[6], tac.Return) and instrs[6].val == tac.Constant(value=1)
+        assert isinstance(instrs[6], tac.Return) and instrs[6].val == tac.Constant(value=ast.ConstInt(1))
         assert isinstance(instrs[7], tac.Label) and instrs[7].name == f"case_{_SWITCH_ID}_2"
-        assert isinstance(instrs[8], tac.Return) and instrs[8].val == tac.Constant(value=2)
+        assert isinstance(instrs[8], tac.Return) and instrs[8].val == tac.Constant(value=ast.ConstInt(2))
         assert isinstance(instrs[9], tac.Label) and instrs[9].name == f"default_{_SWITCH_ID}"
-        assert isinstance(instrs[10], tac.Return) and instrs[10].val == tac.Constant(value=0)
+        assert isinstance(instrs[10], tac.Return) and instrs[10].val == tac.Constant(value=ast.ConstInt(0))
         assert isinstance(instrs[11], tac.Label) and instrs[11].name == f"break_{_SWITCH_ID}"
 
 
@@ -227,25 +227,25 @@ class TestTacGeneratorCaseDefault:
         """``case 5: return 5;`` → ``Label("case_<id>_5")`` + ``Return(5)``."""
         instrs = _stmt_instrs(
             ast.Case(
-                value=ast.Constant(value=5),
-                statement=ast.Return(exp=ast.Constant(value=5)),
+                value=ast.Constant(value=ast.ConstInt(5)),
+                statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(5))),
                 identifier=_SWITCH_ID,
             )
         )
         assert isinstance(instrs[0], tac.Label)
         assert instrs[0].name == f"case_{_SWITCH_ID}_5"
         assert isinstance(instrs[1], tac.Return)
-        assert instrs[1].val == tac.Constant(value=5)
+        assert instrs[1].val == tac.Constant(value=ast.ConstInt(5))
 
     def test_default_emits_label_then_statement(self) -> None:
         """``default: return 0;`` → ``Label("default_<id>")`` + ``Return(0)``."""
         instrs = _stmt_instrs(
             ast.Default(
-                statement=ast.Return(exp=ast.Constant(value=0)),
+                statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))),
                 identifier=_SWITCH_ID,
             )
         )
         assert isinstance(instrs[0], tac.Label)
         assert instrs[0].name == f"default_{_SWITCH_ID}"
         assert isinstance(instrs[1], tac.Return)
-        assert instrs[1].val == tac.Constant(value=0)
+        assert instrs[1].val == tac.Constant(value=ast.ConstInt(0))

@@ -34,7 +34,7 @@ class TestTacGeneratorBreakContinue:
         instrs = _stmt_instrs(ast.Break(identifier=".L.while.0"))
         assert instrs == (
             tac.Jump(target="break_.L.while.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_continue_produces_jump_with_continue_prefix(self) -> None:
@@ -42,7 +42,7 @@ class TestTacGeneratorBreakContinue:
         instrs = _stmt_instrs(ast.Continue(identifier=".L.while.0"))
         assert instrs == (
             tac.Jump(target="continue_.L.while.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_break_embeds_identifier_in_target(self) -> None:
@@ -68,31 +68,33 @@ class TestTacGeneratorWhileLoop:
 
     def test_while_full_sequence(self) -> None:
         """``while (1) {}`` → continue-label, JumpIfZero, back-jump, break-label, guard."""
-        instrs = _stmt_instrs(ast.While(condition=ast.Constant(value=1), body=ast.Null(), identifier=".L.while.0"))
+        instrs = _stmt_instrs(
+            ast.While(condition=ast.Constant(value=ast.ConstInt(1)), body=ast.Null(), identifier=".L.while.0")
+        )
         assert instrs == (
             tac.Label(name="continue_.L.while.0"),
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="break_.L.while.0"),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="break_.L.while.0"),
             tac.Jump(target="continue_.L.while.0"),
             tac.Label(name="break_.L.while.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_while_body_instructions_between_condition_and_back_jump(self) -> None:
         """Body instructions appear between the condition check and the back-jump."""
         instrs = _stmt_instrs(
             ast.While(
-                condition=ast.Constant(value=1),
-                body=ast.Return(exp=ast.Constant(value=42)),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                body=ast.Return(exp=ast.Constant(value=ast.ConstInt(42))),
                 identifier=".L.while.0",
             )
         )
         assert instrs == (
             tac.Label(name="continue_.L.while.0"),
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="break_.L.while.0"),
-            tac.Return(val=tac.Constant(value=42)),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="break_.L.while.0"),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(42))),
             tac.Jump(target="continue_.L.while.0"),
             tac.Label(name="break_.L.while.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_while_non_constant_condition_evaluated_before_jump(self) -> None:
@@ -111,13 +113,17 @@ class TestTacGeneratorWhileLoop:
 
     def test_while_back_jump_targets_continue_label(self) -> None:
         """The back-jump at the end of the body targets the continue label, not the break label."""
-        instrs = _stmt_instrs(ast.While(condition=ast.Constant(value=1), body=ast.Null(), identifier=".L.while.0"))
+        instrs = _stmt_instrs(
+            ast.While(condition=ast.Constant(value=ast.ConstInt(1)), body=ast.Null(), identifier=".L.while.0")
+        )
         back_jump = next(i for i in instrs if isinstance(i, tac.Jump))
         assert back_jump.target == "continue_.L.while.0"
 
     def test_while_condition_jump_targets_break_label(self) -> None:
         """The exit condition check jumps to the break label on a false condition."""
-        instrs = _stmt_instrs(ast.While(condition=ast.Constant(value=1), body=ast.Null(), identifier=".L.while.0"))
+        instrs = _stmt_instrs(
+            ast.While(condition=ast.Constant(value=ast.ConstInt(1)), body=ast.Null(), identifier=".L.while.0")
+        )
         cond_jump = next(i for i in instrs if isinstance(i, tac.JumpIfZero))
         assert cond_jump.target == "break_.L.while.0"
 
@@ -125,7 +131,7 @@ class TestTacGeneratorWhileLoop:
         """A ``Break`` inside the loop body produces a ``Jump`` targeting the loop's break label."""
         instrs = _stmt_instrs(
             ast.While(
-                condition=ast.Constant(value=1),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 body=ast.Break(identifier=".L.while.0"),
                 identifier=".L.while.0",
             )
@@ -137,7 +143,7 @@ class TestTacGeneratorWhileLoop:
         """A ``Continue`` inside the loop body produces a ``Jump`` targeting the loop's continue label."""
         instrs = _stmt_instrs(
             ast.While(
-                condition=ast.Constant(value=1),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 body=ast.Continue(identifier=".L.while.0"),
                 identifier=".L.while.0",
             )
@@ -149,8 +155,8 @@ class TestTacGeneratorWhileLoop:
         """Nested while loops with distinct identifiers produce non-overlapping label sets."""
         instrs = _stmt_instrs(
             ast.While(
-                condition=ast.Constant(value=1),
-                body=ast.While(condition=ast.Constant(value=1), body=ast.Null(), identifier=".L.while.1"),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                body=ast.While(condition=ast.Constant(value=ast.ConstInt(1)), body=ast.Null(), identifier=".L.while.1"),
                 identifier=".L.while.0",
             )
         )
@@ -169,21 +175,25 @@ class TestTacGeneratorDoWhileLoop:
 
     def test_do_while_full_sequence(self) -> None:
         """``do {} while (1);`` → start-label, continue-label, JumpIfNotZero, break-label, guard."""
-        instrs = _stmt_instrs(ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=1), identifier=".L.do.0"))
+        instrs = _stmt_instrs(
+            ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=ast.ConstInt(1)), identifier=".L.do.0")
+        )
         assert instrs == (
             tac.Label(name="start_.L.do.0"),
             tac.Label(name="continue_.L.do.0"),
-            tac.JumpIfNotZero(condition=tac.Constant(value=1), target="start_.L.do.0"),
+            tac.JumpIfNotZero(condition=tac.Constant(value=ast.ConstInt(1)), target="start_.L.do.0"),
             tac.Label(name="break_.L.do.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_do_while_body_precedes_condition(self) -> None:
         """Body instructions appear before the condition check."""
         instrs = _stmt_instrs(
             ast.DoWhile(
-                body=ast.Expression(exp=ast.Assignment(lvalue=ast.Var(name="x"), rvalue=ast.Constant(value=1))),
-                condition=ast.Constant(value=1),
+                body=ast.Expression(
+                    exp=ast.Assignment(lvalue=ast.Var(name="x"), rvalue=ast.Constant(value=ast.ConstInt(1)))
+                ),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 identifier=".L.do.0",
             )
         )
@@ -193,13 +203,17 @@ class TestTacGeneratorDoWhileLoop:
 
     def test_do_while_uses_jump_if_not_zero(self) -> None:
         """The back-edge fires on a non-zero condition (loop continues); ``JumpIfZero`` is not emitted."""
-        instrs = _stmt_instrs(ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=1), identifier=".L.do.0"))
+        instrs = _stmt_instrs(
+            ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=ast.ConstInt(1)), identifier=".L.do.0")
+        )
         assert any(isinstance(i, tac.JumpIfNotZero) for i in instrs)
         assert not any(isinstance(i, tac.JumpIfZero) for i in instrs)
 
     def test_do_while_back_jump_targets_start_label(self) -> None:
         """The conditional back-jump at the bottom of the loop targets the start label."""
-        instrs = _stmt_instrs(ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=1), identifier=".L.do.0"))
+        instrs = _stmt_instrs(
+            ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=ast.ConstInt(1)), identifier=".L.do.0")
+        )
         jump = next(i for i in instrs if isinstance(i, tac.JumpIfNotZero))
         assert jump.target == "start_.L.do.0"
 
@@ -208,7 +222,7 @@ class TestTacGeneratorDoWhileLoop:
         instrs = _stmt_instrs(
             ast.DoWhile(
                 body=ast.Break(identifier=".L.do.0"),
-                condition=ast.Constant(value=1),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 identifier=".L.do.0",
             )
         )
@@ -234,7 +248,7 @@ class TestTacGeneratorForLoop:
             tac.Label(name="continue_.L.for.0"),
             tac.Jump(target="start_.L.for.0"),
             tac.Label(name="break_.L.for.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_for_unconditional_emits_no_jump_if_zero(self) -> None:
@@ -249,7 +263,7 @@ class TestTacGeneratorForLoop:
         instrs = _stmt_instrs(
             ast.For(
                 init=ast.InitExp(exp=None),
-                condition=ast.Constant(value=1),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 post=None,
                 body=ast.Null(),
                 identifier=".L.for.0",
@@ -257,18 +271,20 @@ class TestTacGeneratorForLoop:
         )
         assert instrs == (
             tac.Label(name="start_.L.for.0"),
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="break_.L.for.0"),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="break_.L.for.0"),
             tac.Label(name="continue_.L.for.0"),
             tac.Jump(target="start_.L.for.0"),
             tac.Label(name="break_.L.for.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_for_init_expression_emitted_before_start_label(self) -> None:
         """An init expression is emitted before the loop's start label."""
         instrs = _stmt_instrs(
             ast.For(
-                init=ast.InitExp(exp=ast.Assignment(lvalue=ast.Var(name="i"), rvalue=ast.Constant(value=0))),
+                init=ast.InitExp(
+                    exp=ast.Assignment(lvalue=ast.Var(name="i"), rvalue=ast.Constant(value=ast.ConstInt(0)))
+                ),
                 condition=None,
                 post=None,
                 body=ast.Null(),
@@ -293,7 +309,7 @@ class TestTacGeneratorForLoop:
                 init=ast.InitDecl(
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
-                            name=".Vi.0", init=ast.Constant(value=0), var_type=ast.IntType()
+                            name=".Vi.0", init=ast.Constant(value=ast.ConstInt(0)), var_type=ast.IntType()
                         )
                     )
                 ),
@@ -303,7 +319,7 @@ class TestTacGeneratorForLoop:
                 identifier=".L.for.0",
             )
         )
-        assert instrs[0] == tac.Copy(src=tac.Constant(value=0), dst=tac.Var(value=".Vi.0"))
+        assert instrs[0] == tac.Copy(src=tac.Constant(value=ast.ConstInt(0)), dst=tac.Var(value=".Vi.0"))
         assert instrs[1] == tac.Label(name="start_.L.for.0")
 
     def test_for_init_declaration_without_init_produces_no_copy(self) -> None:
@@ -329,7 +345,7 @@ class TestTacGeneratorForLoop:
             ast.For(
                 init=ast.InitExp(exp=None),
                 condition=None,
-                post=ast.Assignment(lvalue=ast.Var(name="i"), rvalue=ast.Constant(value=1)),
+                post=ast.Assignment(lvalue=ast.Var(name="i"), rvalue=ast.Constant(value=ast.ConstInt(1))),
                 body=ast.Null(),
                 identifier=".L.for.0",
             )
@@ -343,7 +359,7 @@ class TestTacGeneratorForLoop:
         instrs = _stmt_instrs(
             ast.For(
                 init=ast.InitExp(exp=None),
-                condition=ast.Constant(value=1),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 post=None,
                 body=ast.Null(),
                 identifier=".L.for.0",

@@ -52,7 +52,7 @@ class TestTacGeneratorNullStatement:
     def test_null_statement_produces_no_instructions(self) -> None:
         """A ``Null`` statement contributes nothing; only the function guard is present."""
         instrs = _instrs_for_body((ast.S(statement=ast.Null()),))
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
 
 # ---------------------------------------------------------------------------
@@ -65,13 +65,19 @@ class TestTacGeneratorExpressionStatement:
 
     def test_expression_statement_with_constant_produces_no_instructions(self) -> None:
         """A constant expression statement has no side-effects; only the function guard is present."""
-        instrs = _instrs_for_body((ast.S(statement=ast.Expression(exp=ast.Constant(value=42))),))
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        instrs = _instrs_for_body((ast.S(statement=ast.Expression(exp=ast.Constant(value=ast.ConstInt(42)))),))
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
     def test_expression_statement_emits_expression_instructions(self) -> None:
         """A non-trivial expression statement emits the expression's instructions."""
         instrs = _instrs_for_body(
-            (ast.S(statement=ast.Expression(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)))),)
+            (
+                ast.S(
+                    statement=ast.Expression(
+                        exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))
+                    )
+                ),
+            )
         )
         assert len(instrs) == 2
         assert isinstance(instrs[0], tac.Unary)
@@ -79,7 +85,13 @@ class TestTacGeneratorExpressionStatement:
     def test_expression_statement_result_is_not_returned(self) -> None:
         """An expression statement does not return the expression's computed value."""
         instrs = _instrs_for_body(
-            (ast.S(statement=ast.Expression(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)))),)
+            (
+                ast.S(
+                    statement=ast.Expression(
+                        exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))
+                    )
+                ),
+            )
         )
         assert isinstance(instrs[0], tac.Unary)
         expr_result = instrs[0].dst
@@ -105,7 +117,7 @@ class TestTacGeneratorDeclarations:
                 ),
             )
         )
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
     def test_declaration_with_constant_init_produces_copy(self) -> None:
         """``int x = 5;`` emits ``Copy(Constant(5), Var("x"))`` followed by the guard."""
@@ -114,15 +126,15 @@ class TestTacGeneratorDeclarations:
                 ast.D(
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
-                            name="x", init=ast.Constant(value=5), var_type=ast.IntType()
+                            name="x", init=ast.Constant(value=ast.ConstInt(5)), var_type=ast.IntType()
                         )
                     )
                 ),
             )
         )
         assert instrs == (
-            tac.Copy(src=tac.Constant(value=5), dst=tac.Var(value="x")),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Copy(src=tac.Constant(value=ast.ConstInt(5)), dst=tac.Var(value="x")),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_declaration_copy_destination_is_the_declared_name(self) -> None:
@@ -132,7 +144,7 @@ class TestTacGeneratorDeclarations:
                 ast.D(
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
-                            name=".Vmy_var.3", init=ast.Constant(value=0), var_type=ast.IntType()
+                            name=".Vmy_var.3", init=ast.Constant(value=ast.ConstInt(0)), var_type=ast.IntType()
                         )
                     )
                 ),
@@ -149,7 +161,7 @@ class TestTacGeneratorDeclarations:
                     declaration=ast.VarDecl(
                         variable_declaration=ast.VariableDeclaration(
                             name="x",
-                            init=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
+                            init=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1))),
                             var_type=ast.IntType(),
                         )
                     )
@@ -175,16 +187,16 @@ class TestTacGeneratorIfStatement:
         """``if (1) return 2;`` → ``JumpIfZero``, then-body, end-label, guard."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Constant(value=1),
-                then=ast.Return(exp=ast.Constant(value=2)),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                then=ast.Return(exp=ast.Constant(value=ast.ConstInt(2))),
                 else_=None,
             )
         )
         assert instrs == (
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_end.0"),
-            tac.Return(val=tac.Constant(value=2)),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="if_end.0"),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(2))),
             tac.Label(name="if_end.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_if_with_else_full_sequence(self) -> None:
@@ -192,27 +204,27 @@ class TestTacGeneratorIfStatement:
         then-body, ``Jump``, else-label, else-body, end-label, guard."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Constant(value=1),
-                then=ast.Return(exp=ast.Constant(value=2)),
-                else_=ast.Return(exp=ast.Constant(value=3)),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                then=ast.Return(exp=ast.Constant(value=ast.ConstInt(2))),
+                else_=ast.Return(exp=ast.Constant(value=ast.ConstInt(3))),
             )
         )
         assert instrs == (
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_else.0"),
-            tac.Return(val=tac.Constant(value=2)),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="if_else.0"),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(2))),
             tac.Jump(target="if_end.1"),
             tac.Label(name="if_else.0"),
-            tac.Return(val=tac.Constant(value=3)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(3))),
             tac.Label(name="if_end.1"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_condition_instructions_precede_jump(self) -> None:
         """A non-trivial condition is fully evaluated before the conditional jump."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Unary(operator=ast.Not(), exp=ast.Constant(value=1)),
-                then=ast.Return(exp=ast.Constant(value=0)),
+                condition=ast.Unary(operator=ast.Not(), exp=ast.Constant(value=ast.ConstInt(1))),
+                then=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))),
                 else_=None,
             )
         )
@@ -225,44 +237,44 @@ class TestTacGeneratorIfStatement:
         """``if (1);`` — a ``Null`` then-branch contributes no instructions between the jump and the end-label."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Constant(value=1),
+                condition=ast.Constant(value=ast.ConstInt(1)),
                 then=ast.Null(),
                 else_=None,
             )
         )
         assert instrs == (
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_end.0"),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="if_end.0"),
             tac.Label(name="if_end.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_null_else_clause_emits_no_else_instructions(self) -> None:
         """``if (1) return 2; else;`` — a ``Null`` else-branch produces adjacent labels."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Constant(value=1),
-                then=ast.Return(exp=ast.Constant(value=2)),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                then=ast.Return(exp=ast.Constant(value=ast.ConstInt(2))),
                 else_=ast.Null(),
             )
         )
         assert instrs == (
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_else.0"),
-            tac.Return(val=tac.Constant(value=2)),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="if_else.0"),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(2))),
             tac.Jump(target="if_end.1"),
             tac.Label(name="if_else.0"),
             tac.Label(name="if_end.1"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_labels_are_unique_across_nested_if_statements(self) -> None:
         """Nested ``if`` statements each receive distinct label names."""
         inner = ast.If(
-            condition=ast.Constant(value=2),
-            then=ast.Return(exp=ast.Constant(value=1)),
+            condition=ast.Constant(value=ast.ConstInt(2)),
+            then=ast.Return(exp=ast.Constant(value=ast.ConstInt(1))),
             else_=None,
         )
         outer = ast.If(
-            condition=ast.Constant(value=1),
+            condition=ast.Constant(value=ast.ConstInt(1)),
             then=inner,
             else_=None,
         )
@@ -285,7 +297,7 @@ class TestTacGeneratorGotoStatement:
         instrs = _stmt_instrs(ast.Goto(target="foo"))
         assert instrs == (
             tac.Jump(target="main.foo"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_goto_target_name_is_preserved(self) -> None:
@@ -314,16 +326,16 @@ class TestTacGeneratorLabeledStatement:
         instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Null()))
         assert instrs == (
             tac.Label(name="main.foo"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_label_wrapping_return_full_sequence(self) -> None:
         """``foo: return 1;`` → ``Label("main.foo")``, ``Return(1)``, guard."""
-        instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Return(exp=ast.Constant(value=1))))
+        instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(1)))))
         assert instrs == (
             tac.Label(name="main.foo"),
-            tac.Return(val=tac.Constant(value=1)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(1))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_label_name_is_preserved(self) -> None:
@@ -336,27 +348,30 @@ class TestTacGeneratorLabeledStatement:
     def test_nested_labels_produce_two_consecutive_label_instructions(self) -> None:
         """``foo: bar: return 0;`` → ``Label("main.foo")``, ``Label("main.bar")``, ``Return(0)``, guard."""
         instrs = _stmt_instrs(
-            ast.Label(name="foo", statement=ast.Label(name="bar", statement=ast.Return(exp=ast.Constant(value=0))))
+            ast.Label(
+                name="foo",
+                statement=ast.Label(name="bar", statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),
+            )
         )
         assert instrs == (
             tac.Label(name="main.foo"),
             tac.Label(name="main.bar"),
-            tac.Return(val=tac.Constant(value=0)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_goto_and_label_together_in_function(self) -> None:
         """``goto end; end: return 0;`` produces ``Jump("main.end")``, ``Label("main.end")``, ``Return``, guard."""
         body = (
             ast.S(statement=ast.Goto(target="end")),
-            ast.S(statement=ast.Label(name="end", statement=ast.Return(exp=ast.Constant(value=0)))),
+            ast.S(statement=ast.Label(name="end", statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))))),
         )
         instrs = _instrs_for_body(body)
         assert instrs == (
             tac.Jump(target="main.end"),
             tac.Label(name="main.end"),
-            tac.Return(val=tac.Constant(value=0)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_label_wrapping_compound_block(self) -> None:
@@ -364,13 +379,13 @@ class TestTacGeneratorLabeledStatement:
         instrs = _stmt_instrs(
             ast.Label(
                 name="foo",
-                statement=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=0))),)),
+                statement=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),)),
             )
         )
         assert instrs == (
             tac.Label(name="main.foo"),
-            tac.Return(val=tac.Constant(value=0)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_user_label_name_does_not_clash_with_generated_labels(self) -> None:
@@ -379,8 +394,8 @@ class TestTacGeneratorLabeledStatement:
             ast.S(statement=ast.Label(name="user_lbl", statement=ast.Null())),
             ast.S(
                 statement=ast.If(
-                    condition=ast.Constant(value=1),
-                    then=ast.Return(exp=ast.Constant(value=0)),
+                    condition=ast.Constant(value=ast.ConstInt(1)),
+                    then=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))),
                     else_=None,
                 )
             ),
@@ -402,14 +417,16 @@ class TestTacGeneratorCompoundStatement:
     def test_empty_compound_produces_no_instructions(self) -> None:
         """``{}`` contributes no instructions; only the function guard remains."""
         instrs = _stmt_instrs(ast.Compound(body=()))
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
     def test_compound_with_return_statement(self) -> None:
         """``{ return 42; }`` emits ``Return(42)`` followed by the guard."""
-        instrs = _stmt_instrs(ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=42))),)))
+        instrs = _stmt_instrs(
+            ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(42)))),))
+        )
         assert instrs == (
-            tac.Return(val=tac.Constant(value=42)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(42))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_compound_uninitialised_declaration_produces_no_instructions(self) -> None:
@@ -427,7 +444,7 @@ class TestTacGeneratorCompoundStatement:
                 )
             )
         )
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
     def test_compound_initialised_declaration_produces_copy(self) -> None:
         """``{ int x = 5; }`` emits ``Copy(Constant(5), Var(x))`` followed by the guard."""
@@ -437,7 +454,7 @@ class TestTacGeneratorCompoundStatement:
                     ast.D(
                         declaration=ast.VarDecl(
                             variable_declaration=ast.VariableDeclaration(
-                                name=".Vx.0", init=ast.Constant(value=5), var_type=ast.IntType()
+                                name=".Vx.0", init=ast.Constant(value=ast.ConstInt(5)), var_type=ast.IntType()
                             )
                         )
                     ),
@@ -445,8 +462,8 @@ class TestTacGeneratorCompoundStatement:
             )
         )
         assert instrs == (
-            tac.Copy(src=tac.Constant(value=5), dst=tac.Var(value=".Vx.0")),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Copy(src=tac.Constant(value=ast.ConstInt(5)), dst=tac.Var(value=".Vx.0")),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_compound_items_emitted_in_order(self) -> None:
@@ -457,7 +474,7 @@ class TestTacGeneratorCompoundStatement:
                     ast.D(
                         declaration=ast.VarDecl(
                             variable_declaration=ast.VariableDeclaration(
-                                name=".Vx.0", init=ast.Constant(value=1), var_type=ast.IntType()
+                                name=".Vx.0", init=ast.Constant(value=ast.ConstInt(1)), var_type=ast.IntType()
                             )
                         )
                     ),
@@ -466,9 +483,9 @@ class TestTacGeneratorCompoundStatement:
             )
         )
         assert instrs == (
-            tac.Copy(src=tac.Constant(value=1), dst=tac.Var(value=".Vx.0")),
+            tac.Copy(src=tac.Constant(value=ast.ConstInt(1)), dst=tac.Var(value=".Vx.0")),
             tac.Return(val=tac.Var(value=".Vx.0")),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_compound_flattens_with_surrounding_instructions(self) -> None:
@@ -477,7 +494,7 @@ class TestTacGeneratorCompoundStatement:
             ast.D(
                 declaration=ast.VarDecl(
                     variable_declaration=ast.VariableDeclaration(
-                        name=".Va.0", init=ast.Constant(value=1), var_type=ast.IntType()
+                        name=".Va.0", init=ast.Constant(value=ast.ConstInt(1)), var_type=ast.IntType()
                     )
                 )
             ),
@@ -487,7 +504,7 @@ class TestTacGeneratorCompoundStatement:
                         ast.D(
                             declaration=ast.VarDecl(
                                 variable_declaration=ast.VariableDeclaration(
-                                    name=".Vb.1", init=ast.Constant(value=2), var_type=ast.IntType()
+                                    name=".Vb.1", init=ast.Constant(value=ast.ConstInt(2)), var_type=ast.IntType()
                                 )
                             )
                         ),
@@ -498,70 +515,80 @@ class TestTacGeneratorCompoundStatement:
         )
         instrs = _instrs_for_body(body)
         assert instrs == (
-            tac.Copy(src=tac.Constant(value=1), dst=tac.Var(value=".Va.0")),
-            tac.Copy(src=tac.Constant(value=2), dst=tac.Var(value=".Vb.1")),
+            tac.Copy(src=tac.Constant(value=ast.ConstInt(1)), dst=tac.Var(value=".Va.0")),
+            tac.Copy(src=tac.Constant(value=ast.ConstInt(2)), dst=tac.Var(value=".Vb.1")),
             tac.Return(val=tac.Var(value=".Va.0")),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_nested_compound_blocks_flatten_completely(self) -> None:
         """``{{ return 1; }}`` produces a single flat ``Return(1)`` with no scope markers."""
         instrs = _stmt_instrs(
             ast.Compound(
-                body=(ast.S(statement=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=1))),))),)
+                body=(
+                    ast.S(
+                        statement=ast.Compound(
+                            body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(1)))),)
+                        )
+                    ),
+                )
             )
         )
         assert instrs == (
-            tac.Return(val=tac.Constant(value=1)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(1))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_compound_as_then_branch_of_if(self) -> None:
         """``if (1) { return 2; }`` translates to the standard conditional jump sequence."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Constant(value=1),
-                then=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=2))),)),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                then=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(2)))),)),
                 else_=None,
             )
         )
         assert instrs == (
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_end.0"),
-            tac.Return(val=tac.Constant(value=2)),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="if_end.0"),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(2))),
             tac.Label(name="if_end.0"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_compound_as_else_branch_of_if(self) -> None:
         """``if (1) return 2; else { return 3; }`` translates to the standard if-else sequence."""
         instrs = _if_instrs(
             ast.If(
-                condition=ast.Constant(value=1),
-                then=ast.Return(exp=ast.Constant(value=2)),
-                else_=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=3))),)),
+                condition=ast.Constant(value=ast.ConstInt(1)),
+                then=ast.Return(exp=ast.Constant(value=ast.ConstInt(2))),
+                else_=ast.Compound(body=(ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(3)))),)),
             )
         )
         assert instrs == (
-            tac.JumpIfZero(condition=tac.Constant(value=1), target="if_else.0"),
-            tac.Return(val=tac.Constant(value=2)),
+            tac.JumpIfZero(condition=tac.Constant(value=ast.ConstInt(1)), target="if_else.0"),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(2))),
             tac.Jump(target="if_end.1"),
             tac.Label(name="if_else.0"),
-            tac.Return(val=tac.Constant(value=3)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(3))),
             tac.Label(name="if_end.1"),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_label_inside_compound_produces_tac_label(self) -> None:
         """A labeled statement inside a compound block emits a ``tac.Label`` at the correct position."""
         instrs = _stmt_instrs(
             ast.Compound(
-                body=(ast.S(statement=ast.Label(name="inner", statement=ast.Return(exp=ast.Constant(value=0)))),)
+                body=(
+                    ast.S(
+                        statement=ast.Label(name="inner", statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))))
+                    ),
+                )
             )
         )
         assert instrs == (
             tac.Label(name="main.inner"),
-            tac.Return(val=tac.Constant(value=0)),
-            tac.Return(val=tac.Constant(value=0)),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_unknown_block_item_type_inside_compound_raises(self) -> None:

@@ -31,8 +31,12 @@ class TestTacGeneratorMultipleFunctions:
         """A program with two definitions yields two entries in ``tac.Program.functions``."""
         prog = ast.Program(
             declarations=(
-                ast.FunDecl(_make_function("foo", (ast.S(statement=ast.Return(exp=ast.Constant(value=1))),))),
-                ast.FunDecl(_make_function("bar", (ast.S(statement=ast.Return(exp=ast.Constant(value=2))),))),
+                ast.FunDecl(
+                    _make_function("foo", (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(1)))),))
+                ),
+                ast.FunDecl(
+                    _make_function("bar", (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(2)))),))
+                ),
             )
         )
         result = generate(prog, {})
@@ -42,8 +46,12 @@ class TestTacGeneratorMultipleFunctions:
         """The TAC functions appear in the same order as the source definitions."""
         prog = ast.Program(
             declarations=(
-                ast.FunDecl(_make_function("alpha", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
-                ast.FunDecl(_make_function("beta", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
+                ast.FunDecl(
+                    _make_function("alpha", (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),))
+                ),
+                ast.FunDecl(
+                    _make_function("beta", (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),))
+                ),
             )
         )
         result = generate(prog, {})
@@ -59,7 +67,9 @@ class TestTacGeneratorMultipleFunctions:
                         name="declared_only", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType())
                     )
                 ),
-                ast.FunDecl(_make_function("defined", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
+                ast.FunDecl(
+                    _make_function("defined", (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),))
+                ),
             )
         )
         result = generate(prog, {})
@@ -88,13 +98,25 @@ class TestTacGeneratorMultipleFunctions:
                 ast.FunDecl(
                     _make_function(
                         "f",
-                        (ast.S(statement=ast.Return(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)))),),
+                        (
+                            ast.S(
+                                statement=ast.Return(
+                                    exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))
+                                )
+                            ),
+                        ),
                     )
                 ),
                 ast.FunDecl(
                     _make_function(
                         "g",
-                        (ast.S(statement=ast.Return(exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)))),),
+                        (
+                            ast.S(
+                                statement=ast.Return(
+                                    exp=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(2)))
+                                )
+                            ),
+                        ),
                     )
                 ),
             )
@@ -122,7 +144,7 @@ class TestTacGeneratorFunctionParameters:
                 ast.FunDecl(
                     _make_function(
                         "f",
-                        (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+                        (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),),
                         params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
                     )
                 ),
@@ -138,7 +160,7 @@ class TestTacGeneratorFunctionParameters:
                 ast.FunDecl(
                     _make_function(
                         "add",
-                        (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),),
+                        (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),),
                         params=(
                             ast.Parameter(param_type=ast.IntType(), name="a"),
                             ast.Parameter(param_type=ast.IntType(), name="b"),
@@ -154,7 +176,9 @@ class TestTacGeneratorFunctionParameters:
         """A function with no parameters has an empty ``params`` tuple."""
         prog = ast.Program(
             declarations=(
-                ast.FunDecl(_make_function("main", (ast.S(statement=ast.Return(exp=ast.Constant(value=0))),))),
+                ast.FunDecl(
+                    _make_function("main", (ast.S(statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0)))),))
+                ),
             )
         )
         result = generate(prog, {})
@@ -177,7 +201,7 @@ class TestTacGeneratorFunDeclBlockItem:
             )
         )
         instrs = _instrs_for_body((ast.D(declaration=forward),))
-        assert instrs == (tac.Return(val=tac.Constant(value=0)),)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(0))),)
 
 
 # ---------------------------------------------------------------------------
@@ -211,22 +235,26 @@ class TestTacGeneratorFunctionCall:
 
     def test_constant_arg_becomes_tac_constant(self) -> None:
         """A constant argument is passed directly as a ``tac.Constant``."""
-        instrs = _body(ast.FunctionCall(name="foo", args=[ast.Constant(value=42)]))
+        instrs = _body(ast.FunctionCall(name="foo", args=[ast.Constant(value=ast.ConstInt(42))]))
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
-        assert funcall.args == (tac.Constant(value=42),)
+        assert funcall.args == (tac.Constant(value=ast.ConstInt(42)),)
 
     def test_multiple_constant_args_preserved_in_order(self) -> None:
         """Multiple constant arguments appear in the ``FunCall.args`` tuple in declaration order."""
-        instrs = _body(ast.FunctionCall(name="add", args=[ast.Constant(value=1), ast.Constant(value=2)]))
+        instrs = _body(
+            ast.FunctionCall(
+                name="add", args=[ast.Constant(value=ast.ConstInt(1)), ast.Constant(value=ast.ConstInt(2))]
+            )
+        )
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
-        assert funcall.args == (tac.Constant(value=1), tac.Constant(value=2))
+        assert funcall.args == (tac.Constant(value=ast.ConstInt(1)), tac.Constant(value=ast.ConstInt(2)))
 
     def test_expression_arg_emitted_before_funcall(self) -> None:
         """A non-trivial argument expression is fully evaluated before the ``FunCall`` is emitted."""
         instrs = _body(
             ast.FunctionCall(
                 name="f",
-                args=[ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1))],
+                args=[ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))],
             )
         )
         unary_idx = next(i for i, x in enumerate(instrs) if isinstance(x, tac.Unary))
@@ -238,7 +266,7 @@ class TestTacGeneratorFunctionCall:
         instrs = _body(
             ast.FunctionCall(
                 name="f",
-                args=[ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1))],
+                args=[ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))],
             )
         )
         unary = next(i for i in instrs if isinstance(i, tac.Unary))
@@ -251,14 +279,14 @@ class TestTacGeneratorFunctionCall:
             ast.FunctionCall(
                 name="f",
                 args=[
-                    ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=1)),
-                    ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=2)),
+                    ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1))),
+                    ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(2))),
                 ],
             )
         )
         unaries = [i for i in instrs if isinstance(i, tac.Unary)]
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
         assert len(unaries) == 2
-        assert unaries[0].src == tac.Constant(value=1)
-        assert unaries[1].src == tac.Constant(value=2)
+        assert unaries[0].src == tac.Constant(value=ast.ConstInt(1))
+        assert unaries[1].src == tac.Constant(value=ast.ConstInt(2))
         assert funcall.args == (unaries[0].dst, unaries[1].dst)

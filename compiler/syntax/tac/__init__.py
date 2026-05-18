@@ -6,8 +6,10 @@ mirrors the ASDL grammar for the supported assembly subset:
 
     program             = Program(top_level*)
     top_level           = Function(identifier, bool global, identifier* params, instruction* body)
-                        | StaticVariable(identifier, bool global, int init)
+                        | StaticVariable(identifier, bool global, type t,static_init init)
     instruction         = Return(val)
+                        | SignExtend(val src, val dst)
+                        | Truncate(val src, val dst)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
                         | Copy(val src, val dst)
@@ -16,7 +18,7 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | JumpIfNotZero(val condition, identifier target)
                         | Label(identifier)
                         | FunCall(identifier fun_name, val* args, val dst)
-    val                 = Constant(int) | Var(identifier)
+    val                 = Constant(const) | Var(identifier)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
@@ -51,6 +53,8 @@ from compiler.syntax.tac.instructions import (
     JumpIfZero,
     Label,
     Return,
+    SignExtend,
+    Truncate,
     Unary,
 )
 from compiler.syntax.tac.operators import (
@@ -76,7 +80,7 @@ from compiler.syntax.tac.operators import (
     Subtract,
     UnaryOperator,
 )
-from compiler.syntax.tac.values import Constant, Val, Var
+from compiler.syntax.tac.values import Constant, IntInit, LongInit, StaticInit, Val, Var
 
 __all__ = [
     "StaticVariable",
@@ -98,6 +102,8 @@ __all__ = [
     "Function",
     "Instruction",
     "Return",
+    "SignExtend",
+    "Truncate",
     "Unary",
     "Binary",
     "UnaryOperator",
@@ -117,4 +123,7 @@ __all__ = [
     "Val",
     "Constant",
     "Var",
+    "StaticInit",
+    "IntInit",
+    "LongInit",
 ]

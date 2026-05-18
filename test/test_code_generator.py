@@ -10,6 +10,8 @@ import pytest
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.code_generator import generate
+from compiler.syntax.ast.constants import ConstInt
+from compiler.syntax.ast.types import IntType
 from compiler.utils.exceptions import CodeGenerationError
 
 
@@ -27,7 +29,7 @@ def _simple_tac_program(value: int = 0, name: str = "main") -> tac.Program:
         top_level=(
             tac.Function(
                 name=name,
-                body=(tac.Return(val=tac.Constant(value=value)),),
+                body=(tac.Return(val=tac.Constant(value=ConstInt(value))),),
             ),
         )
     )
@@ -103,8 +105,8 @@ def test_multiple_return_statements_produce_instruction_pairs() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Return(val=tac.Constant(value=1)),
-                    tac.Return(val=tac.Constant(value=2)),
+                    tac.Return(val=tac.Constant(value=ConstInt(1))),
+                    tac.Return(val=tac.Constant(value=ConstInt(2))),
                 ),
             ),
         )
@@ -129,7 +131,7 @@ def test_unary_negate_produces_allocate_mov_unary_mov_ret() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=5), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstInt(5)), dst=tac.Var(value="tmp.0")),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -152,7 +154,9 @@ def test_unary_complement_uses_not_operator() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Complement(), src=tac.Constant(value=1), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(
+                        operator=tac.Complement(), src=tac.Constant(value=ConstInt(1)), dst=tac.Var(value="tmp.0")
+                    ),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -171,7 +175,7 @@ def test_stack_allocation_is_multiple_of_16() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=1), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstInt(1)), dst=tac.Var(value="tmp.0")),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -190,7 +194,7 @@ def test_no_pseudo_operands_in_output() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=3), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstInt(3)), dst=tac.Var(value="tmp.0")),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -218,7 +222,9 @@ def test_chained_temps_produce_no_mem_mem_mov() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Complement(), src=tac.Constant(value=2), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(
+                        operator=tac.Complement(), src=tac.Constant(value=ConstInt(2)), dst=tac.Var(value="tmp.0")
+                    ),
                     tac.Unary(operator=tac.Negate(), src=tac.Var(value="tmp.0"), dst=tac.Var(value="tmp.1")),
                     tac.Return(val=tac.Var(value="tmp.1")),
                 ),
@@ -269,7 +275,7 @@ def _binary_tac_program(op: tac.BinaryOperator, src1: tac.Val, src2: tac.Val) ->
 
 def test_binary_add_produces_asm_binary_with_r11_scratch() -> None:
     """``Binary(Add, …)`` uses ``%r11d`` as the scratch accumulator register."""
-    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     binary = result.definitions[0].instructions[1]
     assert isinstance(binary, asm.Binary)
     assert binary.dst == asm.Register(asm.Registers.R11)
@@ -277,7 +283,7 @@ def test_binary_add_produces_asm_binary_with_r11_scratch() -> None:
 
 def test_binary_add_operator_is_asm_add() -> None:
     """``tac.Add()`` maps to ``asm.Add()`` inside the ``Binary`` instruction."""
-    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     binary = result.definitions[0].instructions[1]
     assert isinstance(binary, asm.Binary)
     assert binary.operator == asm.Add()
@@ -285,7 +291,7 @@ def test_binary_add_operator_is_asm_add() -> None:
 
 def test_binary_subtract_operator_is_asm_sub() -> None:
     """``tac.Subtract()`` maps to ``asm.Sub()`` inside the ``Binary`` instruction."""
-    result = generate(_binary_tac_program(tac.Subtract(), tac.Constant(5), tac.Constant(3)))
+    result = generate(_binary_tac_program(tac.Subtract(), tac.Constant(ConstInt(5)), tac.Constant(ConstInt(3))))
     binary = result.definitions[0].instructions[1]
     assert isinstance(binary, asm.Binary)
     assert binary.operator == asm.Sub()
@@ -293,7 +299,7 @@ def test_binary_subtract_operator_is_asm_sub() -> None:
 
 def test_binary_multiply_operator_is_asm_mult() -> None:
     """``tac.Multiply()`` maps to ``asm.Mult()`` inside the ``Binary`` instruction."""
-    result = generate(_binary_tac_program(tac.Multiply(), tac.Constant(4), tac.Constant(3)))
+    result = generate(_binary_tac_program(tac.Multiply(), tac.Constant(ConstInt(4)), tac.Constant(ConstInt(3))))
     binary = result.definitions[0].instructions[1]
     assert isinstance(binary, asm.Binary)
     assert binary.operator == asm.Mult()
@@ -301,7 +307,7 @@ def test_binary_multiply_operator_is_asm_mult() -> None:
 
 def test_binary_add_result_moved_from_r11_to_stack() -> None:
     """After the ``Binary`` instruction, the result is moved from ``%r11d`` to the stack slot."""
-    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     # AllocateStack, Binary, Mov(R11, Stack(-4)), Mov(Stack(-4), AX), Ret
     mov = result.definitions[0].instructions[2]
     assert mov == asm.Mov(src=asm.Register(asm.Registers.R11), dst=asm.Stack(offset=-4))
@@ -309,7 +315,7 @@ def test_binary_add_result_moved_from_r11_to_stack() -> None:
 
 def test_binary_add_instruction_count() -> None:
     """``Binary(Add, c, c)`` + ``Return`` produces exactly 5 instructions."""
-    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     assert len(result.definitions[0].instructions) == 5
 
 
@@ -320,20 +326,20 @@ def test_binary_add_instruction_count() -> None:
 
 def test_divide_loads_dividend_into_ax() -> None:
     """``Binary(Divide, …)`` moves the dividend into ``%eax`` as the first instruction."""
-    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(2))))
     # AllocateStack, Mov(Imm(10), AX), Cdq, Mov(Imm(2), R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
     assert result.definitions[0].instructions[1] == asm.Mov(src=asm.Imm(value=10), dst=asm.Register(asm.Registers.AX))
 
 
 def test_divide_emits_cdq_after_dividend_load() -> None:
     """``Cdq`` follows the dividend ``Mov`` to sign-extend ``%eax`` into ``%edx:%eax``."""
-    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(2))))
     assert isinstance(result.definitions[0].instructions[2], asm.Cdq)
 
 
 def test_divide_result_comes_from_ax() -> None:
     """The quotient ``Mov`` sources from ``%eax``."""
-    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(2))))
     # After fixup: AllocateStack, Mov(10, AX), Cdq, Mov(2, R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
     quotient_mov = result.definitions[0].instructions[5]
     assert isinstance(quotient_mov, asm.Mov)
@@ -347,7 +353,7 @@ def test_divide_result_comes_from_ax() -> None:
 
 def test_remainder_result_comes_from_dx() -> None:
     """The remainder ``Mov`` sources from ``%edx``, not ``%eax``."""
-    result = generate(_binary_tac_program(tac.Remainder(), tac.Constant(10), tac.Constant(3)))
+    result = generate(_binary_tac_program(tac.Remainder(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(3))))
     # AllocateStack, Mov(10, AX), Cdq, Mov(3, R11), Idiv(R11), Mov(DX, Stack), Mov(Stack, AX), Ret
     remainder_mov = result.definitions[0].instructions[5]
     assert isinstance(remainder_mov, asm.Mov)
@@ -356,7 +362,7 @@ def test_remainder_result_comes_from_dx() -> None:
 
 def test_remainder_emits_cdq() -> None:
     """``Cdq`` is emitted for remainder just as for divide."""
-    result = generate(_binary_tac_program(tac.Remainder(), tac.Constant(7), tac.Constant(3)))
+    result = generate(_binary_tac_program(tac.Remainder(), tac.Constant(ConstInt(7)), tac.Constant(ConstInt(3))))
     assert isinstance(result.definitions[0].instructions[2], asm.Cdq)
 
 
@@ -367,7 +373,7 @@ def test_remainder_emits_cdq() -> None:
 
 def test_idiv_immediate_divisor_routed_through_r11() -> None:
     """An immediate divisor is moved into ``%r11d`` before ``idivl``."""
-    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(10), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Divide(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(2))))
     # AllocateStack, Mov(10, AX), Cdq, Mov(2, R11), Idiv(R11), ...
     mov_r11 = result.definitions[0].instructions[3]
     idiv = result.definitions[0].instructions[4]
@@ -382,7 +388,9 @@ def test_idiv_memory_divisor_not_routed_through_r11() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Binary(operator=tac.Divide(), src1=tac.Constant(10), src2=tac.Var("b"), dst=tac.Var("tmp.0")),
+                    tac.Binary(
+                        operator=tac.Divide(), src1=tac.Constant(ConstInt(10)), src2=tac.Var("b"), dst=tac.Var("tmp.0")
+                    ),
                     tac.Return(val=tac.Var("tmp.0")),
                 ),
             ),
@@ -402,7 +410,7 @@ def test_idiv_memory_divisor_not_routed_through_r11() -> None:
 
 def test_no_pseudo_operands_after_binary_code_gen() -> None:
     """No ``Pseudo`` operands survive into the final binary instruction output."""
-    result = generate(_binary_tac_program(tac.Add(), tac.Constant(1), tac.Constant(2)))
+    result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     for instr in result.definitions[0].instructions:
         match instr:
             case asm.Binary(src1=src1, src2=src2):
@@ -422,7 +430,11 @@ class TestBitwiseAndOrXorCodeGen:
 
     def _instructions(self, op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
         """Generate instructions for ``return 3 <op> 5;`` with two constants."""
-        return generate(_binary_tac_program(op, tac.Constant(3), tac.Constant(5))).definitions[0].instructions
+        return (
+            generate(_binary_tac_program(op, tac.Constant(ConstInt(3)), tac.Constant(ConstInt(5))))
+            .definitions[0]
+            .instructions
+        )
 
     @pytest.mark.parametrize(
         ("tac_op", "asm_op_type"),
@@ -468,8 +480,8 @@ def _shift_tac_program(op: tac.BinaryOperator, value: int, count: int) -> tac.Pr
                 body=(
                     tac.Binary(
                         operator=op,
-                        src1=tac.Constant(value),
-                        src2=tac.Constant(count),
+                        src1=tac.Constant(ConstInt(value)),
+                        src2=tac.Constant(ConstInt(count)),
                         dst=tac.Var(value="tmp.0"),
                     ),
                     tac.Return(val=tac.Var(value="tmp.0")),
@@ -574,8 +586,8 @@ def _relational_tac_program(
                 body=(
                     tac.Binary(
                         operator=op,
-                        src1=src1 if src1 is not None else tac.Constant(value=1),
-                        src2=src2 if src2 is not None else tac.Constant(value=2),
+                        src1=src1 if src1 is not None else tac.Constant(value=ConstInt(1)),
+                        src2=src2 if src2 is not None else tac.Constant(value=ConstInt(2)),
                         dst=tac.Var(value="tmp.0"),
                     ),
                     tac.Return(val=tac.Var(value="tmp.0")),
@@ -655,19 +667,19 @@ class TestJumpAndLabelCodeGen:
 
     def test_jump_produces_jmp(self) -> None:
         """``tac.Jump(target)`` lowers to ``asm.Jmp(label)``."""
-        result = generate(self._program(tac.Jump(target="end"), tac.Return(val=tac.Constant(value=0))))
+        result = generate(self._program(tac.Jump(target="end"), tac.Return(val=tac.Constant(value=ConstInt(0)))))
         assert any(isinstance(i, asm.Jmp) and i.label == "end" for i in result.definitions[0].instructions)
 
     def test_label_produces_asm_label(self) -> None:
         """``tac.Label(name)`` lowers to ``asm.Label(name)``."""
-        result = generate(self._program(tac.Label(name="loop"), tac.Return(val=tac.Constant(value=0))))
+        result = generate(self._program(tac.Label(name="loop"), tac.Return(val=tac.Constant(value=ConstInt(0)))))
         assert any(isinstance(i, asm.Label) and i.name == "loop" for i in result.definitions[0].instructions)
 
     def test_copy_produces_mov(self) -> None:
         """``tac.Copy(src, dst)`` lowers to a single ``asm.Mov``."""
         result = generate(
             self._program(
-                tac.Copy(src=tac.Constant(value=7), dst=tac.Var(value="x")),
+                tac.Copy(src=tac.Constant(value=ConstInt(7)), dst=tac.Var(value="x")),
                 tac.Return(val=tac.Var(value="x")),
             )
         )
@@ -679,7 +691,7 @@ class TestJumpAndLabelCodeGen:
         result = generate(
             self._program(
                 tac.JumpIfZero(condition=tac.Var(value="x"), target="end"),
-                tac.Return(val=tac.Constant(value=0)),
+                tac.Return(val=tac.Constant(value=ConstInt(0))),
             )
         )
         jmpcc_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.JmpCC)]
@@ -692,7 +704,7 @@ class TestJumpAndLabelCodeGen:
         result = generate(
             self._program(
                 tac.JumpIfNotZero(condition=tac.Var(value="x"), target="loop"),
-                tac.Return(val=tac.Constant(value=0)),
+                tac.Return(val=tac.Constant(value=ConstInt(0))),
             )
         )
         jmpcc_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.JmpCC)]
@@ -733,7 +745,7 @@ class TestCmpPseudoReplacement:
                     body=(
                         tac.JumpIfZero(condition=tac.Var(value="x"), target="end"),
                         tac.Label(name="end"),
-                        tac.Return(val=tac.Constant(value=0)),
+                        tac.Return(val=tac.Constant(value=ConstInt(0))),
                     ),
                 ),
             )
@@ -772,7 +784,7 @@ class TestCmpFixup:
     def test_cmp_stack_imm_imm_case_fires_first(self) -> None:
         """``Cmp(Stack, Imm)`` is handled by the Imm fixup: op2 goes to ``%r11d``, op1 stays as Stack."""
         # src1=Constant → Imm becomes op2 of Cmp; src2=Var → Stack becomes op1 of Cmp
-        result = generate(_relational_tac_program(tac.Equal(), tac.Constant(5), tac.Var("b")))
+        result = generate(_relational_tac_program(tac.Equal(), tac.Constant(ConstInt(5)), tac.Var("b")))
         cmp_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.Cmp)]
         assert len(cmp_instrs) == 1
         cmp = cmp_instrs[0]
@@ -796,7 +808,7 @@ def _program_with_statics(*static_names: str, body: tuple[tac.Instruction, ...])
         A ``tac.Program`` whose ``top_level`` begins with a ``StaticVariable`` for each
         name in ``static_names``, followed by a single ``main`` function.
     """
-    statics = tuple(tac.StaticVariable(name=n, globl=True, init=0) for n in static_names)
+    statics = tuple(tac.StaticVariable(name=n, globl=True, t=IntType(), init=tac.IntInit(0)) for n in static_names)
     return tac.Program(top_level=statics + (tac.Function(name="main", body=body),))
 
 
@@ -826,8 +838,8 @@ class TestStaticVariablePseudoReplacement:
         program = _program_with_statics(
             "g",
             body=(
-                tac.Copy(src=tac.Constant(7), dst=tac.Var("g")),
-                tac.Return(val=tac.Constant(0)),
+                tac.Copy(src=tac.Constant(ConstInt(7)), dst=tac.Var("g")),
+                tac.Return(val=tac.Constant(ConstInt(0))),
             ),
         )
         instrs = _fn_instructions(program)
@@ -845,7 +857,7 @@ class TestStaticVariablePseudoReplacement:
         program = _program_with_statics(
             "g",
             body=(
-                tac.Copy(src=tac.Constant(1), dst=tac.Var("local")),
+                tac.Copy(src=tac.Constant(ConstInt(1)), dst=tac.Var("local")),
                 tac.Return(val=tac.Var("local")),
             ),
         )
@@ -887,7 +899,7 @@ class TestDataOperandFixup:
             "y",
             body=(
                 tac.Copy(src=tac.Var("x"), dst=tac.Var("y")),
-                tac.Return(val=tac.Constant(0)),
+                tac.Return(val=tac.Constant(ConstInt(0))),
             ),
         )
         for instr in _fn_instructions(program):
@@ -917,7 +929,7 @@ class TestDataOperandFixup:
             "g",
             body=(
                 tac.Copy(src=tac.Var("local"), dst=tac.Var("g")),
-                tac.Return(val=tac.Constant(0)),
+                tac.Return(val=tac.Constant(ConstInt(0))),
             ),
         )
         for instr in _fn_instructions(program):
@@ -971,12 +983,12 @@ def _seven_arg_call_program(*extra_top_level: tac.TopLevel, seventh_arg: tac.Val
             tac.FunCall(
                 name="foo",
                 args=(
-                    tac.Constant(1),
-                    tac.Constant(2),
-                    tac.Constant(3),
-                    tac.Constant(4),
-                    tac.Constant(5),
-                    tac.Constant(6),
+                    tac.Constant(ConstInt(1)),
+                    tac.Constant(ConstInt(2)),
+                    tac.Constant(ConstInt(3)),
+                    tac.Constant(ConstInt(4)),
+                    tac.Constant(ConstInt(5)),
+                    tac.Constant(ConstInt(6)),
                     seventh_arg,
                 ),
                 dst=tac.Var("result"),
@@ -1001,7 +1013,7 @@ class TestPushMemOperandFixup:
 
     def test_push_data_operand_expanded(self) -> None:
         """A stack-passed static variable is not emitted as a direct ``Push(Data)``."""
-        static = tac.StaticVariable(name="g", globl=True, init=0)
+        static = tac.StaticVariable(name="g", globl=True, t=IntType(), init=tac.IntInit(0))
         program = _seven_arg_call_program(static, seventh_arg=tac.Var("g"))
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Push):
