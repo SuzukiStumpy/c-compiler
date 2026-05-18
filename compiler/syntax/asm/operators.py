@@ -1,8 +1,9 @@
 """Unary operator nodes for the assembly AST.
 
 Defines the ``UnaryOperator`` abstract base class and its concrete variants.
-Each operator form corresponds to a single x86 mnemonic (``negl``, ``notl``)
-and is represented as a concrete frozen dataclass subclassing ``UnaryOperator``.
+Each operator form corresponds to a pair of x86 mnemonics (``negl``/``negq``,
+``notl``/``notq``) and is represented as a concrete frozen dataclass subclassing
+``UnaryOperator``.
 
 Consumers should use structural pattern matching (``match``/``case``) or call
 ``emit()`` rather than inspecting the concrete type directly.
@@ -10,6 +11,8 @@ Consumers should use structural pattern matching (``match``/``case``) or call
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+from compiler.syntax.asm.values import AssemblyType
 
 
 class UnaryOperator(ABC):
@@ -22,44 +25,53 @@ class UnaryOperator(ABC):
     """
 
     @abstractmethod
-    def emit(self) -> str:
-        """Return the assembly mnemonic for this operator.
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the assembly mnemonic for this operator at the given operand size.
+
+        Args:
+            assembly_type: Selects between the 32-bit (``l``) and 64-bit (``q``) form.
 
         Returns:
-            The instruction mnemonic string (e.g. ``"negl"`` or ``"notl"``).
+            The instruction mnemonic string (e.g. ``"negl"`` or ``"negq"``).
         """
 
 
 @dataclass(frozen=True, slots=True)
 class Neg(UnaryOperator):
-    """The ``negl`` instruction: arithmetic (two's-complement) negation.
+    """The ``negl``/``negq`` instruction: arithmetic (two's-complement) negation.
 
     Negates its single operand in place.
     """
 
-    def emit(self) -> str:
-        """Return the ``negl`` mnemonic.
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``negl`` or ``negq`` mnemonic.
+
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"negl"``.
+            ``"negl"`` for Longword, ``"negq"`` for Quadword.
         """
-        return "negl"
+        return "negl" if assembly_type == AssemblyType.Longword else "negq"
 
 
 @dataclass(frozen=True, slots=True)
 class Not(UnaryOperator):
-    """The ``notl`` instruction: bitwise complement.
+    """The ``notl``/``notq`` instruction: bitwise complement.
 
     Inverts every bit of its single operand in place.
     """
 
-    def emit(self) -> str:
-        """Return the ``notl`` mnemonic.
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``notl`` or ``notq`` mnemonic.
+
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"notl"``.
+            ``"notl"`` for Longword, ``"notq"`` for Quadword.
         """
-        return "notl"
+        return "notl" if assembly_type == AssemblyType.Longword else "notq"
 
 
 class BinaryOperator(ABC):
@@ -72,109 +84,108 @@ class BinaryOperator(ABC):
     """
 
     @abstractmethod
-    def emit(self) -> str:
-        """Return the assembly mnemonic for this operator.
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the assembly mnemonic for this operator at the given operand size.
+
+        Args:
+            assembly_type: Selects between the 32-bit (``l``) and 64-bit (``q``) form.
 
         Returns:
-            The instruction mnemonic string (e.g. ``"addl"``, ``"subl"``, or
-            ``"imull"``).
+            The instruction mnemonic string (e.g. ``"addl"`` or ``"addq"``).
         """
 
 
 @dataclass(frozen=True, slots=True)
 class Add(BinaryOperator):
-    """The ``addl`` instruction: addition.
+    """The ``addl``/``addq`` instruction: addition."""
 
-    Adds the first operand to the second operand, storing the result in place
-    in the second operand.
-    """
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``addl`` or ``addq`` mnemonic.
 
-    def emit(self) -> str:
-        """Return the ``addl`` mnemonic.
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"addl"``.
+            ``"addl"`` for Longword, ``"addq"`` for Quadword.
         """
-        return "addl"
+        return "addl" if assembly_type == AssemblyType.Longword else "addq"
 
 
 @dataclass(frozen=True, slots=True)
 class Sub(BinaryOperator):
-    """The ``subl`` instruction: subtraction.
+    """The ``subl``/``subq`` instruction: subtraction."""
 
-    Subtracts the first operand from the second operand, storing the result in
-    place in the second operand.
-    """
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``subl`` or ``subq`` mnemonic.
 
-    def emit(self) -> str:
-        """Return the ``subl`` mnemonic.
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"subl"``.
+            ``"subl"`` for Longword, ``"subq"`` for Quadword.
         """
-        return "subl"
+        return "subl" if assembly_type == AssemblyType.Longword else "subq"
 
 
 @dataclass(frozen=True, slots=True)
 class Mult(BinaryOperator):
-    """The ``imull`` instruction: multiplication.
+    """The ``imull``/``imulq`` instruction: signed multiplication."""
 
-    Multiplies the first operand by the second operand, storing the result in
-    place in the second operand.
-    """
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``imull`` or ``imulq`` mnemonic.
 
-    def emit(self) -> str:
-        """Return the ``imull`` mnemonic.
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"imull"``.
+            ``"imull"`` for Longword, ``"imulq"`` for Quadword.
         """
-        return "imull"
+        return "imull" if assembly_type == AssemblyType.Longword else "imulq"
 
 
 @dataclass(frozen=True, slots=True)
 class And(BinaryOperator):
-    """The ``andl`` instruction: bitwise AND.
+    """The ``andl``/``andq`` instruction: bitwise AND."""
 
-    Computes the bitwise AND of two operands, storing the result in the second.
-    """
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``andl`` or ``andq`` mnemonic.
 
-    def emit(self) -> str:
-        """Return the ``andl`` mnemonic.
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"andl"``.
+            ``"andl"`` for Longword, ``"andq"`` for Quadword.
         """
-        return "andl"
+        return "andl" if assembly_type == AssemblyType.Longword else "andq"
 
 
 @dataclass(frozen=True, slots=True)
 class Or(BinaryOperator):
-    """The ``orl`` instruction: bitwise OR.
+    """The ``orl``/``orq`` instruction: bitwise OR."""
 
-    Computes the bitwise OR of two operands, storing the result in the second.
-    """
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``orl`` or ``orq`` mnemonic.
 
-    def emit(self) -> str:
-        """Return the ``orl`` mnemonic.
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"orl"``.
+            ``"orl"`` for Longword, ``"orq"`` for Quadword.
         """
-        return "orl"
+        return "orl" if assembly_type == AssemblyType.Longword else "orq"
 
 
 @dataclass(frozen=True, slots=True)
 class Xor(BinaryOperator):
-    """The ``xorl`` instruction: bitwise exclusive OR.
+    """The ``xorl``/``xorq`` instruction: bitwise exclusive OR."""
 
-    Computes the bitwise XOR of two operands, storing the result in the second.
-    """
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``xorl`` or ``xorq`` mnemonic.
 
-    def emit(self) -> str:
-        """Return the ``xorl`` mnemonic.
+        Args:
+            assembly_type: Selects the 32-bit or 64-bit form.
 
         Returns:
-            The string ``"xorl"``.
+            ``"xorl"`` for Longword, ``"xorq"`` for Quadword.
         """
-        return "xorl"
+        return "xorl" if assembly_type == AssemblyType.Longword else "xorq"

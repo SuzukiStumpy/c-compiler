@@ -5,12 +5,12 @@ and ``Program``. These are the product types in the grammar — each has exactly
 one form.
 """
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import abstractmethod
 
 from compiler.syntax.asm.instructions import Instruction
 from compiler.syntax.asm.operands import Operand
+from compiler.syntax.asm.values import IntInit, LongInit, StaticInit
 
 
 class TopLevel(ABC):
@@ -87,12 +87,14 @@ class StaticVariable(TopLevel):
     Attributes:
         identifier: The name associated with the variable
         globl: Whether the variable should be tagged with the .globl directive
+        alignment: The number of bytes to align the variable to in memory
         init: The initial value of the variable to set
     """
 
     identifier: str
     globl: bool
-    init: int
+    alignment: int
+    init: StaticInit
 
     def emit(self) -> str:
         """Return the assembly text for the variable definition.
@@ -105,10 +107,20 @@ class StaticVariable(TopLevel):
         if self.globl:
             lines.append(f"   .globl {self.identifier}")
 
-        lines.append("   .bss" if self.init == 0 else "   .data")
-        lines.append("   .balign 4")
+        is_zero = self.init.value == 0
+        lines.append("   .bss" if is_zero else "   .data")
+        lines.append(f"   .balign {self.alignment}")
         lines.append(f"{self.identifier}:")
-        lines.append("   .zero 4" if self.init == 0 else f"   .long {self.init}")
+
+        match self.init:
+            case IntInit(value=0):
+                lines.append("   .zero 4")
+            case IntInit(value=v):
+                lines.append(f"   .long {v}")
+            case LongInit(value=0):
+                lines.append("   .zero 8")
+            case LongInit(value=v):
+                lines.append(f"   .quad {v}")
 
         return "\n".join(lines)
 

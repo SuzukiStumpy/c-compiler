@@ -6,16 +6,18 @@ and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
     program             = Program(top_level*)
+    assembly_type       = Longword | Quadword
     top_level           = Function(identifier name, bool globl, instruction* instructions)
-                        | StaticVariable(identifier name, bool globl, int init)
-    instruction         = Mov(operand src, operand dst)
-                        | Unary(unary_operator, operand)
-                        | Binary(binary_operator, operand src1, operand src2, operand dst)
-                        | Cmp(operand, operand)
-                        | Idiv(operand)
-                        | Shl(operand)
-                        | Sar(operand)
-                        | Cdq
+                        | StaticVariable(identifier name, bool globl, int init, int alignment, static_init init)
+    instruction         = Mov(assembly_type, operand src, operand dst)
+                        | Movsx(operand src, operand dst)
+                        | Unary(unary_operator, assembly_type, operand)
+                        | Binary(binary_operator, assembly_type, operand src1, operand src2, operand dst)
+                        | Cmp(assembly_type, operand, operand)
+                        | Idiv(assembly_type, operand)
+                        | Cdq(assembly_type)
+                        | Shl(operand, assembly_type)
+                        | Sar(operand, assembly_type)
                         | Jmp(identifier)
                         | JmpCC(cond_code, identifier)
                         | SetCC(cond_code, operand)
@@ -33,7 +35,7 @@ for the supported assembly subset:
                         | Stack(int)
                         | Data(identifier)
     cond_code           = E | NE | G | GE | L | LE
-    reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11
+    reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP
 
 Nodes are organised into submodules by logical role:
 
@@ -71,6 +73,7 @@ from compiler.syntax.asm.instructions import (
     JmpCC,
     Label,
     Mov,
+    Movsx,
     Push,
     Ret,
     Sar,
@@ -80,8 +83,14 @@ from compiler.syntax.asm.instructions import (
 )
 from compiler.syntax.asm.operands import Data, Imm, Operand, Pseudo, Register, Registers, Stack, Width
 from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Neg, Not, Or, Sub, UnaryOperator, Xor
+from compiler.syntax.asm.values import AssemblyType, IntInit, LongInit, StaticInit
 
 __all__ = [
+    "AssemblyType",
+    "StaticInit",
+    "IntInit",
+    "LongInit",
+    "Movsx",
     "TopLevel",
     "StaticVariable",
     "UnaryOperator",

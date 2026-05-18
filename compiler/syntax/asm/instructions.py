@@ -3,6 +3,11 @@
 Defines the ``Instruction`` abstract base class and its concrete variants.
 Each instruction form supported by the code generator is represented as a
 subclass of ``Instruction``.
+
+Where an instruction carries an ``assembly_type`` field, it selects between
+the 32-bit (``Longword``) and 64-bit (``Quadword``) form of the mnemonic.
+The field is placed last and defaults to ``AssemblyType.Longword`` so that
+callers that pre-date long-integer support continue to work unchanged.
 """
 
 from abc import ABC, abstractmethod
@@ -11,6 +16,7 @@ from enum import StrEnum
 
 from compiler.syntax.asm.operands import Operand, Register
 from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Or, Sub, UnaryOperator, Xor
+from compiler.syntax.asm.values import AssemblyType
 from compiler.utils.exceptions import CodeGenerationError
 
 
@@ -45,23 +51,50 @@ class Instruction(ABC):
 
 @dataclass(frozen=True, slots=True)
 class Mov(Instruction):
-    """A ``movl`` instruction that copies a value from one operand to another.
+    """A ``movl``/``movq`` instruction that copies a value from one operand to another.
 
     Attributes:
         src: The source operand whose value is copied.
         dst: The destination operand that receives the value.
+        assembly_type: Selects between 32-bit (``movl``) and 64-bit (``movq``); defaults
+            to ``Longword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
+
+    def emit(self) -> str:
+        """Return a ``movl`` or ``movq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``  movl <src>, <dst>`` or ``  movq <src>, <dst>``.
+        """
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  mov{suffix} {self.src.emit()}, {self.dst.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Movsx(Instruction):
+    """A ``movslq`` instruction that sign-extends a 32-bit value to 64 bits.
+
+    Always operates longword → quadword; no ``assembly_type`` field is needed.
+
+    Attributes:
+        src: The 32-bit (Longword) source operand.
+        dst: The 64-bit (Quadword) destination operand (must be a register after fixup).
     """
 
     src: Operand
     dst: Operand
 
     def emit(self) -> str:
-        """Return a ``movl`` instruction in AT&T syntax.
+        """Return a ``movslq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``  movl <src>, <dst>``.
+            A string of the form ``  movslq <src>, <dst>``.
         """
-        return f"  movl {self.src.emit()}, {self.dst.emit()}"
+        return f"  movslq {self.src.emit()}, {self.dst.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,14 +105,10 @@ class Ret(Instruction):
     """
 
     def emit(self) -> str:
-        """Return the ``ret`` mnemonic.
+        """Return the frame-teardown sequence followed by ``ret``.
 
         Returns:
-            The string ``
-                movq  %rbp, %rsp
-                popq  %rbp, %rsp
-                ret
-            ``.
+            The string ``  movq  %rbp, %rsp\\n  popq  %rbp\\n  ret``.
         """
         return "  movq  %rbp, %rsp\n  popq  %rbp\n  ret"
 
@@ -88,24 +117,26 @@ class Ret(Instruction):
 class Unary(Instruction):
     """A unary instruction that reads and modifies a single operand in place.
 
-    Covers ``negl`` (arithmetic negation) and ``notl`` (bitwise complement).
+    Covers ``negl``/``negq`` (arithmetic negation) and ``notl``/``notq`` (bitwise complement).
 
     Attributes:
         operator: The specific unary operation to perform.
         operand: The operand to read and modify in place.
+        assembly_type: Selects the 32-bit or 64-bit form; defaults to ``Longword``.
     """
 
     operator: UnaryOperator
     operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
         """Return a unary instruction in AT&T syntax.
 
         Returns:
             A string of the form ``  <mnemonic> <operand>``,
-            e.g. ``  negl %eax``.
+            e.g. ``  negl %eax`` or ``  negq %rax``.
         """
-        return f"  {self.operator.emit()} {self.operand.emit()}"
+        return f"  {self.operator.emit(self.assembly_type)} {self.operand.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,10 +167,6 @@ class AllocateStack(Instruction):
 class DeallocateStack(Instruction):
     """An ``addq`` instruction that reclaims space from the stack.
 
-    This instruction is appended to code whenever we return from a function and the
-    caller needs to restore the previous state of the stack.  The ``size`` is always
-    a positive multiple of 16 to maintain ABI alignment.
-
     Attributes:
         size: Number of bytes to add to ``%rsp``.
     """
@@ -160,21 +187,22 @@ class DeallocateStack(Instruction):
 class Binary(Instruction):
     """A binary instruction that reads two operands and writes the result to the second.
 
-    Covers ``addl``, ``subl``, and ``imull``.  Division and remainder are
-    handled by ``Cdq`` and ``Idiv`` instead, since they require a fixed
-    register protocol that does not fit the two-operand model.
+    Covers ``addl``/``addq``, ``subl``/``subq``, ``imull``/``imulq``, and the bitwise
+    variants.  Division and remainder are handled by ``Cdq``/``Cqo`` and ``Idiv``.
 
     Attributes:
         operator: The specific binary operation to perform.
         src1: The left (first) source operand.
         src2: The right (second) source operand.
         dst: The destination register (also the accumulator for the operation).
+        assembly_type: Selects the 32-bit or 64-bit form; defaults to ``Longword``.
     """
 
     operator: BinaryOperator
     src1: Operand
     src2: Operand
     dst: Register
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
         """Return a binary instruction sequence in AT&T syntax.
@@ -182,18 +210,18 @@ class Binary(Instruction):
         Moves ``src1`` into ``dst``, then applies the operator with ``src2``.
 
         Returns:
-            A two-line string: ``movl src1, dst`` followed by ``op src2, dst``.
+            A two-line string: ``mov? src1, dst`` followed by ``op src2, dst``.
 
         Raises:
-            CodeGenerationError: If the operator is not one of the supported
-                variants (``Add``, ``Sub``, ``Mult``).
+            CodeGenerationError: If the operator is not one of the supported variants.
         """
         match self.operator:
             case Add() | Sub() | Mult() | And() | Or() | Xor():
+                suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
                 return "\n".join(
                     [
-                        f"  movl {self.src1.emit()}, {self.dst.emit()}",
-                        f"  {self.operator.emit()} {self.src2.emit()}, {self.dst.emit()}",
+                        f"  mov{suffix} {self.src1.emit()}, {self.dst.emit()}",
+                        f"  {self.operator.emit(self.assembly_type)} {self.src2.emit()}, {self.dst.emit()}",
                     ]
                 )
             case _:
@@ -202,114 +230,131 @@ class Binary(Instruction):
 
 @dataclass(frozen=True, slots=True)
 class Cdq(Instruction):
-    """A ``cdq`` instruction that sign-extends ``%eax`` into ``%edx:%eax``.
+    """A ``cdq`` (Longword) or ``cqo`` (Quadword) instruction.
 
-    Must be emitted immediately before ``Idiv`` to prepare the full 64-bit
-    dividend.  Carries no fields.
+    Sign-extends the accumulator into the double-width pair: ``cdq`` extends
+    ``%eax`` into ``%edx:%eax``; ``cqo`` extends ``%rax`` into ``%rdx:%rax``.
+    Must be emitted immediately before ``Idiv``.
+
+    Attributes:
+        assembly_type: Selects ``cdq`` (Longword) or ``cqo`` (Quadword);
+            defaults to ``Longword``.
     """
 
+    assembly_type: AssemblyType = AssemblyType.Longword
+
     def emit(self) -> str:
-        """Return the ``cdq`` mnemonic.
+        """Return ``cdq`` or ``cqo``.
 
         Returns:
-            The string ``"  cdq"``.
+            ``"  cdq"`` for Longword or ``"  cqo"`` for Quadword.
         """
-        return "  cdq"
+        return "  cdq" if self.assembly_type == AssemblyType.Longword else "  cqo"
 
 
 @dataclass(frozen=True, slots=True)
 class Idiv(Instruction):
-    """An ``idivl`` instruction that performs signed 32-bit integer division.
+    """An ``idivl``/``idivq`` instruction that performs signed integer division.
 
-    Divides the ``%edx:%eax`` dividend by ``operand``.  The quotient is stored
-    in ``%eax`` and the remainder in ``%edx``.  ``operand`` must not be an
-    immediate value — the instruction fixup pass is responsible for routing
-    any ``Imm`` divisor through ``%r11d`` before emission.
+    Divides the double-width accumulator pair by ``operand``.  The quotient is
+    stored in ``%eax``/``%rax`` and the remainder in ``%edx``/``%rdx``.  ``operand``
+    must not be an immediate value — the instruction fixup pass routes any ``Imm``
+    divisor through a scratch register.
 
     Attributes:
         operand: The divisor; a register or memory location (never an immediate).
+        assembly_type: Selects ``idivl`` (Longword) or ``idivq`` (Quadword);
+            defaults to ``Longword``.
     """
 
     operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
-        """Return an ``idivl`` instruction in AT&T syntax.
+        """Return an ``idivl`` or ``idivq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  idivl <operand>"``.
+            A string of the form ``"  idivl <operand>"`` or ``"  idivq <operand>"``.
         """
-        return f"  idivl {self.operand.emit()}"
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  idiv{suffix} {self.operand.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
 class Shl(Instruction):
-    """A ``shll`` instruction that shifts ``operand`` left by the count in ``%cl``.
+    """A ``shll``/``shlq`` instruction that shifts ``operand`` left by the count in ``%cl``.
 
-    The shift count must have been placed in ``%ecx`` by the caller before this
-    instruction is emitted.  ``operand`` is updated in place.
+    The shift count must have been placed in ``%ecx`` by the caller.
 
     Attributes:
         operand: The value to be shifted; a register or memory location.
+        assembly_type: Selects ``shll`` (Longword) or ``shlq`` (Quadword);
+            defaults to ``Longword``.
     """
 
     operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
-        """Return a ``shll`` instruction in AT&T syntax.
+        """Return a ``shll`` or ``shlq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  shll %cl, <operand>"``.
+            A string of the form ``"  shll %cl, <operand>"`` or ``"  shlq %cl, <operand>"``.
         """
-        return f"  shll %cl, {self.operand.emit()}"
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  shl{suffix} %cl, {self.operand.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
 class Sar(Instruction):
-    """A ``sarl`` instruction that arithmetic-shifts ``operand`` right by the count in ``%cl``.
+    """A ``sarl``/``sarq`` instruction that arithmetic-shifts ``operand`` right by the count in ``%cl``.
 
-    Arithmetic right shift sign-extends the result, which is the correct
-    behaviour for signed ``int`` values in C.  The shift count must have been
-    placed in ``%ecx`` by the caller before this instruction is emitted.
-    ``operand`` is updated in place.
+    Arithmetic right shift sign-extends, which is correct for signed C integers.
 
     Attributes:
         operand: The value to be shifted; a register or memory location.
+        assembly_type: Selects ``sarl`` (Longword) or ``sarq`` (Quadword);
+            defaults to ``Longword``.
     """
 
     operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
-        """Return a ``sarl`` instruction in AT&T syntax.
+        """Return a ``sarl`` or ``sarq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  sarl %cl, <operand>"``.
+            A string of the form ``"  sarl %cl, <operand>"`` or ``"  sarq %cl, <operand>"``.
         """
-        return f"  sarl %cl, {self.operand.emit()}"
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  sar{suffix} %cl, {self.operand.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
 class Cmp(Instruction):
-    """A ``cmpl`` instruction that compares two operands and sets the flags register.
+    """A ``cmpl``/``cmpq`` instruction that compares two operands and sets the flags register.
 
-    The operands are subtracted (``op2 - op1``) for the purposes of flag
-    setting; neither is modified.  The result is consumed by a subsequent
-    ``JmpCC`` or ``SetCC`` instruction.
+    The operands are subtracted (``op2 - op1``) for flag-setting; neither is modified.
 
     Attributes:
         op1: The right-hand (subtracted) operand.
         op2: The left-hand (base) operand.
+        assembly_type: Selects ``cmpl`` (Longword) or ``cmpq`` (Quadword);
+            defaults to ``Longword``.
     """
 
     op1: Operand
     op2: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
-        """Return a ``cmpl`` instruction in AT&T syntax.
+        """Return a ``cmpl`` or ``cmpq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  cmpl <op1>, <op2>"``.
+            A string of the form ``"  cmpl <op1>, <op2>"`` or ``"  cmpq <op1>, <op2>"``.
         """
-        return f"  cmpl {self.op1.emit()}, {self.op2.emit()}"
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  cmp{suffix} {self.op1.emit()}, {self.op2.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,9 +380,6 @@ class Jmp(Instruction):
 class JmpCC(Instruction):
     """A conditional jump instruction that transfers control based on the flags register.
 
-    The condition is evaluated against the flags set by the most recent ``Cmp``
-    instruction.  Control is transferred to ``label`` when the condition holds.
-
     Attributes:
         cond_code: The condition that must be satisfied for the jump to occur.
         label: The name of the target label (without the ``.L`` prefix).
@@ -358,10 +400,6 @@ class JmpCC(Instruction):
 @dataclass(frozen=True, slots=True)
 class SetCC(Instruction):
     """A ``set<cc>`` instruction that writes 0 or 1 into a byte operand based on the flags register.
-
-    The condition is evaluated against the flags set by the most recent ``Cmp``
-    instruction.  The destination operand receives 1 if the condition holds and
-    0 otherwise.  The operand must be an 8-bit register or memory location.
 
     Attributes:
         cond_code: The condition that determines the value written.
@@ -384,9 +422,6 @@ class SetCC(Instruction):
 class Label(Instruction):
     """A label declaration that marks a position in the instruction stream.
 
-    Emitted as a ``.L``-prefixed local label followed by a colon, making it
-    visible to the assembler but not exported to the linker symbol table.
-
     Attributes:
         name: The label identifier, without the ``.L`` prefix or trailing colon.
     """
@@ -397,22 +432,24 @@ class Label(Instruction):
         """Return a local label declaration in assembler syntax.
 
         Returns:
-            A string of the form ``".L<name>:"``, flush with the left margin
-            (no leading spaces) so the assembler treats it as a label rather
-            than an instruction.
+            A string of the form ``".L<name>:"``, flush with the left margin.
         """
         return f".L{self.name}:"
 
 
 @dataclass(frozen=True, slots=True)
 class Push(Instruction):
-    """A ``pushq`` instruction that saves a value onto the stack
+    """A ``pushq`` instruction that saves a value onto the stack.
 
     Attributes:
-        operand: The value to push onto the stack
+        operand: The value to push onto the stack.
+        assembly_type: The width of the value being pushed; used by the fixup pass
+            to select the right load instruction when ``operand`` is a memory location.
+            Defaults to ``Longword``.
     """
 
     operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
         """Return a ``pushq`` instruction in AT&T syntax.
@@ -426,11 +463,6 @@ class Push(Instruction):
 @dataclass(frozen=True, slots=True)
 class Call(Instruction):
     """A ``call`` instruction that transfers control to a named function.
-
-    The ``call`` instruction pushes the return address onto the stack and
-    jumps to the named symbol.  The caller is responsible for placing
-    arguments in the correct ABI registers and stack slots before ``call``,
-    and for retrieving the return value from ``%eax``/``%rax`` afterwards.
 
     Attributes:
         name: The symbol name of the function to call.
