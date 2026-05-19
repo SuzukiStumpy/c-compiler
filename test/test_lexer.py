@@ -358,3 +358,102 @@ def test_identifier_sharing_long_prefix_is_not_a_keyword(preprocess_c_file: Prep
     # "longer" starts with "long" — must not be classified as LONG
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.LONG for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# signed and unsigned keywords
+# ---------------------------------------------------------------------------
+
+
+def test_signed_keyword_produces_signed_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    signed_token = next(t for t in tokens if t.value == "signed")
+    assert signed_token.type == TokenType.SIGNED
+
+
+def test_unsigned_keyword_produces_unsigned_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    unsigned_token = next(t for t in tokens if t.value == "unsigned")
+    assert unsigned_token.type == TokenType.UNSIGNED
+
+
+def test_identifier_sharing_signed_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "signedValue" starts with "signed" — must not be classified as SIGNED
+    tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
+    assert all(t.type != TokenType.SIGNED for t in tokens)
+
+
+def test_identifier_sharing_unsigned_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "unsignedValue" starts with "unsigned" — must not be classified as UNSIGNED
+    tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
+    assert all(t.type != TokenType.UNSIGNED for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# Unsigned integer constants (UINT)
+# ---------------------------------------------------------------------------
+
+
+def test_unsigned_integer_constant_lowercase_suffix_produces_uint_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    assert any(t.type == TokenType.UINT and t.value == "42u" for t in tokens)
+
+
+def test_unsigned_integer_constant_uppercase_suffix_produces_uint_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    assert any(t.type == TokenType.UINT and t.value == "99U" for t in tokens)
+
+
+def test_uint_token_is_distinct_from_number_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    uint_values = {t.value for t in tokens if t.type == TokenType.UINT}
+    number_values = {t.value for t in tokens if t.type == TokenType.NUMBER}
+    assert uint_values.isdisjoint(number_values)
+
+
+def test_uint_token_is_not_split_into_number_and_identifier(preprocess_c_file: Preprocessor) -> None:
+    # "42u" must be a single UINT, not NUMBER("42") followed by IDENTIFIER("u")
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    uint_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.UINT and t.value == "42u")
+    assert tokens[uint_idx - 1].type != TokenType.NUMBER
+    assert tokens[uint_idx + 1].type != TokenType.IDENTIFIER
+
+
+# ---------------------------------------------------------------------------
+# Unsigned long integer constants (ULONG)
+# ---------------------------------------------------------------------------
+
+
+def test_ulong_constant_ul_suffix_produces_ulong_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "100ul" for t in tokens)
+
+
+def test_ulong_constant_lu_suffix_produces_ulong_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "200lu" for t in tokens)
+
+
+def test_ulong_constant_uppercase_ul_suffix_produces_ulong_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "300UL" for t in tokens)
+
+
+def test_ulong_constant_uppercase_lu_suffix_produces_ulong_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "400LU" for t in tokens)
+
+
+def test_ulong_token_is_distinct_from_number_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    ulong_values = {t.value for t in tokens if t.type == TokenType.ULONG}
+    number_values = {t.value for t in tokens if t.type == TokenType.NUMBER}
+    assert ulong_values.isdisjoint(number_values)
+
+
+def test_ulong_token_is_not_split_into_number_and_identifier(preprocess_c_file: Preprocessor) -> None:
+    # "100ul" must be a single ULONG, not NUMBER("100") followed by IDENTIFIER("ul")
+    tokens = lexer(preprocess_c_file("valid/unsigned_types.c"))
+    ulong_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.ULONG and t.value == "100ul")
+    assert tokens[ulong_idx - 1].type != TokenType.NUMBER
+    assert tokens[ulong_idx + 1].type != TokenType.IDENTIFIER

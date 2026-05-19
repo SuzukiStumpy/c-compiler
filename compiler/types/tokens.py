@@ -31,10 +31,14 @@ class TokenType(Enum):
     STATIC = auto()
     EXTERN = auto()
     LONG = auto()
+    SIGNED = auto()
+    UNSIGNED = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
     LONGINT = auto()
+    UINT = auto()
+    ULONG = auto()
     # Punctuation
     LPAREN = auto()
     RPAREN = auto()

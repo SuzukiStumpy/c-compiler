@@ -25,10 +25,14 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("STATIC", r"static\b"),
     ("EXTERN", r"extern\b"),
     ("LONG", r"long\b"),
+    ("SIGNED", r"signed\b"),
+    ("UNSIGNED", r"unsigned\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("NUMBER", r"\d+\b"),
     ("LONGINT", r"[0-9]+[lL]\b"),
+    ("UINT", r"[0-9]+[uU]\b"),
+    ("ULONG", r"[0-9]+([lL][uU]|[uU][lL])\b"),
     # Punctuation
     ("LPAREN", r"\("),
     ("RPAREN", r"\)"),

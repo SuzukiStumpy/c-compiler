@@ -10,3 +10,9 @@ int externally(void) {
 int longer(void) {
     return 0;
 }
+int signedValue(void) {
+    return 0;
+}
+int unsignedValue(void) {
+    return 0;
+}
