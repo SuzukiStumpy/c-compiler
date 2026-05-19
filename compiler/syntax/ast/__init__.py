@@ -23,7 +23,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
     variable_declaration = (identifier name, exp? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
-    type                 = Int | Long | FunType(type* params, type ret)
+    type                 = Int | Long | UInt | ULong | FunType(type* params, type ret)
     storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
@@ -46,7 +46,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     linkage              = Linkage(NONE | EXTERNAL)
     block                = Block(block_item*)
     block_item           = S(statement) | D(declaration)
-    const                = ConstInt(int) | ConstLong(int)
+    const                = ConstInt(int) | ConstLong(int) | ConstUInt(int) | ConstULong(int)
 
 Nodes are organised into submodules by logical role:
 
@@ -77,7 +77,7 @@ dataclass subclassing the appropriate base. All nodes are immutable — once
 constructed an AST node cannot be modified.
 """
 
-from compiler.syntax.ast.constants import Const, ConstInt, ConstLong
+from compiler.syntax.ast.constants import Const, ConstInt, ConstLong, ConstUInt, ConstULong
 from compiler.syntax.ast.declarations import (
     Block,
     BlockItem,
@@ -154,9 +154,13 @@ from compiler.syntax.ast.statements import (
     Switch,
     While,
 )
-from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type
+from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
 
 __all__ = [
+    "ConstUInt",
+    "ConstULong",
+    "UIntType",
+    "ULongType",
     "Const",
     "ConstLong",
     "ConstInt",

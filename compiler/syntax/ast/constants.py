@@ -28,3 +28,25 @@ class ConstLong(Const):
     """
 
     val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstUInt(Const):
+    """Represents an unsigned integer constant within the C code.
+
+    Attributes:
+        val: The integer value the constant represents.
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstULong(Const):
+    """Represents an unsigned long integer constant within the C code.
+
+    Attributes:
+        val: The integer value the constant represents.
+    """
+
+    val: int

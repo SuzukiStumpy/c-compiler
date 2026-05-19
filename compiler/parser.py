@@ -8,7 +8,7 @@ which are handled by precedence climbing.  The grammar is:
     function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
     variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
     param-list           ::= "void" | {type-specifier}+ identifier {"," {type-specifier}+ identifier}
-    type-specifier       ::= "int" | "long"
+    type-specifier       ::= "int" | "long" | "unsigned" | "signed"
     specifier            ::= type-specifier | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
@@ -43,10 +43,12 @@ which are handled by precedence climbing.  The grammar is:
                            | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
     assignop             ::= "+=" | "-=" | "*=" | "/=" | "%="
                            | "&=" | "|=" | "^=" | "<<=" | ">>="
-    const                ::= int | long
+    const                ::= int | long | uint | ulong
     identifier           ::= ? An identifier token ?
     int                  ::= ? An int token ?
     long                 ::= ? An int or long token ?
+    uint                 ::= ? An unsigned int token ?
+    ulong                ::= ? An unsigned int or unsigned long token ?
 
 Each grammar rule (except ``exp``) maps directly to a private ``_parse_*``
 method on ``Parser``.  ``_parse_exp`` implements precedence climbing so that
@@ -78,6 +80,8 @@ from compiler.syntax.ast import (
     Constant,
     ConstInt,
     ConstLong,
+    ConstUInt,
+    ConstULong,
     Continue,
     D,
     Declaration,
@@ -126,6 +130,8 @@ from compiler.syntax.ast import (
     Subtract,
     Switch,
     Type,
+    UIntType,
+    ULongType,
     Unary,
     UnaryOperator,
     Var,
@@ -436,13 +442,13 @@ class Parser:
 
         Grammar::
 
-            type-specifier ::= "int" | "long"
+            type-specifier ::= "int" | "long" | "signed" | "unsigned"
             specifier      ::= type-specifier | "static" | "extern"
 
         Consumes a run of specifier tokens in any order.  At least one type
-        specifier must appear; ``int`` and ``long`` may appear together in
-        either order (meaning ``long int``); at most one storage-class
-        specifier (``static`` or ``extern``) may appear.
+        specifier must appear; ``unsigned`` or ``signed`` alone are treated as
+        shorthand for ``unsigned int`` / ``signed int``; at most one
+        storage-class specifier (``static`` or ``extern``) may appear.
 
         Returns:
             A ``(type, storage_class)`` pair where ``storage_class`` is
@@ -450,45 +456,67 @@ class Parser:
 
         Raises:
             ParseError: If no type specifier is present, if a type specifier
-                appears more than once, or if two storage-class specifiers
-                conflict.
+                appears more than once, if both ``signed`` and ``unsigned``
+                appear, or if two storage-class specifiers conflict.
         """
         has_int = False
         has_long = False
+        has_signed = False
+        has_unsigned = False
         storage: StorageClass | None = None
 
         while self._peek() is not None and self._peek().type in (  # type: ignore[missing-attribute]
             TokenType.INT,
             TokenType.LONG,
+            TokenType.SIGNED,
+            TokenType.UNSIGNED,
             TokenType.STATIC,
             TokenType.EXTERN,
         ):
             tok = self._consume()
-            if tok.type == TokenType.INT:
-                if has_int:
-                    raise self._token_error("duplicate type specifier 'int'", tok)
-                has_int = True
-            elif tok.type == TokenType.LONG:
-                if has_long:
-                    raise self._token_error("duplicate type specifier 'long'", tok)
-                has_long = True
-            elif tok.type == TokenType.STATIC:
-                if storage is not None:
-                    raise self._token_error("conflicting storage class specifiers", tok)
-                storage = StorageClass.Static
-            else:
-                if storage is not None:
-                    raise self._token_error("conflicting storage class specifiers", tok)
-                storage = StorageClass.Extern
+            match tok.type:
+                case TokenType.INT:
+                    if has_int:
+                        raise self._token_error("duplicate type specifier 'int'", tok)
+                    has_int = True
+                case TokenType.LONG:
+                    if has_long:
+                        raise self._token_error("duplicate type specifier 'long'", tok)
+                    has_long = True
+                case TokenType.SIGNED:
+                    if has_signed:
+                        raise self._token_error("duplicate type specifier 'signed'", tok)
+                    has_signed = True
+                case TokenType.UNSIGNED:
+                    if has_unsigned:
+                        raise self._token_error("duplicate type specifier 'unsigned'", tok)
+                    has_unsigned = True
+                case TokenType.STATIC:
+                    if storage is not None:
+                        raise self._token_error("conflicting storage class specifiers", tok)
+                    storage = StorageClass.Static
+                case TokenType.EXTERN:
+                    if storage is not None:
+                        raise self._token_error("conflicting storage class specifiers", tok)
+                    storage = StorageClass.Extern
 
-        if not has_int and not has_long:
+            if has_signed and has_unsigned:
+                raise self._token_error("invalid type specifier: can't have both 'signed' and 'unsigned'", tok)
+
+        if not has_int and not has_long and not has_signed and not has_unsigned:
             tok = self._peek()
             if tok is None:
                 raise self._eof_error("expected a type specifier, got end of input")
             raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
 
-        # "long" (with or without "int") resolves to LongType; "int" alone resolves to IntType.
-        type_: Type = LongType() if has_long else IntType()
+        if has_long and has_unsigned:
+            type_: Type = ULongType()
+        elif has_unsigned:
+            type_ = UIntType()
+        elif has_long:
+            type_ = LongType()
+        else:
+            type_ = IntType()
         return type_, storage
 
     def _parse_params(self) -> tuple[Parameter, ...]:
@@ -574,7 +602,14 @@ class Parser:
             ParseError: If the item is malformed.
         """
         token = self._peek()
-        if token is not None and token.type in (TokenType.INT, TokenType.LONG, TokenType.STATIC, TokenType.EXTERN):
+        if token is not None and token.type in (
+            TokenType.INT,
+            TokenType.LONG,
+            TokenType.SIGNED,
+            TokenType.UNSIGNED,
+            TokenType.STATIC,
+            TokenType.EXTERN,
+        ):
             return D(declaration=self._parse_declaration())
         return S(statement=self._parse_statement())
 
@@ -721,6 +756,8 @@ class Parser:
         if self._peek() is not None and self._peek().type in (  # type:ignore[missing-attribute]
             TokenType.INT,
             TokenType.LONG,
+            TokenType.SIGNED,
+            TokenType.UNSIGNED,
             TokenType.STATIC,
             TokenType.EXTERN,
         ):
@@ -1023,7 +1060,7 @@ class Parser:
         match token.type:
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
                 return Unary(self._parse_unaryop(), self._parse_factor())
-            case TokenType.NUMBER | TokenType.LONGINT:
+            case TokenType.NUMBER | TokenType.LONGINT | TokenType.UINT | TokenType.ULONG:
                 primary: Exp = self._parse_constant()
             case TokenType.IDENTIFIER:
                 self._consume()
@@ -1033,7 +1070,12 @@ class Parser:
                     primary = Var(name=token.value)
             case TokenType.LPAREN:
                 next_tok = self._peek(1)
-                if next_tok is not None and next_tok.type in (TokenType.INT, TokenType.LONG):
+                if next_tok is not None and next_tok.type in (
+                    TokenType.INT,
+                    TokenType.LONG,
+                    TokenType.SIGNED,
+                    TokenType.UNSIGNED,
+                ):
                     self._consume()  # consume "("
                     target_type = self._parse_type()
                     self._expect(TokenType.RPAREN)
@@ -1089,16 +1131,24 @@ class Parser:
     def _parse_constant(self) -> Constant:
         """Parse an integer or long constant expression.
 
-        Follows C11 §6.4.4.1: an unsuffixed decimal constant has the type of
-        the first of ``int``, ``long`` in which its value can be represented.
-        A constant with an ``l`` or ``L`` suffix is always ``long``.
+        Follows C11 §6.4.4.1:
+
+        - An unsuffixed decimal constant has the type of the first of ``int``,
+          ``long`` in which its value can be represented.
+        - A constant with an ``l`` or ``L`` suffix is always ``long``.
+        - A constant with a ``u`` or ``U`` suffix has the type of the first of
+          ``unsigned int``, ``unsigned long`` in which its value can be
+          represented.
+        - A constant with both ``u``/``U`` and ``l``/``L`` suffixes is always
+          ``unsigned long``.
 
         Returns:
-            A ``Constant`` node wrapping a ``ConstInt`` or ``ConstLong``.
+            A ``Constant`` node wrapping a ``ConstInt``, ``ConstLong``,
+            ``ConstUInt``, or ``ConstULong``.
 
         Raises:
             ParseError: If the next token is not a numeric constant, or if the
-                value exceeds the range of ``long`` (9,223,372,036,854,775,807).
+                value exceeds the range of the largest supported type.
         """
         token = self._peek()
         if token is None:
@@ -1121,6 +1171,24 @@ class Parser:
                     f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
                 )
             return Constant(value=ConstLong(val), exp_type=LongType())
+        if token.type == TokenType.UINT:
+            self._consume()
+            val = int(token.value.rstrip("uU"))
+            if val <= 4_294_967_295:
+                return Constant(value=ConstUInt(val), exp_type=UIntType())
+            if val <= 18_446_744_073_709_551_615:
+                return Constant(value=ConstULong(val), exp_type=ULongType())
+            raise self._token_error(
+                f"integer constant {val} is too large for type 'unsigned long' (max 18446744073709551615)", token
+            )
+        if token.type == TokenType.ULONG:
+            self._consume()
+            val = int(token.value.rstrip("uUlL"))
+            if val > 18_446_744_073_709_551_615:
+                raise self._token_error(
+                    f"integer constant {val} is too large for type 'unsigned long' (max 18446744073709551615)", token
+                )
+            return Constant(value=ConstULong(val), exp_type=ULongType())
         raise self._token_error(f"expected a constant, got {token.type.name} '{token.value}'", token)
 
     def _parse_type(self) -> Type:
@@ -1128,11 +1196,11 @@ class Parser:
 
         Grammar::
 
-            type-specifier ::= "int" | "long"
+            type-specifier ::= "int" | "long" | "signed" | "unsigned"
 
-        Consumes a run of ``int`` and ``long`` tokens in any order.  ``int``
-        alone yields ``IntType``; ``long`` (with or without ``int``) yields
-        ``LongType``.
+        Consumes a run of specifier tokens in any order.  ``unsigned`` or
+        ``signed`` alone are treated as shorthand for ``unsigned int`` /
+        ``signed int`` respectively.
 
         Returns:
             A ``Type`` node.
@@ -1143,25 +1211,54 @@ class Parser:
         """
         has_int = False
         has_long = False
+        has_signed = False
+        has_unsigned = False
 
-        while self._peek() is not None and self._peek().type in (TokenType.INT, TokenType.LONG):  # type: ignore[missing-attribute]
+        while self._peek() is not None and self._peek().type in (  # type: ignore[missing-attribute]
+            TokenType.INT,
+            TokenType.LONG,
+            TokenType.SIGNED,
+            TokenType.UNSIGNED,
+        ):
             tok = self._consume()
-            if tok.type == TokenType.INT:
-                if has_int:
-                    raise self._token_error("duplicate type specifier 'int'", tok)
-                has_int = True
-            else:
-                if has_long:
-                    raise self._token_error("duplicate type specifier 'long'", tok)
-                has_long = True
 
-        if not has_int and not has_long:
+            match tok.type:
+                case TokenType.INT:
+                    if has_int:
+                        raise self._token_error("duplicate type specifier 'int'", tok)
+                    has_int = True
+                case TokenType.LONG:
+                    if has_long:
+                        raise self._token_error("duplicate type specifier 'long'", tok)
+                    has_long = True
+                case TokenType.SIGNED:
+                    if has_signed:
+                        raise self._token_error("duplicate type specifier 'signed'", tok)
+                    has_signed = True
+                case TokenType.UNSIGNED:
+                    if has_unsigned:
+                        raise self._token_error("duplicate type specifier `unsigned`", tok)
+                    has_unsigned = True
+                case _:
+                    pass
+
+            if has_signed and has_unsigned:
+                raise self._token_error("invalid type specifier: can't have both `signed` and `unsigned`", tok)
+
+        if not has_int and not has_long and not has_signed and not has_unsigned:
             tok = self._peek()
             if tok is None:
                 raise self._eof_error("expected a type, got end of input")
             raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
 
-        return LongType() if has_long else IntType()
+        if has_long and has_unsigned:
+            return ULongType()
+        elif has_unsigned:
+            return UIntType()
+        elif has_long:
+            return LongType()
+        else:
+            return IntType()
 
 
 def parse(token_stream: list[Token]) -> Program:

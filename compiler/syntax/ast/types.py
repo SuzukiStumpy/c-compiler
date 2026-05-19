@@ -42,6 +42,24 @@ class LongType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class UIntType(Type):
+    """Represents the C ``unsigned int`` type.
+
+    Used wherever ``unsigned int`` appears as a return type or parameter type in the
+    source. The node carries no fields — its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ULongType(Type):
+    """Represents the C ``unsigned long`` type.
+
+    Used wherever ``unsigned long`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class FunType(Type):
     """Represents the type signature of a function definition.
 
