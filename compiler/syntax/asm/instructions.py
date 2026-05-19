@@ -29,6 +29,10 @@ class CondCodes(StrEnum):
     LE = "le"
     G = "g"
     GE = "ge"
+    A = "a"
+    AE = "ae"
+    B = "b"
+    BE = "be"
 
 
 class Instruction(ABC):
@@ -95,6 +99,33 @@ class Movsx(Instruction):
             A string of the form ``  movslq <src>, <dst>``.
         """
         return f"  movslq {self.src.emit()}, {self.dst.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class MoveZeroExtend(Instruction):
+    """Move a longword (4-byte) value and convert to a quadword (8-byte) value without
+    sign-extension.
+
+    Always operates longword → quadword; no ``assembly_type`` field is needed.
+
+    Attributes:
+        src: The 32-bit (Longword) source operand.
+        dst: The 64-bit (Quadword) destination operand (must be a register after fixup).
+    """
+
+    src: Operand
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``movl`` instruction in AT&T syntax.
+
+        Writing to a 32-bit register on x86-64 automatically zeroes the upper 32 bits of the
+        64-bit register, so a plain ``movl`` achieves zero-extension without a dedicated opcode.
+
+        Returns:
+            A string of the form ``  movl <src>, <dst>``.
+        """
+        return f"  movl {self.src.emit()}, {self.dst.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +312,35 @@ class Idiv(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class Div(Instruction):
+    """A ``divl``/``divq`` instruction that performs unsigned integer division.
+
+    Divides the zero-extended accumulator pair by ``operand``.  The quotient is
+    stored in ``%eax``/``%rax`` and the remainder in ``%edx``/``%rdx``.  The caller
+    must zero ``%edx``/``%rdx`` before this instruction (rather than using ``cdq``/``cqo``).
+    ``operand`` must not be an immediate value — the instruction fixup pass routes any ``Imm``
+    divisor through a scratch register.
+
+    Attributes:
+        operand: The divisor; a register or memory location (never an immediate).
+        assembly_type: Selects ``divl`` (Longword) or ``divq`` (Quadword);
+            defaults to ``Longword``.
+    """
+
+    operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
+
+    def emit(self) -> str:
+        """Return a ``divl`` or ``divq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  divl <operand>"`` or ``"  divq <operand>"``.
+        """
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  div{suffix} {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
 class Shl(Instruction):
     """A ``shll``/``shlq`` instruction that shifts ``operand`` left by the count in ``%cl``.
 
@@ -328,6 +388,32 @@ class Sar(Instruction):
         """
         suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
         return f"  sar{suffix} %cl, {self.operand.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Shr(Instruction):
+    """A ``shrl``/``shrq`` instruction that logically shifts ``operand`` right by the count in ``%cl``.
+
+    Logical right shift fills the vacated high bits with zeroes, which is correct for unsigned C
+    integers.  For signed right shift (arithmetic, sign-filling) use ``Sar`` instead.
+
+    Attributes:
+        operand: The value to be shifted; a register or memory location.
+        assembly_type: Selects ``shrl`` (Longword) or ``shrq`` (Quadword);
+            defaults to ``Longword``.
+    """
+
+    operand: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
+
+    def emit(self) -> str:
+        """Return a ``shrl`` or ``shrq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  shrl %cl, <operand>"`` or ``"  shrq %cl, <operand>"``.
+        """
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  shr{suffix} %cl, {self.operand.emit()}"
 
 
 @dataclass(frozen=True, slots=True)

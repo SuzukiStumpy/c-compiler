@@ -149,7 +149,7 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
     """
     result: list[tac.StaticVariable] = []
     for name, entry in symbol_table.items():
-        is_long = isinstance(entry.t, ast.LongType)
+        is_long = isinstance(entry.t, ast.LongType | ast.ULongType)
         match entry.attrs:
             case StaticAttr(init=Initial(value=i), globl=globl):
                 static_init = tac.LongInit(i) if is_long else tac.IntInit(i)

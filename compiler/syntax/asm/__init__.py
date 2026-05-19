@@ -11,13 +11,16 @@ for the supported assembly subset:
                         | StaticVariable(identifier name, bool globl, int init, int alignment, static_init init)
     instruction         = Mov(assembly_type, operand src, operand dst)
                         | Movsx(operand src, operand dst)
+                        | MoveZeroExtend(operand src, operand dst)
                         | Unary(unary_operator, assembly_type, operand)
                         | Binary(binary_operator, assembly_type, operand src1, operand src2, operand dst)
                         | Cmp(assembly_type, operand, operand)
                         | Idiv(assembly_type, operand)
+                        | Div(assembly_type, operand)
                         | Cdq(assembly_type)
                         | Shl(operand, assembly_type)
                         | Sar(operand, assembly_type)
+                        | Shr(operand, assembly_type)
                         | Jmp(identifier)
                         | JmpCC(cond_code, identifier)
                         | SetCC(cond_code, operand)
@@ -34,7 +37,7 @@ for the supported assembly subset:
                         | Pseudo(identifier)
                         | Stack(int)
                         | Data(identifier)
-    cond_code           = E | NE | G | GE | L | LE
+    cond_code           = E | NE | G | GE | L | LE | A | AE | B | BE
     reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP
 
 Nodes are organised into submodules by logical role:
@@ -67,18 +70,21 @@ from compiler.syntax.asm.instructions import (
     Cmp,
     CondCodes,
     DeallocateStack,
+    Div,
     Idiv,
     Instruction,
     Jmp,
     JmpCC,
     Label,
     Mov,
+    MoveZeroExtend,
     Movsx,
     Push,
     Ret,
     Sar,
     SetCC,
     Shl,
+    Shr,
     Unary,
 )
 from compiler.syntax.asm.operands import Data, Imm, Operand, Pseudo, Register, Registers, Stack, Width
@@ -91,6 +97,9 @@ __all__ = [
     "IntInit",
     "LongInit",
     "Movsx",
+    "MoveZeroExtend",
+    "Div",
+    "Shr",
     "TopLevel",
     "StaticVariable",
     "UnaryOperator",

@@ -35,15 +35,26 @@ TAC → pseudo-asm mapping:
                                                         Mov(src2, Register(CX)),
                                                         Sar(Register(R11)), Mov(Register(R11), dst)
     tac.SignExtend(src, dst)                  → Movsx(src, dst)
+    tac.ZeroExtend(src, dst)                  → MoveZeroExtend(src, dst)
     tac.Truncate(src, dst)                    → Mov(Longword, src, dst)
     tac.Constant(v)                           → Imm(v)
     tac.Var(name)                             → Pseudo(name)
+
+Unsigned variants (selected when the source operand has an unsigned C type):
+
+    tac.Binary(Divide, unsigned, src1, src2, dst)    → Mov(src1, AX), Mov(Imm(0), DX),
+                                                        Div(src2), Mov(AX, dst)
+    tac.Binary(Remainder, unsigned, src1, src2, dst) → Mov(src1, AX), Mov(Imm(0), DX),
+                                                        Div(src2), Mov(DX, dst)
+    tac.Binary(RightShift, unsigned, src1, src2, dst) → Mov(src1, R11), Mov(src2, CX),
+                                                         Shr(R11), Mov(R11, dst)
+    tac.Binary(relational, unsigned, ...)             → Cmp, Mov(Imm(0), dst), SetCC(A/AE/B/BE)
 """
 
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
-from compiler.syntax.ast.constants import ConstInt, ConstLong
-from compiler.syntax.ast.types import LongType
+from compiler.syntax.ast.constants import ConstInt, ConstLong, ConstUInt, ConstULong
+from compiler.syntax.ast.types import LongType, UIntType, ULongType
 from compiler.types.symbols import StaticAttr, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -74,13 +85,13 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
         for 64-bit values.
     """
     match val:
-        case tac.Constant(value=ConstInt()):
+        case tac.Constant(value=ConstInt() | ConstUInt()):
             return asm.AssemblyType.Longword
-        case tac.Constant(value=ConstLong()):
+        case tac.Constant(value=ConstLong() | ConstULong()):
             return asm.AssemblyType.Quadword
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
             match symbol_table[name].t:
-                case LongType():
+                case LongType() | ULongType():
                     return asm.AssemblyType.Quadword
                 case _:
                     return asm.AssemblyType.Longword
@@ -98,6 +109,28 @@ def _reg_width(assembly_type: asm.AssemblyType) -> asm.Width:
         ``Width.DWORD`` for Longword, ``Width.QWORD`` for Quadword.
     """
     return asm.Width.DWORD if assembly_type == asm.AssemblyType.Longword else asm.Width.QWORD
+
+
+def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
+    """Return ``True`` when ``val`` has an unsigned C type.
+
+    Used to select between signed (``Idiv``/``Sar``/``L``/``G`` etc.) and unsigned
+    (``Div``/``Shr``/``B``/``A`` etc.) instruction variants.
+
+    Args:
+        val: The TAC value to classify.
+        symbol_table: The program-wide symbol table; required for ``tac.Var`` lookups.
+
+    Returns:
+        ``True`` for ``unsigned int`` and ``unsigned long`` values; ``False`` otherwise.
+    """
+    match val:
+        case tac.Constant(value=ConstUInt() | ConstULong()):
+            return True
+        case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
+            return isinstance(symbol_table[name].t, (UIntType, ULongType))
+        case _:
+            return False
 
 
 def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> asm.Program:
@@ -145,7 +178,7 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
                 fixed_fn = _fix_instructions(resolved_fn)
                 definitions.append(_add_stack_allocation(fixed_fn, stack_size))
             case tac.StaticVariable(name=name, globl=globl, t=t, init=init):
-                alignment = 8 if isinstance(t, LongType) else 4
+                alignment = 8 if isinstance(t, (LongType, ULongType)) else 4
                 definitions.append(
                     asm.StaticVariable(
                         identifier=name,
@@ -233,6 +266,122 @@ def _translate_function(fn: tac.Function, symbol_table: SymbolTable | None = Non
     return asm.Function(name=fn.name, globl=fn.globl, params=params_asm, instructions=tuple(instructions))
 
 
+def _translate_binary(
+    op: tac.BinaryOperator,
+    src1: tac.Val,
+    src2: tac.Val,
+    dst: tac.Val,
+    symbol_table: SymbolTable | None = None,
+) -> list[asm.Instruction]:
+    """Lower a single TAC Binary instruction to a sequence of assembly instructions.
+
+    Handles arithmetic, bitwise, shift, division, and relational operators,
+    selecting signed or unsigned variants based on the type of ``src1``.
+
+    Args:
+        op: The TAC binary operator.
+        src1: The left source operand.
+        src2: The right source operand.
+        dst: The destination.
+        symbol_table: Used to derive assembly types and signedness for variable operands.
+
+    Returns:
+        A list of ``asm.Instruction`` nodes equivalent to the TAC binary instruction.
+
+    Raises:
+        CodeGenerationError: If the operator variant is not supported.
+    """
+    src1_asm = _translate_val(src1)
+    src2_asm = _translate_val(src2)
+    dst_asm = _translate_val(dst)
+    match op:
+        case (
+            tac.Equal() | tac.NotEqual() | tac.LessThan() | tac.LessOrEqual() | tac.GreaterThan() | tac.GreaterOrEqual()
+        ):
+            cmp_at = _asm_type(src1, symbol_table)
+            unsigned = _is_unsigned(src1, symbol_table)
+            return [
+                asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=cmp_at),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.SetCC(_translate_relational_op(op, unsigned), dst_asm),
+            ]
+        case tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor():
+            at = _asm_type(dst, symbol_table)
+            r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+            return [
+                asm.Binary(
+                    operator=_translate_binary_op(op),
+                    src1=src1_asm,
+                    src2=src2_asm,
+                    dst=r11,
+                    assembly_type=at,
+                ),
+                asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
+            ]
+        case tac.LeftShift():
+            at = _asm_type(dst, symbol_table)
+            r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+            cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
+            return [
+                asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
+                asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.AssemblyType.Longword),
+                asm.Shl(operand=r11, assembly_type=at),
+                asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
+            ]
+        case tac.RightShift():
+            at = _asm_type(dst, symbol_table)
+            r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+            cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
+            # Unsigned right shift is logical (shr); signed is arithmetic (sar).
+            shift: asm.Instruction = (
+                asm.Shr(operand=r11, assembly_type=at)
+                if _is_unsigned(src1, symbol_table)
+                else asm.Sar(operand=r11, assembly_type=at)
+            )
+            return [
+                asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
+                asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.AssemblyType.Longword),
+                shift,
+                asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
+            ]
+        case tac.Divide():
+            at = _asm_type(dst, symbol_table)
+            ax = asm.Register(asm.Registers.AX, _reg_width(at))
+            dx = asm.Register(asm.Registers.DX, _reg_width(at))
+            if _is_unsigned(src1, symbol_table):
+                return [
+                    asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
+                    asm.Mov(src=asm.Imm(0), dst=dx, assembly_type=at),
+                    asm.Div(operand=src2_asm, assembly_type=at),
+                    asm.Mov(src=ax, dst=dst_asm, assembly_type=at),
+                ]
+            return [
+                asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
+                asm.Cdq(assembly_type=at),
+                asm.Idiv(operand=src2_asm, assembly_type=at),
+                asm.Mov(src=ax, dst=dst_asm, assembly_type=at),
+            ]
+        case tac.Remainder():
+            at = _asm_type(dst, symbol_table)
+            ax = asm.Register(asm.Registers.AX, _reg_width(at))
+            dx = asm.Register(asm.Registers.DX, _reg_width(at))
+            if _is_unsigned(src1, symbol_table):
+                return [
+                    asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
+                    asm.Mov(src=asm.Imm(0), dst=dx, assembly_type=at),
+                    asm.Div(operand=src2_asm, assembly_type=at),
+                    asm.Mov(src=dx, dst=dst_asm, assembly_type=at),
+                ]
+            return [
+                asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
+                asm.Cdq(assembly_type=at),
+                asm.Idiv(operand=src2_asm, assembly_type=at),
+                asm.Mov(src=dx, dst=dst_asm, assembly_type=at),
+            ]
+        case _:
+            raise CodeGenerationError(f"unsupported TAC binary operator: {type(op).__name__}")
+
+
 def _translate_instruction(instr: tac.Instruction, symbol_table: SymbolTable | None = None) -> list[asm.Instruction]:
     """Lower a single TAC instruction to a sequence of assembly instructions.
 
@@ -288,85 +437,13 @@ def _translate_instruction(instr: tac.Instruction, symbol_table: SymbolTable | N
                         asm.Unary(operator=_translate_unary_op(op), operand=dst_asm, assembly_type=at),
                     ]
         case tac.Binary(operator=op, src1=src1, src2=src2, dst=dst):
-            src1_asm = _translate_val(src1)
-            src2_asm = _translate_val(src2)
-            dst_asm = _translate_val(dst)
-            match op:
-                case (
-                    tac.Equal()
-                    | tac.NotEqual()
-                    | tac.LessThan()
-                    | tac.LessOrEqual()
-                    | tac.GreaterThan()
-                    | tac.GreaterOrEqual()
-                ):
-                    # Cmp uses the type of the values being compared (src operands).
-                    cmp_at = _asm_type(src1, symbol_table)
-                    return [
-                        asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=cmp_at),
-                        asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
-                        asm.SetCC(_translate_relational_op(op), dst_asm),
-                    ]
-                case (
-                    tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor()
-                ):
-                    at = _asm_type(dst, symbol_table)
-                    r11 = asm.Register(asm.Registers.R11, _reg_width(at))
-                    return [
-                        asm.Binary(
-                            operator=_translate_binary_op(op),
-                            src1=src1_asm,
-                            src2=src2_asm,
-                            dst=r11,
-                            assembly_type=at,
-                        ),
-                        asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
-                    ]
-                case tac.LeftShift():
-                    at = _asm_type(dst, symbol_table)
-                    r11 = asm.Register(asm.Registers.R11, _reg_width(at))
-                    cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
-                    return [
-                        asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
-                        asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.AssemblyType.Longword),
-                        asm.Shl(operand=r11, assembly_type=at),
-                        asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
-                    ]
-                case tac.RightShift():
-                    at = _asm_type(dst, symbol_table)
-                    r11 = asm.Register(asm.Registers.R11, _reg_width(at))
-                    cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
-                    return [
-                        asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
-                        asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.AssemblyType.Longword),
-                        asm.Sar(operand=r11, assembly_type=at),
-                        asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
-                    ]
-                case tac.Divide():
-                    at = _asm_type(dst, symbol_table)
-                    ax = asm.Register(asm.Registers.AX, _reg_width(at))
-                    return [
-                        asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
-                        asm.Cdq(assembly_type=at),
-                        asm.Idiv(operand=src2_asm, assembly_type=at),
-                        asm.Mov(src=ax, dst=dst_asm, assembly_type=at),
-                    ]
-                case tac.Remainder():
-                    at = _asm_type(dst, symbol_table)
-                    ax = asm.Register(asm.Registers.AX, _reg_width(at))
-                    dx = asm.Register(asm.Registers.DX, _reg_width(at))
-                    return [
-                        asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
-                        asm.Cdq(assembly_type=at),
-                        asm.Idiv(operand=src2_asm, assembly_type=at),
-                        asm.Mov(src=dx, dst=dst_asm, assembly_type=at),
-                    ]
-                case _:
-                    raise CodeGenerationError(f"unsupported TAC binary operator: {type(op).__name__}")
+            return _translate_binary(op, src1, src2, dst, symbol_table)
         case tac.FunCall(name=name, args=args, dst=dst):
             return _translate_funcall(name, list(args), _translate_val(dst), symbol_table)
         case tac.SignExtend(src=src, dst=dst):
             return [asm.Movsx(src=_translate_val(src), dst=_translate_val(dst))]
+        case tac.ZeroExtend(src=src, dst=dst):
+            return [asm.MoveZeroExtend(src=_translate_val(src), dst=_translate_val(dst))]
         case tac.Truncate(src=src, dst=dst):
             # Copying only the lower 32 bits via movl achieves truncation from long → int.
             return [asm.Mov(src=_translate_val(src), dst=_translate_val(dst), assembly_type=asm.AssemblyType.Longword)]
@@ -511,11 +588,16 @@ def _translate_unary_op(op: tac.UnaryOperator) -> asm.UnaryOperator:
             raise CodeGenerationError(f"unsupported TAC unary operator: {type(op).__name__}")
 
 
-def _translate_relational_op(op: tac.BinaryOperator) -> asm.CondCodes:
+def _translate_relational_op(op: tac.BinaryOperator, unsigned: bool = False) -> asm.CondCodes:
     """Translate a TAC relational operator to its assembly condition code.
+
+    Signed comparisons map to ``L``/``LE``/``G``/``GE``; unsigned comparisons map to
+    ``B``/``BE``/``A``/``AE``.  ``Equal`` and ``NotEqual`` are the same for both.
 
     Args:
         op: The TAC binary operator node.
+        unsigned: When ``True``, select the unsigned (above/below) condition codes instead of the
+            signed (less/greater) ones.
 
     Returns:
         The corresponding ``asm.CondCodes`` value.
@@ -529,13 +611,13 @@ def _translate_relational_op(op: tac.BinaryOperator) -> asm.CondCodes:
         case tac.NotEqual():
             return asm.CondCodes.NE
         case tac.LessThan():
-            return asm.CondCodes.L
+            return asm.CondCodes.B if unsigned else asm.CondCodes.L
         case tac.LessOrEqual():
-            return asm.CondCodes.LE
+            return asm.CondCodes.BE if unsigned else asm.CondCodes.LE
         case tac.GreaterThan():
-            return asm.CondCodes.G
+            return asm.CondCodes.A if unsigned else asm.CondCodes.G
         case tac.GreaterOrEqual():
-            return asm.CondCodes.GE
+            return asm.CondCodes.AE if unsigned else asm.CondCodes.GE
         case _:
             raise CodeGenerationError(f"unsupported TAC relational operator for asm.Binary: {type(op).__name__}")
 
@@ -584,7 +666,7 @@ def _replace_pseudos(
         if operand.name not in pseudo_offsets:
             size = 4
             if symbol_table is not None and operand.name in symbol_table:
-                if isinstance(symbol_table[operand.name].t, LongType):
+                if isinstance(symbol_table[operand.name].t, (LongType, ULongType)):
                     size = 8
             next_offset[0] -= size
             pseudo_offsets[operand.name] = next_offset[0]
@@ -597,6 +679,8 @@ def _replace_pseudos(
                 new_instructions.append(asm.Mov(src=resolve(src), dst=resolve(dst), assembly_type=at))
             case asm.Movsx(src=src, dst=dst):
                 new_instructions.append(asm.Movsx(src=resolve(src), dst=resolve(dst)))
+            case asm.MoveZeroExtend(src=src, dst=dst):
+                new_instructions.append(asm.MoveZeroExtend(src=resolve(src), dst=resolve(dst)))
             case asm.Unary(assembly_type=at, operator=op, operand=operand):
                 new_instructions.append(asm.Unary(operator=op, operand=resolve(operand), assembly_type=at))
             case asm.Binary(assembly_type=at, operator=op, src1=src1, src2=src2, dst=dst):
@@ -605,7 +689,13 @@ def _replace_pseudos(
                 )
             case asm.Idiv(assembly_type=at, operand=operand):
                 new_instructions.append(asm.Idiv(operand=resolve(operand), assembly_type=at))
-            case asm.Shl(assembly_type=at, operand=operand) | asm.Sar(assembly_type=at, operand=operand):
+            case asm.Div(assembly_type=at, operand=operand):
+                new_instructions.append(asm.Div(operand=resolve(operand), assembly_type=at))
+            case (
+                asm.Shl(assembly_type=at, operand=operand)
+                | asm.Sar(assembly_type=at, operand=operand)
+                | asm.Shr(assembly_type=at, operand=operand)
+            ):
                 new_instructions.append(type(instr)(operand=resolve(operand), assembly_type=at))
             case asm.Cmp(assembly_type=at, op1=op1, op2=op2):
                 new_instructions.append(asm.Cmp(op1=resolve(op1), op2=resolve(op2), assembly_type=at))
@@ -627,7 +717,43 @@ def _replace_pseudos(
 # ==============================================================================
 
 
-def _fix_instructions(fn: asm.Function) -> asm.Function:
+def _fix_movsx(
+    src: asm.Operand,
+    dst: asm.Operand,
+    fixed: list[asm.Instruction],
+    is_mem: object,
+) -> None:
+    """Emit a legal ``movslq`` sequence into ``fixed``, routing around illegal operand combinations.
+
+    ``movslq`` cannot accept an immediate source and its destination must be a register.
+    This helper handles both constraints:
+
+    * If ``src`` is an immediate: load it into ``%r10d`` first.
+    * If ``dst`` is memory: sign-extend into ``%r11q``, then store.
+
+    Args:
+        src: The raw source operand (may be ``Imm``, register, or memory).
+        dst: The raw destination operand (may be a register or memory).
+        fixed: The output instruction list to append into.
+        is_mem: Callable that returns ``True`` for ``Stack``/``Data`` operands.
+    """
+    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+    if isinstance(src, asm.Imm):
+        fixed.append(asm.Mov(src=src, dst=r10d, assembly_type=asm.AssemblyType.Longword))
+        if is_mem(dst):  # type: ignore[operator]
+            fixed.append(asm.Movsx(src=r10d, dst=r11q))
+            fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+        else:
+            fixed.append(asm.Movsx(src=r10d, dst=dst))
+    elif is_mem(dst):  # type: ignore[operator]
+        fixed.append(asm.Movsx(src=src, dst=r11q))
+        fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+    else:
+        fixed.append(asm.Movsx(src=src, dst=dst))
+
+
+def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore complexity warning
     """Rewrite instructions that are invalid in x86-64 assembly.
 
     Handles the following cases:
@@ -705,6 +831,17 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 r11 = asm.Register(asm.Registers.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=imm, dst=r11, assembly_type=at))
                 fixed.append(asm.Idiv(operand=r11, assembly_type=at))
+            case asm.Div(assembly_type=at, operand=asm.Imm() as imm):
+                r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+                fixed.append(asm.Mov(src=imm, dst=r11, assembly_type=at))
+                fixed.append(asm.Div(operand=r11, assembly_type=at))
+            case asm.MoveZeroExtend(src=src, dst=dst) if _is_mem(dst):
+                # movl dst must be a register for the zero-extension to take effect; route through
+                # %r11d (which implicitly zero-extends to %r11), then store the 64-bit result.
+                r11d = asm.Register(asm.Registers.R11, asm.Width.DWORD)
+                r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+                fixed.append(asm.MoveZeroExtend(src=src, dst=r11d))
+                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
             case asm.Binary(
                 assembly_type=asm.AssemblyType.Quadword, operator=op, src1=src1, src2=asm.Imm(value=v), dst=dst
             ) if not _fits_in_int32(v):
@@ -738,22 +875,20 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 r10 = asm.Register(asm.Registers.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=op1, dst=r10, assembly_type=at))
                 fixed.append(asm.Cmp(op1=r10, op2=op2, assembly_type=at))
-            case asm.Movsx(src=asm.Imm() as imm, dst=dst):
-                # movslq cannot accept an immediate source; load into %r10d first.
+            case asm.Movsx(src=src, dst=dst):
+                _fix_movsx(src, dst, fixed, _is_mem)
+            case asm.Push(assembly_type=asm.AssemblyType.Longword, operand=asm.Imm(value=v)) if not _fits_in_int32(v):
+                # pushq with a sign-extended 32-bit immediate cannot represent an unsigned int
+                # value with bit 31 set. Reinterpret as signed int32 for the movl (GAS accepts any
+                # 32-bit immediate there), load into %r10d — movl zero-extends so %r10 holds the
+                # correct 64-bit unsigned value — then pushq the 64-bit register.
+                truncated = v & 0xFFFFFFFF
+                if truncated >= (1 << 31):
+                    truncated -= 1 << 32
                 r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-                if _is_mem(dst):
-                    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-                    fixed.append(asm.Mov(src=imm, dst=r10d, assembly_type=asm.AssemblyType.Longword))
-                    fixed.append(asm.Movsx(src=r10d, dst=r11q))
-                    fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
-                else:
-                    fixed.append(asm.Mov(src=imm, dst=r10d, assembly_type=asm.AssemblyType.Longword))
-                    fixed.append(asm.Movsx(src=r10d, dst=dst))
-            case asm.Movsx(src=src, dst=dst) if _is_mem(dst):
-                # movslq dst must be a register; route through %r11 then store.
-                r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-                fixed.append(asm.Movsx(src=src, dst=r11q))
-                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=asm.Imm(truncated), dst=r10d, assembly_type=asm.AssemblyType.Longword))
+                fixed.append(asm.Push(operand=r10q, assembly_type=asm.AssemblyType.Quadword))
             case asm.Push(assembly_type=asm.AssemblyType.Quadword, operand=asm.Imm(value=v)) if not _fits_in_int32(v):
                 # pushq only accepts 8-bit or 32-bit sign-extended immediates; a 64-bit long
                 # constant that doesn't fit in 32 bits must be routed through %r10.
