@@ -63,7 +63,7 @@ from compiler.syntax.ast.operators import (
     NotEqual,
     Or,
 )
-from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type
+from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
 from compiler.types.symbols import (
     FunAttr,
     Initial,
@@ -76,6 +76,34 @@ from compiler.types.symbols import (
     Tentative,
 )
 from compiler.utils.exceptions import SemanticError
+
+_TYPE_SIZE: dict[type, int] = {IntType: 4, UIntType: 4, LongType: 8, ULongType: 8}
+_SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType})
+
+
+def get_common_type(type1: Type, type2: Type) -> Type:
+    """Return the common type to which both operands of a binary expression should be converted.
+
+    Implements C's usual arithmetic conversions for the integer types supported by this compiler.
+    When both operands already share the same type the result is that type unchanged.  When the
+    sizes differ the wider type is chosen.  When sizes are equal but signedness differs the
+    unsigned type is chosen (C11 §6.3.1.8, rule 4).
+
+    Args:
+        type1: The type of the first operand.
+        type2: The type of the second operand.
+
+    Returns:
+        The common ``Type`` to which both operands must be converted before the operation is
+        performed.
+    """
+    if type1 == type2:
+        return type1
+    size1 = _TYPE_SIZE.get(type(type1), 0)
+    size2 = _TYPE_SIZE.get(type(type2), 0)
+    if size1 == size2:
+        return type2 if type(type1) in _SIGNED_TYPES else type1
+    return type1 if size1 > size2 else type2
 
 
 class VariableBinding(NamedTuple):
@@ -589,6 +617,10 @@ class SemanticAnalyser:
                 raise SemanticError(
                     f"Conflicting declarations of '{fun.name}': parameter types do not match prior declaration."
                 )
+            if existing.ret_type != ret_type:
+                raise SemanticError(
+                    f"Conflicting declarations of '{fun.name}': return type does not match prior declaration."
+                )
             if existing.linkage != new_linkage:
                 raise SemanticError(
                     f"'{fun.name}' previously declared with "
@@ -735,31 +767,24 @@ class SemanticAnalyser:
                 typed_right = self._type_check_exp(right)
                 if isinstance(op, (And, Or)):
                     bin_type: Type | None = IntType()
-                elif isinstance(
-                    op,
-                    (
-                        Equal,
-                        NotEqual,
-                        LessThan,
-                        LessOrEqual,
-                        GreaterThan,
-                        GreaterOrEqual,
-                    ),
-                ):
+                elif isinstance(op, (Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual)):
                     bin_type = IntType()
-                    if isinstance(typed_left.exp_type, LongType) or isinstance(typed_right.exp_type, LongType):
-                        if not isinstance(typed_left.exp_type, LongType):
-                            typed_left = ast.Cast(LongType(), typed_left, exp_type=LongType())
-                        if not isinstance(typed_right.exp_type, LongType):
-                            typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
-                elif isinstance(typed_left.exp_type, LongType) or isinstance(typed_right.exp_type, LongType):
-                    bin_type = LongType()
-                    if not isinstance(typed_left.exp_type, LongType):
-                        typed_left = ast.Cast(LongType(), typed_left, exp_type=LongType())
-                    if not isinstance(typed_right.exp_type, LongType):
-                        typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
+                    if typed_left.exp_type is not None and typed_right.exp_type is not None:
+                        common = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                        if typed_left.exp_type != common:
+                            typed_left = ast.Cast(common, typed_left, exp_type=common)
+                        if typed_right.exp_type != common:
+                            typed_right = ast.Cast(common, typed_right, exp_type=common)
                 else:
-                    bin_type = typed_left.exp_type
+                    if typed_left.exp_type is not None and typed_right.exp_type is not None:
+                        bin_type = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                    else:
+                        bin_type = typed_left.exp_type
+                    if bin_type is not None:
+                        if typed_left.exp_type != bin_type:
+                            typed_left = ast.Cast(bin_type, typed_left, exp_type=bin_type)
+                        if typed_right.exp_type != bin_type:
+                            typed_right = ast.Cast(bin_type, typed_right, exp_type=bin_type)
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
@@ -771,12 +796,13 @@ class SemanticAnalyser:
                 typed_cond = self._type_check_exp(cond)
                 typed_true = self._type_check_exp(exp_true)
                 typed_false = self._type_check_exp(exp_false)
-                if isinstance(typed_true.exp_type, LongType) or isinstance(typed_false.exp_type, LongType):
-                    cond_type: Type | None = LongType()
-                    if not isinstance(typed_true.exp_type, LongType):
-                        typed_true = ast.Cast(LongType(), typed_true, exp_type=LongType())
-                    if not isinstance(typed_false.exp_type, LongType):
-                        typed_false = ast.Cast(LongType(), typed_false, exp_type=LongType())
+                if typed_true.exp_type is not None and typed_false.exp_type is not None:
+                    common_cond = get_common_type(typed_true.exp_type, typed_false.exp_type)
+                    cond_type: Type | None = common_cond
+                    if typed_true.exp_type != common_cond:
+                        typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
+                    if typed_false.exp_type != common_cond:
+                        typed_false = ast.Cast(common_cond, typed_false, exp_type=common_cond)
                 else:
                     cond_type = typed_true.exp_type
                 return ast.Conditional(typed_cond, typed_true, typed_false, exp_type=cond_type)
