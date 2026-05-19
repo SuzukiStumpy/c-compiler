@@ -91,6 +91,19 @@ class Truncate(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class ZeroExtend(Instruction):
+    """Widen a value from C ``int`` to C ``long``.
+
+    Attributes:
+        src: The ``long``-typed source value.
+        dst: The ``int``-typed destination value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
 class Copy(Instruction):
     """Represents a copy operation with the tac
 

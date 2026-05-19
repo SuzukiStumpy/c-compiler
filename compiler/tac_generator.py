@@ -91,9 +91,6 @@ from itertools import count
 
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
-from compiler.syntax.ast.constants import ConstInt
-from compiler.syntax.ast.declarations import StorageClass
-from compiler.syntax.ast.types import IntType, LongType, Type
 from compiler.types.symbols import (
     Initial,
     LocalAttr,
@@ -152,7 +149,7 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
     """
     result: list[tac.StaticVariable] = []
     for name, entry in symbol_table.items():
-        is_long = isinstance(entry.t, LongType)
+        is_long = isinstance(entry.t, ast.LongType)
         match entry.attrs:
             case StaticAttr(init=Initial(value=i), globl=globl):
                 static_init = tac.LongInit(i) if is_long else tac.IntInit(i)
@@ -239,6 +236,44 @@ def _translate_unary_op(op: ast.UnaryOperator) -> tac.UnaryOperator:
             raise CodeGenerationError(f"unsupported unary operator: {type(op).__name__}")
 
 
+def _type_size(t: ast.Type) -> int:
+    """Return the size in bytes of a C type.
+
+    Args:
+        t: The C type whose size is required.
+
+    Returns:
+        4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``.
+
+    Raises:
+        CodeGenerationError: If the type is not a scalar integer type.
+    """
+    if isinstance(t, (ast.IntType, ast.UIntType)):
+        return 4
+    if isinstance(t, (ast.LongType, ast.ULongType)):
+        return 8
+    raise CodeGenerationError(f"unsupported type in size calculation: {type(t).__name__}")
+
+
+def _is_signed(t: ast.Type) -> bool:
+    """Return whether a C integer type is signed.
+
+    Args:
+        t: The C type to inspect.
+
+    Returns:
+        ``True`` for ``int`` and ``long``; ``False`` for ``unsigned int`` and ``unsigned long``.
+
+    Raises:
+        CodeGenerationError: If the type is not a scalar integer type.
+    """
+    if isinstance(t, (ast.IntType, ast.LongType)):
+        return True
+    if isinstance(t, (ast.UIntType, ast.ULongType)):
+        return False
+    raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
+
+
 class _TacGenerator:
     """Stateful TAC generator for a single function.
 
@@ -259,7 +294,7 @@ class _TacGenerator:
         self._function_name: str = ""
         self._symbol_table = symbol_table
 
-    def _make_temp(self, t: Type = IntType()) -> tac.Var:
+    def _make_temp(self, t: ast.Type = ast.IntType()) -> tac.Var:
         """Create a fresh temporary variable, register it in the symbol table, and advance the counter.
 
         Every temporary is registered under ``LocalAttr`` so that the assembly
@@ -267,8 +302,8 @@ class _TacGenerator:
         re-deriving types from the instruction stream.
 
         Args:
-            t: The C type of the temporary.  Defaults to ``IntType()``; callers that
-                produce a ``long``-typed result (e.g. ``Cast`` to ``LongType``) must
+            t: The C type of the temporary.  Defaults to ``ast.IntType()``; callers that
+                produce a ``long``-typed result (e.g. ``Cast`` to ``ast.LongType``) must
                 pass the correct type explicitly.
 
         Returns:
@@ -304,7 +339,7 @@ class _TacGenerator:
         self._function_name = function.name
         instructions = self.translate_block(function.body)
         # Guard instruction for functions that don't supply a return value
-        instructions.append(tac.Return(tac.Constant(ConstInt(0))))
+        instructions.append(tac.Return(tac.Constant(ast.ConstInt(0))))
         return tac.Function(
             name=function.name,
             globl=function.globl,
@@ -353,7 +388,7 @@ class _TacGenerator:
                     variable_declaration=ast.VariableDeclaration(name=name, init=init, storage_class=sc)
                 )
             ):
-                if sc in (StorageClass.Static, StorageClass.Extern):
+                if sc in (ast.StorageClass.Static, ast.StorageClass.Extern):
                     return []  # emitted as StaticVariable via symbol table; no inline instructions
                 if init is None:
                     return []
@@ -571,7 +606,7 @@ class _TacGenerator:
             true.
         """
         if exp is None:
-            return tac.Constant(ConstInt(1)), []
+            return tac.Constant(ast.ConstInt(1)), []
         return self.translate_exp(exp)
 
     def _collect_switch_cases(self, stmt: ast.Statement) -> list[ast.Case | ast.Default]:
@@ -639,52 +674,60 @@ class _TacGenerator:
         match exp:
             case ast.Cast(target_type=t, exp=inner):
                 result, inner_instrs = self.translate_exp(inner)
-                if t == inner.exp_type:
+                inner_type = inner.exp_type
+                if t == inner_type:
                     return result, inner_instrs
                 dst = self._make_temp(t)
-                if isinstance(t, LongType):
-                    return dst, [*inner_instrs, tac.SignExtend(src=result, dst=dst)]
+                dst_size = _type_size(t)
+                src_size = _type_size(inner_type)  # type: ignore[arg-type]
+                if dst_size == src_size:
+                    conv = tac.Copy(src=result, dst=dst)
+                elif dst_size < src_size:
+                    conv = tac.Truncate(src=result, dst=dst)
+                elif _is_signed(inner_type):  # type: ignore[arg-type]
+                    conv = tac.SignExtend(src=result, dst=dst)
                 else:
-                    return dst, [*inner_instrs, tac.Truncate(src=result, dst=dst)]
+                    conv = tac.ZeroExtend(src=result, dst=dst)
+                return dst, [*inner_instrs, conv]
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
             case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                tmp = self._make_temp(exp.exp_type or IntType())
+                tmp = self._make_temp(exp.exp_type or ast.IntType())
                 return var, [
-                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                tmp = self._make_temp(exp.exp_type or IntType())
+                tmp = self._make_temp(exp.exp_type or ast.IntType())
                 return var, [
-                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                t = exp.exp_type or IntType()
+                t = exp.exp_type or ast.IntType()
                 old = self._make_temp(t)
                 tmp = self._make_temp(t)
                 return old, [
                     tac.Copy(src=var, dst=old),
-                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                t = exp.exp_type or IntType()
+                t = exp.exp_type or ast.IntType()
                 old = self._make_temp(t)
                 tmp = self._make_temp(t)
                 return old, [
                     tac.Copy(src=var, dst=old),
-                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=op, exp=inner):
                 src, inner_instrs = self.translate_exp(inner)
-                dst = self._make_temp(exp.exp_type or IntType())
+                dst = self._make_temp(exp.exp_type or ast.IntType())
                 return dst, [
                     *inner_instrs,
                     tac.Unary(operator=_translate_unary_op(op), src=src, dst=dst),
@@ -700,10 +743,10 @@ class _TacGenerator:
                     tac.JumpIfZero(condition=left_val, target=label_false.name),
                     *right_instrs,
                     tac.JumpIfZero(condition=right_val, target=label_false.name),
-                    tac.Copy(src=tac.Constant(ConstInt(1)), dst=dst),
+                    tac.Copy(src=tac.Constant(ast.ConstInt(1)), dst=dst),
                     tac.Jump(target=label_end.name),
                     label_false,
-                    tac.Copy(src=tac.Constant(ConstInt(0)), dst=dst),
+                    tac.Copy(src=tac.Constant(ast.ConstInt(0)), dst=dst),
                     label_end,
                 ]
             case ast.Binary(operator=ast.Or(), left=left, right=right):
@@ -717,16 +760,16 @@ class _TacGenerator:
                     tac.JumpIfNotZero(condition=left_val, target=label_true.name),
                     *right_instrs,
                     tac.JumpIfNotZero(condition=right_val, target=label_true.name),
-                    tac.Copy(src=tac.Constant(ConstInt(0)), dst=dst),
+                    tac.Copy(src=tac.Constant(ast.ConstInt(0)), dst=dst),
                     tac.Jump(target=label_end.name),
                     label_true,
-                    tac.Copy(src=tac.Constant(ConstInt(1)), dst=dst),
+                    tac.Copy(src=tac.Constant(ast.ConstInt(1)), dst=dst),
                     label_end,
                 ]
             case ast.Binary(operator=op, left=left, right=right):
                 src1, left_instrs = self.translate_exp(left)
                 src2, right_instrs = self.translate_exp(right)
-                dst = self._make_temp(exp.exp_type or IntType())
+                dst = self._make_temp(exp.exp_type or ast.IntType())
                 binary = tac.Binary(operator=_translate_binary_op(op), src1=src1, src2=src2, dst=dst)
                 return dst, [*left_instrs, *right_instrs, binary]
             case ast.Var(name=name):
@@ -739,7 +782,7 @@ class _TacGenerator:
                 cond_val, cond_instrs = self.translate_exp(cond)
                 label_false = self._make_label("cond_false")
                 label_end = self._make_label("cond_end")
-                dst = self._make_temp(exp.exp_type or IntType())
+                dst = self._make_temp(exp.exp_type or ast.IntType())
                 e1_val, e1_instrs = self.translate_exp(exp_true)
                 e2_val, e2_instrs = self.translate_exp(exp_false)
                 return dst, [
@@ -760,7 +803,7 @@ class _TacGenerator:
                     val, instrs = self.translate_exp(arg)
                     all_instrs.extend(instrs)
                     arg_vals.append(val)
-                dst = self._make_temp(exp.exp_type or IntType())
+                dst = self._make_temp(exp.exp_type or ast.IntType())
                 return dst, [*all_instrs, tac.FunCall(name=name, args=tuple(arg_vals), dst=dst)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

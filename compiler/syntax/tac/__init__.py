@@ -10,6 +10,7 @@ mirrors the ASDL grammar for the supported assembly subset:
     instruction         = Return(val)
                         | SignExtend(val src, val dst)
                         | Truncate(val src, val dst)
+                        | ZeroExtend(val src, val dst)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
                         | Copy(val src, val dst)
@@ -56,6 +57,7 @@ from compiler.syntax.tac.instructions import (
     SignExtend,
     Truncate,
     Unary,
+    ZeroExtend,
 )
 from compiler.syntax.tac.operators import (
     Add,
@@ -83,6 +85,7 @@ from compiler.syntax.tac.operators import (
 from compiler.syntax.tac.values import Constant, IntInit, LongInit, StaticInit, Val, Var
 
 __all__ = [
+    "ZeroExtend",
     "StaticVariable",
     "TopLevel",
     "FunCall",
