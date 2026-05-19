@@ -39,7 +39,7 @@ class Registers(Enum):
     R9 = {Width.QWORD: "r9", Width.DWORD: "r9d", Width.BYTE: "r9b"}
     R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.BYTE: "r10b"}
     R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.BYTE: "r11b"}
-    SP = {Width.QWORD: "", Width.DWORD: "", Width.BYTE: ""}
+    SP = {Width.QWORD: "rsp", Width.DWORD: "rsp", Width.BYTE: "rsp"}
 
 
 class Operand(ABC):

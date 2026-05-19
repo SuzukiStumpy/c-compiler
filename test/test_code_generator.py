@@ -10,8 +10,9 @@ import pytest
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.code_generator import generate
-from compiler.syntax.ast.constants import ConstInt
-from compiler.syntax.ast.types import IntType
+from compiler.syntax.ast.constants import ConstInt, ConstLong
+from compiler.syntax.ast.types import IntType, LongType
+from compiler.types.symbols import LocalAttr, SymbolTable, SymbolTableEntry
 from compiler.utils.exceptions import CodeGenerationError
 
 
@@ -131,7 +132,11 @@ def test_unary_negate_produces_allocate_mov_unary_mov_ret() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstInt(5)), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(
+                        operator=tac.Negate(),
+                        src=tac.Constant(value=ConstInt(5)),
+                        dst=tac.Var(value="tmp.0"),
+                    ),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -155,7 +160,9 @@ def test_unary_complement_uses_not_operator() -> None:
                 name="main",
                 body=(
                     tac.Unary(
-                        operator=tac.Complement(), src=tac.Constant(value=ConstInt(1)), dst=tac.Var(value="tmp.0")
+                        operator=tac.Complement(),
+                        src=tac.Constant(value=ConstInt(1)),
+                        dst=tac.Var(value="tmp.0"),
                     ),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
@@ -175,7 +182,11 @@ def test_stack_allocation_is_multiple_of_16() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstInt(1)), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(
+                        operator=tac.Negate(),
+                        src=tac.Constant(value=ConstInt(1)),
+                        dst=tac.Var(value="tmp.0"),
+                    ),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -194,7 +205,11 @@ def test_no_pseudo_operands_in_output() -> None:
             tac.Function(
                 name="main",
                 body=(
-                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstInt(3)), dst=tac.Var(value="tmp.0")),
+                    tac.Unary(
+                        operator=tac.Negate(),
+                        src=tac.Constant(value=ConstInt(3)),
+                        dst=tac.Var(value="tmp.0"),
+                    ),
                     tac.Return(val=tac.Var(value="tmp.0")),
                 ),
             ),
@@ -223,9 +238,15 @@ def test_chained_temps_produce_no_mem_mem_mov() -> None:
                 name="main",
                 body=(
                     tac.Unary(
-                        operator=tac.Complement(), src=tac.Constant(value=ConstInt(2)), dst=tac.Var(value="tmp.0")
+                        operator=tac.Complement(),
+                        src=tac.Constant(value=ConstInt(2)),
+                        dst=tac.Var(value="tmp.0"),
                     ),
-                    tac.Unary(operator=tac.Negate(), src=tac.Var(value="tmp.0"), dst=tac.Var(value="tmp.1")),
+                    tac.Unary(
+                        operator=tac.Negate(),
+                        src=tac.Var(value="tmp.0"),
+                        dst=tac.Var(value="tmp.1"),
+                    ),
                     tac.Return(val=tac.Var(value="tmp.1")),
                 ),
             ),
@@ -389,7 +410,10 @@ def test_idiv_memory_divisor_not_routed_through_r11() -> None:
                 name="main",
                 body=(
                     tac.Binary(
-                        operator=tac.Divide(), src1=tac.Constant(ConstInt(10)), src2=tac.Var("b"), dst=tac.Var("tmp.0")
+                        operator=tac.Divide(),
+                        src1=tac.Constant(ConstInt(10)),
+                        src2=tac.Var("b"),
+                        dst=tac.Var("tmp.0"),
                     ),
                     tac.Return(val=tac.Var("tmp.0")),
                 ),
@@ -462,7 +486,12 @@ class TestBitwiseAndOrXorCodeGen:
     )
     def test_emit(self, op: asm.BinaryOperator, src1: int, src2: int, expected: str) -> None:
         """``asm.Binary`` with each bitwise operator emits the correct two-line sequence."""
-        instr = asm.Binary(operator=op, src1=asm.Imm(src1), src2=asm.Imm(src2), dst=asm.Register(asm.Registers.R11))
+        instr = asm.Binary(
+            operator=op,
+            src1=asm.Imm(src1),
+            src2=asm.Imm(src2),
+            dst=asm.Register(asm.Registers.R11),
+        )
         assert instr.emit() == expected
 
 
@@ -824,6 +853,19 @@ def _fn_instructions(program: tac.Program) -> tuple[asm.Instruction, ...]:
     return next(d for d in generate(program).definitions if isinstance(d, asm.Function)).instructions
 
 
+def _fn_instructions_with_table(program: tac.Program, symbol_table: SymbolTable) -> tuple[asm.Instruction, ...]:
+    """Return the instructions of the first ``asm.Function``, passing a symbol table to ``generate``.
+
+    Args:
+        program: A ``tac.Program`` to pass through ``generate``.
+        symbol_table: The symbol table forwarded to ``generate`` for type-aware code generation.
+
+    Returns:
+        The ``instructions`` tuple of the first ``asm.Function`` definition produced.
+    """
+    return next(d for d in generate(program, symbol_table).definitions if isinstance(d, asm.Function)).instructions
+
+
 class TestStaticVariablePseudoReplacement:
     """``tac.Var`` references to static-variable names become ``asm.Data``, not ``asm.Stack``."""
 
@@ -1019,4 +1061,121 @@ class TestPushMemOperandFixup:
             if isinstance(instr, asm.Push):
                 assert not isinstance(instr.operand, (asm.Stack, asm.Data)), (
                     "Push(Data) survived fixup — should be expanded through %eax/%rax"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Instruction fixup — large Quadword immediates
+# ---------------------------------------------------------------------------
+
+_LARGE_LONG: int = 34359738368  # 0x800000000; doesn't fit in a signed 32-bit integer
+
+
+class TestPushLargeImmFixup:
+    """``Push(Quadword, Imm(v))`` where ``v`` doesn't fit in 32 bits is expanded through ``%r10``."""
+
+    def test_push_large_long_imm_not_emitted_directly(self) -> None:
+        """A large long constant stack arg produces no ``Push(Imm)`` after fixup."""
+        program = _seven_arg_call_program(seventh_arg=tac.Constant(ConstLong(_LARGE_LONG)))
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Push):
+                assert not isinstance(instr.operand, asm.Imm), "Push(Imm(large)) survived fixup"
+
+    def test_push_large_long_imm_routed_through_r10(self) -> None:
+        """A large long constant stack arg is loaded into ``%r10`` immediately before the push."""
+        program = _seven_arg_call_program(seventh_arg=tac.Constant(ConstLong(_LARGE_LONG)))
+        instrs = list(_fn_instructions(program))
+        push_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Push))
+        mov = instrs[push_idx - 1]
+        assert isinstance(mov, asm.Mov), "expected Mov before Push for large-imm fixup"
+        assert isinstance(mov.src, asm.Imm) and mov.src.value == _LARGE_LONG
+        assert isinstance(mov.dst, asm.Register) and mov.dst.reg == asm.Registers.R10
+
+
+class TestBinaryLargeImmFixup:
+    """``Binary(Quadword, op, src1, Imm(v), dst)`` where ``v`` doesn't fit in 32 bits routes src2 through ``%r10``."""
+
+    def _long_binary_instructions(self, op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
+        """Generate instructions for a Quadword Binary with a large immediate as both src operands.
+
+        Args:
+            op: The binary operator to test.
+
+        Returns:
+            The assembled instruction sequence after all fixup passes.
+        """
+        symbol_table: SymbolTable = {"tmp": SymbolTableEntry(t=LongType(), attrs=LocalAttr())}
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.Binary(
+                            operator=op,
+                            src1=tac.Constant(ConstLong(_LARGE_LONG)),
+                            src2=tac.Constant(ConstLong(_LARGE_LONG)),
+                            dst=tac.Var("tmp"),
+                        ),
+                        tac.Return(val=tac.Var("tmp")),
+                    ),
+                ),
+            )
+        )
+        return _fn_instructions_with_table(program, symbol_table)
+
+    @pytest.mark.parametrize("op", [tac.Add(), tac.Subtract(), tac.Multiply()])
+    def test_binary_large_imm_src2_not_present(self, op: tac.BinaryOperator) -> None:
+        """No ``Binary`` instruction retains a large Quadword Imm as ``src2`` after fixup.
+
+        Args:
+            op: The binary operator to test (Add, Subtract, Multiply).
+        """
+        for instr in self._long_binary_instructions(op):
+            if isinstance(instr, asm.Binary) and instr.assembly_type == asm.AssemblyType.Quadword:
+                assert not (
+                    isinstance(instr.src2, asm.Imm) and not (-(1 << 31) <= instr.src2.value <= (1 << 31) - 1)
+                ), "Binary kept large Imm as src2 after fixup"
+
+    @pytest.mark.parametrize("op", [tac.Add(), tac.Subtract(), tac.Multiply()])
+    def test_binary_large_imm_src2_routed_through_r10(self, op: tac.BinaryOperator) -> None:
+        """A large Quadword immediate src2 is moved into ``%r10`` before the Binary instruction.
+
+        Args:
+            op: The binary operator to test (Add, Subtract, Multiply).
+        """
+        instrs = list(self._long_binary_instructions(op))
+        binary_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Binary))
+        mov = instrs[binary_idx - 1]
+        assert isinstance(mov, asm.Mov), "expected Mov before Binary for large-imm fixup"
+        assert isinstance(mov.src, asm.Imm) and mov.src.value == _LARGE_LONG
+        assert isinstance(mov.dst, asm.Register) and mov.dst.reg == asm.Registers.R10
+
+
+class TestCmpBothLargeImmFixup:
+    """``Cmp(Quadword, Imm(large), Imm)`` routes both operands through registers rather than
+    leaving Imm(large) as op1.
+    """
+
+    def test_cmp_large_op1_imm_op2_no_imm_survives(self) -> None:
+        """No ``Cmp`` retains a large Imm as ``op1`` when ``op2`` is also an immediate."""
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.Binary(
+                            operator=tac.Equal(),
+                            src1=tac.Constant(ConstLong(_LARGE_LONG)),
+                            src2=tac.Constant(ConstLong(_LARGE_LONG)),
+                            dst=tac.Var("tmp"),
+                        ),
+                        tac.Return(val=tac.Var("tmp")),
+                    ),
+                ),
+            )
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Cmp) and instr.assembly_type == asm.AssemblyType.Quadword:
+                assert not (isinstance(instr.op1, asm.Imm) and not (-(1 << 31) <= instr.op1.value <= (1 << 31) - 1)), (
+                    "large Imm survived as Cmp.op1 after fixup"
                 )

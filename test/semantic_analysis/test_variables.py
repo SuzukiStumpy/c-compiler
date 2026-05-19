@@ -994,13 +994,20 @@ class TestTypeCheckExp:
     # ------------------------------------------------------------------
 
     def test_untyped_child_is_typed_recursively(self) -> None:
-        """When a child expression has no ``exp_type``, ``_type_check_exp`` recurses to set it."""
+        """When a child expression has no ``exp_type``, ``_type_check_exp`` recurses to set it.
+
+        Mixed int/long arithmetic wraps the narrower operand in a Cast so both sides share
+        the common LongType before the Binary node is returned.
+        """
         analyser = SemanticAnalyser()
         # ConstInt with no exp_type — _type_check_exp must annotate it
         untyped_int = ast.Constant(ast.ConstInt(1))
         untyped_long = ast.Constant(ast.ConstLong(2))
         result = analyser._type_check_exp(ast.Binary(ast.Add(), untyped_int, untyped_long))
         assert result.exp_type == ast.LongType()
-        # Children should have been typed as a side-effect of building the result
-        assert result.left.exp_type == ast.IntType()
+        # The int operand must be wrapped in a Cast(LongType) for promotion.
+        assert isinstance(result.left, ast.Cast)
+        assert result.left.target_type == ast.LongType()
+        assert result.left.exp.exp_type == ast.IntType()
+        # The long operand is already the common type — no Cast needed.
         assert result.right.exp_type == ast.LongType()

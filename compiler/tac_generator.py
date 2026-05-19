@@ -650,22 +650,23 @@ class _TacGenerator:
                 return tac.Constant(value=value), []
             case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                tmp = self._make_temp()
+                tmp = self._make_temp(exp.exp_type or IntType())
                 return var, [
                     tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                tmp = self._make_temp()
+                tmp = self._make_temp(exp.exp_type or IntType())
                 return var, [
                     tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                old = self._make_temp()
-                tmp = self._make_temp()
+                t = exp.exp_type or IntType()
+                old = self._make_temp(t)
+                tmp = self._make_temp(t)
                 return old, [
                     tac.Copy(src=var, dst=old),
                     tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
@@ -673,8 +674,9 @@ class _TacGenerator:
                 ]
             case ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                old = self._make_temp()
-                tmp = self._make_temp()
+                t = exp.exp_type or IntType()
+                old = self._make_temp(t)
+                tmp = self._make_temp(t)
                 return old, [
                     tac.Copy(src=var, dst=old),
                     tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ConstInt(1)), dst=tmp),
@@ -682,7 +684,7 @@ class _TacGenerator:
                 ]
             case ast.Unary(operator=op, exp=inner):
                 src, inner_instrs = self.translate_exp(inner)
-                dst = self._make_temp()
+                dst = self._make_temp(exp.exp_type or IntType())
                 return dst, [
                     *inner_instrs,
                     tac.Unary(operator=_translate_unary_op(op), src=src, dst=dst),
@@ -724,7 +726,7 @@ class _TacGenerator:
             case ast.Binary(operator=op, left=left, right=right):
                 src1, left_instrs = self.translate_exp(left)
                 src2, right_instrs = self.translate_exp(right)
-                dst = self._make_temp()
+                dst = self._make_temp(exp.exp_type or IntType())
                 binary = tac.Binary(operator=_translate_binary_op(op), src1=src1, src2=src2, dst=dst)
                 return dst, [*left_instrs, *right_instrs, binary]
             case ast.Var(name=name):
@@ -737,7 +739,7 @@ class _TacGenerator:
                 cond_val, cond_instrs = self.translate_exp(cond)
                 label_false = self._make_label("cond_false")
                 label_end = self._make_label("cond_end")
-                dst = self._make_temp()
+                dst = self._make_temp(exp.exp_type or IntType())
                 e1_val, e1_instrs = self.translate_exp(exp_true)
                 e2_val, e2_instrs = self.translate_exp(exp_false)
                 return dst, [
@@ -758,7 +760,7 @@ class _TacGenerator:
                     val, instrs = self.translate_exp(arg)
                     all_instrs.extend(instrs)
                     arg_vals.append(val)
-                dst = self._make_temp()
+                dst = self._make_temp(exp.exp_type or IntType())
                 return dst, [*all_instrs, tac.FunCall(name=name, args=tuple(arg_vals), dst=dst)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

@@ -9,6 +9,7 @@ import pytest
 
 import compiler.syntax.ast as ast
 from compiler.semantic_analysis import SemanticAnalyser, resolve
+from compiler.syntax.ast.constants import ConstInt
 from compiler.syntax.ast.types import Linkage
 from compiler.utils.exceptions import SemanticError
 from test.semantic_analysis.helpers import (
@@ -37,7 +38,7 @@ class TestFileScopeVariableDeclarations:
             body=(ast.S(ast.Return(ast.Var("g"))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
-        program = _prog_with_decls(_file_var("g", ast.Constant(0)), ast.FunDecl(main_fn))
+        program = _prog_with_decls(_file_var("g", ast.Constant(ConstInt(0))), ast.FunDecl(main_fn))
         resolved = resolve(program)
         var_decl = resolved.declarations[0].variable_declaration
         assert var_decl.name == "g"
@@ -50,7 +51,7 @@ class TestFileScopeVariableDeclarations:
             body=(ast.S(ast.Return(ast.Var("g"))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
-        program = _prog_with_decls(_file_var("g", ast.Constant(0)), ast.FunDecl(main_fn))
+        program = _prog_with_decls(_file_var("g", ast.Constant(ConstInt(0))), ast.FunDecl(main_fn))
         resolved = resolve(program)
         ret = _get_fn(resolved).body[0].statement
         assert isinstance(ret, ast.Return)
@@ -64,7 +65,7 @@ class TestFileScopeVariableDeclarations:
             body=(ast.S(ast.Return(ast.Var("g"))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
-        program = _prog_with_decls(ast.FunDecl(main_fn), _file_var("g", ast.Constant(0)))
+        program = _prog_with_decls(ast.FunDecl(main_fn), _file_var("g", ast.Constant(ConstInt(0))))
         with pytest.raises(SemanticError, match="Undeclared"):
             resolve(program)
 
@@ -95,7 +96,7 @@ class TestFileScopeVariableDeclarations:
         foo_fn = ast.Function(
             name="foo",
             params=(),
-            body=(ast.S(ast.Return(ast.Constant(0))),),
+            body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         main_fn = ast.Function(
@@ -105,18 +106,20 @@ class TestFileScopeVariableDeclarations:
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="redeclared as a variable"):
-            resolve(_prog_with_decls(ast.FunDecl(foo_fn), ast.FunDecl(main_fn), _file_var("foo", ast.Constant(3))))
+            resolve(
+                _prog_with_decls(ast.FunDecl(foo_fn), ast.FunDecl(main_fn), _file_var("foo", ast.Constant(ConstInt(3))))
+            )
 
     def test_function_after_file_scope_variable_of_same_name_raises(self) -> None:
         """A function declaration after a file-scope variable of the same name raises ``SemanticError``."""
         foo_fn = ast.Function(
             name="foo",
             params=(),
-            body=(ast.S(ast.Return(ast.Constant(0))),),
+            body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="redeclared as a function"):
-            resolve(_prog_with_decls(_file_var("foo", ast.Constant(3)), ast.FunDecl(foo_fn)))
+            resolve(_prog_with_decls(_file_var("foo", ast.Constant(ConstInt(3))), ast.FunDecl(foo_fn)))
 
     def test_file_scope_variable_non_constant_init_raises(self) -> None:
         """A file-scope variable with a non-constant initialiser raises ``SemanticError``.
@@ -128,14 +131,14 @@ class TestFileScopeVariableDeclarations:
         main_fn = ast.Function(
             name="main",
             params=(),
-            body=(ast.S(ast.Return(ast.Constant(0))),),
+            body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="constant expression"):
             resolve(
                 _prog_with_decls(
-                    _file_var("a", ast.Constant(10)),
-                    _file_var("b", ast.Binary(ast.Add, ast.Constant(1), ast.Var("a"))),
+                    _file_var("a", ast.Constant(ConstInt(10))),
+                    _file_var("b", ast.Binary(ast.Add, ast.Constant(ConstInt(1)), ast.Var("a"))),
                     ast.FunDecl(main_fn),
                 )
             )
@@ -144,9 +147,9 @@ class TestFileScopeVariableDeclarations:
         """A file-scope variable with a ``Constant`` initialiser is accepted."""
         analyser = SemanticAnalyser()
         result = analyser._resolve_file_scope_variable_declaration(
-            ast.VariableDeclaration("x", ast.Constant(7), ast.IntType())
+            ast.VariableDeclaration("x", ast.Constant(ConstInt(7)), ast.IntType())
         )
-        assert result.init == ast.Constant(7)
+        assert result.init == ast.Constant(ConstInt(7))
 
     def test_file_scope_extern_then_static_raises(self) -> None:
         """A ``static`` file-scope declaration conflicts with a prior ``extern`` declaration of the same name.
@@ -190,7 +193,7 @@ class TestFileScopeVariableDeclarations:
             resolve(
                 _prog_with_decls(
                     ast.FunDecl(main_fn),
-                    _file_var("x", ast.Constant(10), sc=ast.StorageClass.Static),
+                    _file_var("x", ast.Constant(ConstInt(10)), sc=ast.StorageClass.Static),
                 )
             )
 
@@ -213,7 +216,7 @@ class TestFileScopeVariableDeclarations:
         )
         resolved = resolve(
             _prog_with_decls(
-                _file_var("x", ast.Constant(10), sc=ast.StorageClass.Static),
+                _file_var("x", ast.Constant(ConstInt(10)), sc=ast.StorageClass.Static),
                 ast.FunDecl(main_fn),
             )
         )
@@ -227,7 +230,7 @@ class TestFileScopeVariableDeclarations:
         """
         analyser = SemanticAnalyser()
         analyser._resolve_file_scope_variable_declaration(
-            ast.VariableDeclaration("x", ast.Constant(1), ast.IntType(), ast.StorageClass.Static)
+            ast.VariableDeclaration("x", ast.Constant(ConstInt(1)), ast.IntType(), ast.StorageClass.Static)
         )
         result = analyser._resolve_file_scope_variable_declaration(
             ast.VariableDeclaration("x", None, ast.IntType(), ast.StorageClass.Extern)
@@ -243,11 +246,11 @@ class TestFileScopeVariableDeclarations:
         """
         analyser = SemanticAnalyser()
         analyser._resolve_file_scope_variable_declaration(
-            ast.VariableDeclaration("foo", ast.Constant(3), ast.IntType())
+            ast.VariableDeclaration("foo", ast.Constant(ConstInt(3)), ast.IntType())
         )
         with pytest.raises(SemanticError, match="Duplicate definition"):
             analyser._resolve_file_scope_variable_declaration(
-                ast.VariableDeclaration("foo", ast.Constant(4), ast.IntType())
+                ast.VariableDeclaration("foo", ast.Constant(ConstInt(4)), ast.IntType())
             )
 
     def test_tentative_then_definition_is_valid(self) -> None:
@@ -255,15 +258,15 @@ class TestFileScopeVariableDeclarations:
         analyser = SemanticAnalyser()
         analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", None, ast.IntType()))
         result = analyser._resolve_file_scope_variable_declaration(
-            ast.VariableDeclaration("foo", ast.Constant(4), ast.IntType())
+            ast.VariableDeclaration("foo", ast.Constant(ConstInt(4)), ast.IntType())
         )
-        assert result.init == ast.Constant(4)
+        assert result.init == ast.Constant(ConstInt(4))
 
     def test_definition_then_tentative_is_valid(self) -> None:
         """A definition followed by a tentative definition (no initialiser) is accepted."""
         analyser = SemanticAnalyser()
         analyser._resolve_file_scope_variable_declaration(
-            ast.VariableDeclaration("foo", ast.Constant(3), ast.IntType())
+            ast.VariableDeclaration("foo", ast.Constant(ConstInt(3)), ast.IntType())
         )
         result = analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("foo", None, ast.IntType()))
         assert result.init is None
@@ -340,7 +343,7 @@ class TestBlockScopeStorageClass:
         analyser = SemanticAnalyser()
         with pytest.raises(SemanticError, match="may not have an initialiser"):
             analyser.resolve_variable_declaration(
-                ast.VariableDeclaration("g", ast.Constant(5), ast.IntType(), ast.StorageClass.Extern)
+                ast.VariableDeclaration("g", ast.Constant(ConstInt(5)), ast.IntType(), ast.StorageClass.Extern)
             )
 
     def test_block_scope_extern_repeated_is_valid(self) -> None:
@@ -393,7 +396,7 @@ class TestBlockScopeStorageClass:
         """
         body: tuple[ast.BlockItem, ...] = (
             # int a = 3;  — outer local, will be renamed to something like ".Va.0"
-            ast.D(ast.VarDecl(ast.VariableDeclaration("a", ast.Constant(3), ast.IntType()))),
+            ast.D(ast.VarDecl(ast.VariableDeclaration("a", ast.Constant(ConstInt(3)), ast.IntType()))),
             # { extern int a;  return a; }
             ast.S(
                 ast.Compound(
@@ -427,12 +430,12 @@ class TestBlockScopeStorageClass:
         variable (e.g. ``static int b = a * 2``) is therefore invalid.
         """
         analyser = SemanticAnalyser()
-        analyser.resolve_variable_declaration(ast.VariableDeclaration("a", ast.Constant(1), ast.IntType()))
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("a", ast.Constant(ConstInt(1)), ast.IntType()))
         with pytest.raises(SemanticError, match="constant expression"):
             analyser.resolve_variable_declaration(
                 ast.VariableDeclaration(
                     "b",
-                    ast.Binary(ast.Multiply, ast.Var("a"), ast.Constant(2)),
+                    ast.Binary(ast.Multiply, ast.Var("a"), ast.Constant(ConstInt(2))),
                     ast.IntType(),
                     ast.StorageClass.Static,
                 )
@@ -442,9 +445,9 @@ class TestBlockScopeStorageClass:
         """A ``static`` local variable with a ``Constant`` initialiser is accepted."""
         analyser = SemanticAnalyser()
         result = analyser.resolve_variable_declaration(
-            ast.VariableDeclaration("x", ast.Constant(42), ast.IntType(), ast.StorageClass.Static)
+            ast.VariableDeclaration("x", ast.Constant(ConstInt(42)), ast.IntType(), ast.StorageClass.Static)
         )
-        assert result.init == ast.Constant(42)
+        assert result.init == ast.Constant(ConstInt(42))
 
     def test_block_scope_extern_after_static_local_raises(self) -> None:
         """A block-scope ``extern`` after a ``static`` local of the same name raises ``SemanticError``.
@@ -456,7 +459,7 @@ class TestBlockScopeStorageClass:
         """
         analyser = SemanticAnalyser()
         analyser.resolve_variable_declaration(
-            ast.VariableDeclaration("x", ast.Constant(0), ast.IntType(), ast.StorageClass.Static)
+            ast.VariableDeclaration("x", ast.Constant(ConstInt(0)), ast.IntType(), ast.StorageClass.Static)
         )
         with pytest.raises(SemanticError, match="without linkage"):
             analyser.resolve_variable_declaration(
@@ -469,13 +472,15 @@ class TestBlockScopeStorageClass:
         Inside the function the ``static`` local's unique internal name is used;
         the file-scope variable is not accessible under the original name.
         """
-        g_decl = _file_var("g", ast.Constant(0))
+        g_decl = _file_var("g", ast.Constant(ConstInt(0)))
         main_fn = ast.Function(
             name="main",
             params=(),
             body=(
                 ast.D(
-                    ast.VarDecl(ast.VariableDeclaration("g", ast.Constant(1), ast.IntType(), ast.StorageClass.Static))
+                    ast.VarDecl(
+                        ast.VariableDeclaration("g", ast.Constant(ConstInt(1)), ast.IntType(), ast.StorageClass.Static)
+                    )
                 ),
                 ast.S(ast.Return(ast.Var("g"))),
             ),
@@ -509,7 +514,7 @@ class TestCrossKindRedeclaration:
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             _vd("foo"),
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         with pytest.raises(SemanticError, match="'foo' redeclared as a variable"):
             resolve(_program(body))
@@ -524,7 +529,7 @@ class TestCrossKindRedeclaration:
         body: tuple[ast.BlockItem, ...] = (
             _vd("foo"),
             foo_decl,
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         with pytest.raises(SemanticError, match="'foo' redeclared as a function"):
             resolve(_program(body))
@@ -538,8 +543,8 @@ class TestCrossKindRedeclaration:
         """
         foo_top = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         main_body: tuple[ast.BlockItem, ...] = (
-            _vd("foo", ast.Constant(0)),
-            ast.S(ast.Return(ast.Constant(0))),
+            _vd("foo", ast.Constant(ConstInt(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         main_fn = ast.Function(
             name="main", params=(), body=main_body, fun_type=ast.FunType(params=(), ret=ast.IntType())
@@ -563,8 +568,8 @@ class TestCrossKindRedeclaration:
             ast.S(
                 statement=ast.Compound(
                     body=(
-                        _vd("foo", ast.Constant(0)),
-                        ast.S(ast.Return(ast.Constant(0))),
+                        _vd("foo", ast.Constant(ConstInt(0))),
+                        ast.S(ast.Return(ast.Constant(ConstInt(0)))),
                     )
                 )
             ),
@@ -580,12 +585,12 @@ class TestCrossKindRedeclaration:
             )
         )
         body: tuple[ast.BlockItem, ...] = (
-            _vd("foo", ast.Constant(0)),
+            _vd("foo", ast.Constant(ConstInt(0))),
             ast.S(
                 statement=ast.Compound(
                     body=(
                         foo_decl,
-                        ast.S(ast.Return(ast.Constant(0))),
+                        ast.S(ast.Return(ast.Constant(ConstInt(0)))),
                     )
                 )
             ),
@@ -602,12 +607,12 @@ class TestCrossKindRedeclaration:
         foo_fn = ast.Function(
             name="foo",
             params=(),
-            body=(ast.S(ast.Return(ast.Constant(0))),),
+            body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         main_body: tuple[ast.BlockItem, ...] = (
             ast.D(ast.VarDecl(ast.VariableDeclaration("foo", None, ast.IntType(), ast.StorageClass.Extern))),
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         main_fn = ast.Function(
             name="main", params=(), body=main_body, fun_type=ast.FunType(params=(), ret=ast.IntType())
@@ -634,7 +639,7 @@ class TestCrossKindRedeclaration:
                                 )
                             )
                         ),
-                        ast.S(ast.Return(ast.Constant(0))),
+                        ast.S(ast.Return(ast.Constant(ConstInt(0)))),
                     )
                 )
             ),

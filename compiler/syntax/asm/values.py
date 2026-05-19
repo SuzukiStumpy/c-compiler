@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -17,7 +17,15 @@ class StaticInit(ABC):
     appears in the data segment. They are distinct from ``Constant`` and
     ``Var``: those are instruction operands; these are data-segment
     initialisers only.
+
+    All concrete subclasses must provide a ``value`` attribute of type ``int``.
+    Dataclass fields named ``value`` satisfy this contract automatically.
     """
+
+    @property
+    @abstractmethod
+    def value(self) -> int:
+        """The integer value of the initialiser."""
 
 
 @dataclass(frozen=True, slots=True)

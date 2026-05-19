@@ -276,8 +276,9 @@ def _translate_instruction(instr: tac.Instruction, symbol_table: SymbolTable | N
             dst_asm = _translate_val(dst)
             match op:
                 case tac.Not():
+                    src_at = _asm_type(src, symbol_table)
                     return [
-                        asm.Cmp(op1=asm.Imm(0), op2=src_asm, assembly_type=at),
+                        asm.Cmp(op1=asm.Imm(0), op2=src_asm, assembly_type=src_at),
                         asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
                         asm.SetCC(asm.CondCodes.E, dst_asm),
                     ]
@@ -631,16 +632,35 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
 
     Handles the following cases:
 
+    * ``Mov(Quadword, Imm(v), mem)`` where ``v`` exceeds the signed 32-bit range —
+      x86-64 has no encoding for a 64-bit immediate to memory; load into ``%r10``
+      then store.
+    * ``Mov(Longword, Imm(v), any)`` where ``v`` exceeds the signed 32-bit range —
+      arises from ``Truncate``; the immediate is pre-masked to its lower 32 bits so
+      the assembler does not warn about truncation.
     * ``Mov(mem, mem)`` — both operands cannot be memory; route ``src`` through
       ``%r10``/``%r10d`` of the appropriate width.
     * ``Idiv(Imm)`` — the divisor cannot be an immediate; route through
       ``%r11``/``%r11d``.
     * ``Cmp(op1, Imm)`` — ``op2`` (the second printed operand) cannot be an
       immediate; route through ``%r11``/``%r11d``.
+    * ``Cmp(Quadword, Imm(v), op2)`` where ``v`` exceeds the signed 32-bit range —
+      x86-64 ``cmpq`` can only encode 32-bit sign-extended immediates; load into
+      ``%r10`` then compare.
     * ``Cmp(mem, op2)`` — ``op1`` cannot be memory when ``op2`` is also memory;
       route ``op1`` through ``%r10``/``%r10d``.
     * ``Movsx(src, mem)`` — the destination of ``movslq`` must be a register;
       route through ``%r11`` then move to ``dst``.
+    * ``Binary(Quadword, op, src1, Imm(v), dst)`` where ``v`` exceeds the signed
+      32-bit range — ``addq``/``subq``/``imulq`` cannot encode a 64-bit
+      immediate; load ``src2`` into ``%r10`` first.
+    * ``Cmp(Quadword, Imm(v), Imm)`` where ``v`` exceeds the signed 32-bit
+      range and ``op2`` is also an immediate — the op2-is-Imm fixup would fire
+      first and produce a new ``Cmp(Imm(large), reg)`` that is never
+      re-processed; handle both operands upfront instead.
+    * ``Push(Quadword, Imm(v))`` where ``v`` exceeds the signed 32-bit range —
+      ``pushq`` only accepts 8-bit or 32-bit sign-extended immediates; load
+      into ``%r10`` first.
     * ``Push(mem)`` — ``pushq`` cannot address a memory slot directly; load
       into ``%eax``/``%rax`` first.
 
@@ -655,9 +675,28 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
         """Return True when ``op`` is a memory address (Stack or Data)."""
         return isinstance(op, (asm.Stack, asm.Data))
 
+    def _fits_in_int32(v: int) -> bool:
+        """Return True when ``v`` is representable as a signed 32-bit integer."""
+        return -(1 << 31) <= v <= (1 << 31) - 1
+
     fixed: list[asm.Instruction] = []
     for instr in fn.instructions:
         match instr:
+            case asm.Mov(assembly_type=asm.AssemblyType.Quadword, src=asm.Imm(value=v), dst=dst) if _is_mem(
+                dst
+            ) and not _fits_in_int32(v):
+                # movq cannot encode a 64-bit immediate to a memory operand.
+                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+            case asm.Mov(assembly_type=asm.AssemblyType.Longword, src=asm.Imm(value=v), dst=dst) if not _fits_in_int32(
+                v
+            ):
+                # movl immediate must fit in 32 bits; mask to the lower 32 bits (as signed int32).
+                truncated = v & 0xFFFFFFFF
+                if truncated >= (1 << 31):
+                    truncated -= 1 << 32
+                fixed.append(asm.Mov(src=asm.Imm(truncated), dst=dst, assembly_type=asm.AssemblyType.Longword))
             case asm.Mov(assembly_type=at, src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
                 r10 = asm.Register(asm.Registers.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=src, dst=r10, assembly_type=at))
@@ -666,19 +705,61 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 r11 = asm.Register(asm.Registers.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=imm, dst=r11, assembly_type=at))
                 fixed.append(asm.Idiv(operand=r11, assembly_type=at))
+            case asm.Binary(
+                assembly_type=asm.AssemblyType.Quadword, operator=op, src1=src1, src2=asm.Imm(value=v), dst=dst
+            ) if not _fits_in_int32(v):
+                # addq/subq/imulq cannot encode a 64-bit immediate; route src2 through %r10.
+                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(
+                    asm.Binary(operator=op, src1=src1, src2=r10q, dst=dst, assembly_type=asm.AssemblyType.Quadword)
+                )
+            case asm.Cmp(assembly_type=asm.AssemblyType.Quadword, op1=asm.Imm(value=v), op2=asm.Imm() as op2_imm) if (
+                not _fits_in_int32(v)
+            ):
+                # Both operands are immediates and op1 is large: the generic op2-is-Imm case would fire
+                # first and leave Cmp(Imm(large), reg) unprocessed. Handle both upfront.
+                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Mov(src=op2_imm, dst=r11q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Cmp(op1=r10q, op2=r11q, assembly_type=asm.AssemblyType.Quadword))
             case asm.Cmp(assembly_type=at, op1=op1, op2=asm.Imm() as op2):
                 r11 = asm.Register(asm.Registers.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=op2, dst=r11, assembly_type=at))
                 fixed.append(asm.Cmp(op1=op1, op2=r11, assembly_type=at))
+            case asm.Cmp(assembly_type=asm.AssemblyType.Quadword, op1=asm.Imm(value=v), op2=op2) if not _fits_in_int32(
+                v
+            ):
+                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Cmp(op1=r10q, op2=op2, assembly_type=asm.AssemblyType.Quadword))
             case asm.Cmp(assembly_type=at, op1=op1, op2=op2) if _is_mem(op1):
                 r10 = asm.Register(asm.Registers.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=op1, dst=r10, assembly_type=at))
                 fixed.append(asm.Cmp(op1=r10, op2=op2, assembly_type=at))
+            case asm.Movsx(src=asm.Imm() as imm, dst=dst):
+                # movslq cannot accept an immediate source; load into %r10d first.
+                r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                if _is_mem(dst):
+                    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+                    fixed.append(asm.Mov(src=imm, dst=r10d, assembly_type=asm.AssemblyType.Longword))
+                    fixed.append(asm.Movsx(src=r10d, dst=r11q))
+                    fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+                else:
+                    fixed.append(asm.Mov(src=imm, dst=r10d, assembly_type=asm.AssemblyType.Longword))
+                    fixed.append(asm.Movsx(src=r10d, dst=dst))
             case asm.Movsx(src=src, dst=dst) if _is_mem(dst):
                 # movslq dst must be a register; route through %r11 then store.
                 r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
                 fixed.append(asm.Movsx(src=src, dst=r11q))
                 fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+            case asm.Push(assembly_type=asm.AssemblyType.Quadword, operand=asm.Imm(value=v)) if not _fits_in_int32(v):
+                # pushq only accepts 8-bit or 32-bit sign-extended immediates; a 64-bit long
+                # constant that doesn't fit in 32 bits must be routed through %r10.
+                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Push(operand=r10q, assembly_type=asm.AssemblyType.Quadword))
             case asm.Push(assembly_type=at, operand=operand) if _is_mem(operand):
                 # pushq cannot address a memory slot directly.
                 # Load via movl (zero-extends) for ints, movq for longs, then push the 64-bit register.

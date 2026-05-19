@@ -68,6 +68,7 @@ from compiler.types.symbols import (
     FunAttr,
     Initial,
     InitialValue,
+    LocalAttr,
     NoInitializer,
     StaticAttr,
     SymbolTable,
@@ -233,6 +234,7 @@ class SemanticAnalyser:
         self._file_scope_linkage: dict[str, Linkage] = {}
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
+        self._current_return_type: Type | None = None
         self._label_set: set[str] = set()
         self._loop_stack: list[str] = []
         self._break_stack: list[str] = []
@@ -387,14 +389,18 @@ class SemanticAnalyser:
                 raise SemanticError(f"'{var_decl.name}' redeclared with a conflicting type.")
             self._file_scope_linkage[var_decl.name] = effective_linkage
             self._variable_map[var_decl.name] = VariableBinding(
-                var_decl.name, from_current_block=True, var_type=var_decl.var_type, linkage=effective_linkage
+                var_decl.name,
+                from_current_block=True,
+                var_type=var_decl.var_type,
+                linkage=effective_linkage,
             )
             self._type_table[var_decl.name] = var_decl.var_type
             # Only add a symbol table entry when the name hasn't been seen yet; file-scope
             # declarations take precedence and should not be downgraded to NoInitializer.
             if var_decl.name not in self._symbol_table:
                 self._symbol_table[var_decl.name] = SymbolTableEntry(
-                    t=var_decl.var_type, attrs=StaticAttr(init=NoInitializer(), globl=True)
+                    t=var_decl.var_type,
+                    attrs=StaticAttr(init=NoInitializer(), globl=True),
                 )
             return var_decl
         else:
@@ -411,7 +417,10 @@ class SemanticAnalyser:
             self._type_table[unique_name] = var_decl.var_type
             linkage = Linkage.INTERNAL if var_decl.storage_class == StorageClass.Static else Linkage.NONE
             self._variable_map[var_decl.name] = VariableBinding(
-                unique_name, from_current_block=True, var_type=var_decl.var_type, linkage=linkage
+                unique_name,
+                from_current_block=True,
+                var_type=var_decl.var_type,
+                linkage=linkage,
             )
             if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
                 if not isinstance(var_decl.init, ast.Constant):
@@ -419,15 +428,19 @@ class SemanticAnalyser:
                         f"Initialiser of 'static' variable '{var_decl.name}' must be a constant expression."
                     )
             init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
+            if init is not None and init.exp_type is not None and type(init.exp_type) is not type(var_decl.var_type):
+                init = ast.Cast(var_decl.var_type, init, exp_type=var_decl.var_type)
             if var_decl.storage_class == StorageClass.Static:
                 static_init: InitialValue = (
-                    Initial(var_decl.init.value)  # type: ignore[union-attr]
+                    Initial(var_decl.init.value.val)  # type: ignore[union-attr]
                     if isinstance(var_decl.init, ast.Constant)
                     else Tentative()
                 )
                 self._symbol_table[unique_name] = SymbolTableEntry(
                     t=var_decl.var_type, attrs=StaticAttr(init=static_init, globl=False)
                 )
+            else:
+                self._symbol_table[unique_name] = SymbolTableEntry(t=var_decl.var_type, attrs=LocalAttr())
             return ast.VariableDeclaration(unique_name, init, var_decl.var_type, var_decl.storage_class)
 
     def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
@@ -485,7 +498,10 @@ class SemanticAnalyser:
             raise SemanticError(f"'{var_decl.name}' redeclared with a conflicting type.")
         self._file_scope_linkage[var_decl.name] = new_linkage
         self._variable_map[var_decl.name] = VariableBinding(
-            var_decl.name, from_current_block=False, var_type=var_decl.var_type, linkage=new_linkage
+            var_decl.name,
+            from_current_block=False,
+            var_type=var_decl.var_type,
+            linkage=new_linkage,
         )
         self._type_table[var_decl.name] = var_decl.var_type
         globl = new_linkage == Linkage.EXTERNAL
@@ -493,14 +509,16 @@ class SemanticAnalyser:
         if var_decl.init is not None:
             assert isinstance(var_decl.init, ast.Constant)
             self._symbol_table[var_decl.name] = SymbolTableEntry(
-                t=var_decl.var_type, attrs=StaticAttr(init=Initial(var_decl.init.value), globl=globl)
+                t=var_decl.var_type,
+                attrs=StaticAttr(init=Initial(var_decl.init.value.val), globl=globl),
             )
         elif var_decl.storage_class == StorageClass.Extern:
             # A non-defining extern declaration — add a NoInitializer entry only when the name
             # is entirely new; any existing Initial or Tentative entry takes precedence.
             if existing_entry is None:
                 self._symbol_table[var_decl.name] = SymbolTableEntry(
-                    t=var_decl.var_type, attrs=StaticAttr(init=NoInitializer(), globl=globl)
+                    t=var_decl.var_type,
+                    attrs=StaticAttr(init=NoInitializer(), globl=globl),
                 )
         else:
             # Tentative definition — upgrade from NoInitializer but never downgrade from Initial.
@@ -581,11 +599,17 @@ class SemanticAnalyser:
                 raise SemanticError(f"Redefinition of function '{fun.name}'.")
             if fun.body is not None:
                 self._function_map[fun.name] = FunctionBinding(
-                    has_definition=True, param_types=new_param_types, ret_type=ret_type, linkage=new_linkage
+                    has_definition=True,
+                    param_types=new_param_types,
+                    ret_type=ret_type,
+                    linkage=new_linkage,
                 )
         else:
             self._function_map[fun.name] = FunctionBinding(
-                has_definition=fun.body is not None, param_types=new_param_types, ret_type=ret_type, linkage=new_linkage
+                has_definition=fun.body is not None,
+                param_types=new_param_types,
+                ret_type=ret_type,
+                linkage=new_linkage,
             )
         fun_globl = new_linkage == Linkage.EXTERNAL
         prior_sym = self._symbol_table.get(fun.name)
@@ -709,16 +733,39 @@ class SemanticAnalyser:
             case ast.Binary(operator=op, left=left, right=right):
                 typed_left = self._type_check_exp(left)
                 typed_right = self._type_check_exp(right)
-                if isinstance(op, (And, Or, Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual)):
+                if isinstance(op, (And, Or)):
                     bin_type: Type | None = IntType()
+                elif isinstance(
+                    op,
+                    (
+                        Equal,
+                        NotEqual,
+                        LessThan,
+                        LessOrEqual,
+                        GreaterThan,
+                        GreaterOrEqual,
+                    ),
+                ):
+                    bin_type = IntType()
+                    if isinstance(typed_left.exp_type, LongType) or isinstance(typed_right.exp_type, LongType):
+                        if not isinstance(typed_left.exp_type, LongType):
+                            typed_left = ast.Cast(LongType(), typed_left, exp_type=LongType())
+                        if not isinstance(typed_right.exp_type, LongType):
+                            typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                 elif isinstance(typed_left.exp_type, LongType) or isinstance(typed_right.exp_type, LongType):
                     bin_type = LongType()
+                    if not isinstance(typed_left.exp_type, LongType):
+                        typed_left = ast.Cast(LongType(), typed_left, exp_type=LongType())
+                    if not isinstance(typed_right.exp_type, LongType):
+                        typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                 else:
                     bin_type = typed_left.exp_type
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
                 typed_rv = self._type_check_exp(rvalue)
+                if type(typed_rv.exp_type) is not type(typed_lv.exp_type):
+                    typed_rv = ast.Cast(typed_lv.exp_type, typed_rv, exp_type=typed_lv.exp_type)
                 return ast.Assignment(typed_lv, typed_rv, exp_type=typed_lv.exp_type)
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 typed_cond = self._type_check_exp(cond)
@@ -726,6 +773,10 @@ class SemanticAnalyser:
                 typed_false = self._type_check_exp(exp_false)
                 if isinstance(typed_true.exp_type, LongType) or isinstance(typed_false.exp_type, LongType):
                     cond_type: Type | None = LongType()
+                    if not isinstance(typed_true.exp_type, LongType):
+                        typed_true = ast.Cast(LongType(), typed_true, exp_type=LongType())
+                    if not isinstance(typed_false.exp_type, LongType):
+                        typed_false = ast.Cast(LongType(), typed_false, exp_type=LongType())
                 else:
                     cond_type = typed_true.exp_type
                 return ast.Conditional(typed_cond, typed_true, typed_false, exp_type=cond_type)
@@ -740,7 +791,12 @@ class SemanticAnalyser:
                     raise SemanticError(
                         f"Function '{name}' called with {len(args)} argument(s) but declared with {expected}."
                     )
-                typed_args = [self._type_check_exp(arg) for arg in args]
+                typed_args = []
+                for arg, param_type in zip(args, fn_binding.param_types):
+                    typed_arg = self._type_check_exp(arg)
+                    if typed_arg.exp_type != param_type:
+                        typed_arg = ast.Cast(param_type, typed_arg, exp_type=param_type)
+                    typed_args.append(typed_arg)
                 return ast.FunctionCall(name, typed_args, exp_type=fn_binding.ret_type)
             case ast.Cast(target_type=target_type, exp=exp):
                 return ast.Cast(target_type, self._type_check_exp(exp), exp_type=target_type)
@@ -797,7 +853,11 @@ class SemanticAnalyser:
                 return self._type_check_exp(ast.Binary(op, self.resolve_exp(left), self.resolve_exp(right)))
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 return self._type_check_exp(
-                    ast.Conditional(self.resolve_exp(cond), self.resolve_exp(exp_true), self.resolve_exp(exp_false))
+                    ast.Conditional(
+                        self.resolve_exp(cond),
+                        self.resolve_exp(exp_true),
+                        self.resolve_exp(exp_false),
+                    )
                 )
             case ast.FunctionCall(name=name, args=args):
                 return self._type_check_exp(ast.FunctionCall(name, [self.resolve_exp(arg) for arg in args]))
@@ -842,7 +902,18 @@ class SemanticAnalyser:
             case ast.Compound(body=block):
                 return ast.Compound(self._resolve_block(block))
             case ast.Return(exp=exp):
-                return ast.Return(self.resolve_exp(exp))
+                resolved = self.resolve_exp(exp)
+                if (
+                    self._current_return_type is not None
+                    and resolved.exp_type is not None
+                    and type(resolved.exp_type) is not type(self._current_return_type)
+                ):
+                    resolved = ast.Cast(
+                        self._current_return_type,
+                        resolved,
+                        exp_type=self._current_return_type,
+                    )
+                return ast.Return(resolved)
             case ast.Expression(exp=exp):
                 return ast.Expression(self.resolve_exp(exp))
             case ast.Null():
@@ -859,7 +930,9 @@ class SemanticAnalyser:
                 return ast.If(self.resolve_exp(cond), self._resolve_statement(then_stmt), None)
             case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
                 return ast.If(
-                    self.resolve_exp(cond), self._resolve_statement(then_stmt), self._resolve_statement(else_stmt)
+                    self.resolve_exp(cond),
+                    self._resolve_statement(then_stmt),
+                    self._resolve_statement(else_stmt),
                 )
             case ast.While(condition=condition, body=body):
                 label = self._make_loop_label("while")
@@ -1068,6 +1141,7 @@ class SemanticAnalyser:
             )
             resolved_params.append(ast.Parameter(param_type=param.param_type, name=resolved_var.name))
 
+        self._current_return_type = function.fun_type.ret if isinstance(function.fun_type, FunType) else IntType()
         self._collect_labels(function.body)
         binding = self._function_map.get(function.name)
         globl = binding.linkage == Linkage.EXTERNAL if binding is not None else True

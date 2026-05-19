@@ -7,6 +7,7 @@ correctly reflect static-duration variables (file-scope and block-scope
 
 import compiler.syntax.ast as ast
 from compiler.semantic_analysis import resolve_with_symbols
+from compiler.syntax.ast.constants import ConstInt
 from compiler.types.symbols import FunAttr, Initial, NoInitializer, StaticAttr, Tentative
 from test.semantic_analysis.helpers import _file_var, _get_fn, _prog_with_decls, _program
 
@@ -21,7 +22,7 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_variable_with_init_produces_initial_entry(self) -> None:
         """A file-scope ``int x = 5;`` produces ``StaticAttr(Initial(5), globl=True)``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(5))))
+        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(ConstInt(5)))))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -30,7 +31,9 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_static_variable_with_init_produces_internal_entry(self) -> None:
         """A ``static int x = 3;`` at file scope produces ``StaticAttr(Initial(3), globl=False)``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(3), sc=ast.StorageClass.Static)))
+        _, symbols = resolve_with_symbols(
+            _prog_with_decls(_file_var("x", ast.Constant(ConstInt(3)), sc=ast.StorageClass.Static))
+        )
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -55,7 +58,7 @@ class TestSymbolTablePopulation:
 
     def test_tentative_then_definition_yields_initial_value(self) -> None:
         """A tentative definition followed by a concrete definition resolves to ``Initial``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x"), _file_var("x", ast.Constant(7))))
+        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x"), _file_var("x", ast.Constant(ConstInt(7)))))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -63,7 +66,7 @@ class TestSymbolTablePopulation:
 
     def test_definition_then_tentative_preserves_initial_value(self) -> None:
         """An initial definition followed by a tentative definition keeps ``Initial``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(9)), _file_var("x")))
+        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(ConstInt(9))), _file_var("x")))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -84,8 +87,12 @@ class TestSymbolTablePopulation:
         """A block-scope ``static int x = 5;`` produces ``StaticAttr(Initial(5), globl=False)``
         keyed by the unique renamed identifier."""
         body = (
-            ast.D(ast.VarDecl(ast.VariableDeclaration("x", ast.Constant(5), ast.IntType(), ast.StorageClass.Static))),
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.D(
+                ast.VarDecl(
+                    ast.VariableDeclaration("x", ast.Constant(ConstInt(5)), ast.IntType(), ast.StorageClass.Static)
+                )
+            ),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         _, symbols = resolve_with_symbols(_program(body))
         static_entries = {
@@ -104,7 +111,7 @@ class TestSymbolTablePopulation:
         """A block-scope ``static int x;`` produces ``StaticAttr(Tentative, globl=False)``."""
         body = (
             ast.D(ast.VarDecl(ast.VariableDeclaration("x", None, ast.IntType(), ast.StorageClass.Static))),
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         _, symbols = resolve_with_symbols(_program(body))
         static_entries = {name: e for name, e in symbols.items() if isinstance(e.attrs, StaticAttr)}
@@ -118,7 +125,7 @@ class TestSymbolTablePopulation:
         keyed by the original (unrenamed) name."""
         body = (
             ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.IntType(), ast.StorageClass.Extern))),
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         _, symbols = resolve_with_symbols(_program(body))
         entry = symbols.get("g")
@@ -132,10 +139,10 @@ class TestSymbolTablePopulation:
         also appears, the symbol table retains ``Initial(4)`` rather than ``NoInitializer``."""
         body = (
             ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.IntType(), ast.StorageClass.Extern))),
-            ast.S(ast.Return(ast.Constant(0))),
+            ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
         program = _prog_with_decls(
-            _file_var("g", ast.Constant(4)),
+            _file_var("g", ast.Constant(ConstInt(4))),
             ast.FunDecl(
                 ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
             ),
@@ -160,7 +167,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="main",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
@@ -176,7 +183,7 @@ class TestSymbolTablePopulation:
         fn = ast.Function(
             name="main",
             params=(),
-            body=(ast.S(ast.Return(ast.Constant(0))),),
+            body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         _, symbols = resolve_with_symbols(_prog_with_decls(ast.FunDecl(fn)))
@@ -192,7 +199,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="helper",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                     storage_class=ast.StorageClass.Static,
                 )
@@ -201,7 +208,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="main",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
@@ -222,7 +229,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="foo",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
@@ -230,7 +237,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="main",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
@@ -251,7 +258,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="main",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             )
@@ -267,7 +274,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="helper",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                     storage_class=ast.StorageClass.Static,
                 )
@@ -276,7 +283,7 @@ class TestSymbolTablePopulation:
                 ast.Function(
                     name="main",
                     params=(),
-                    body=(ast.S(ast.Return(ast.Constant(0))),),
+                    body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
                     fun_type=ast.FunType(params=(), ret=ast.IntType()),
                 )
             ),
