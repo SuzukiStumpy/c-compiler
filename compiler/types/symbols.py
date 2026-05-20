@@ -43,10 +43,11 @@ class Initial(InitialValue):
     """The variable was defined with a constant initialiser.
 
     Attributes:
-        value: The integer value supplied as the initialiser.
+        value: The numeric value supplied as the initialiser.  ``int`` for all
+            integer types; ``float`` for ``double``.
     """
 
-    value: int
+    value: int | float
 
 
 @dataclass(frozen=True, slots=True)

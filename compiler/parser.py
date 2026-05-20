@@ -1174,7 +1174,7 @@ class Parser:
 
         Returns:
             A ``Constant`` node wrapping a ``ConstInt``, ``ConstLong``,
-            ``ConstUInt``, or ``ConstULong``.
+            ``ConstUInt``, ``ConstULong``, or ``ConstDouble``.
 
         Raises:
             ParseError: If the next token is not a numeric constant, or if the
@@ -1185,7 +1185,7 @@ class Parser:
             raise self._eof_error("expected a constant, got end of input")
         if token.type == TokenType.FPDOUBLE:
             self._consume()
-            return ConstDouble(token.value)
+            return Constant(value=ConstDouble(token.value), exp_type=DoubleType())
         if token.type == TokenType.NUMBER:
             self._consume()
             val = int(token.value)

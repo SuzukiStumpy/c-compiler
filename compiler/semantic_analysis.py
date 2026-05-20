@@ -63,7 +63,7 @@ from compiler.syntax.ast.operators import (
     NotEqual,
     Or,
 )
-from compiler.syntax.ast.types import FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
+from compiler.syntax.ast.types import DoubleType, FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
 from compiler.types.symbols import (
     FunAttr,
     Initial,
@@ -77,7 +77,7 @@ from compiler.types.symbols import (
 )
 from compiler.utils.exceptions import SemanticError
 
-_TYPE_SIZE: dict[type, int] = {IntType: 4, UIntType: 4, LongType: 8, ULongType: 8}
+_TYPE_SIZE: dict[type, int] = {IntType: 4, UIntType: 4, LongType: 8, ULongType: 8, DoubleType: 8}
 _SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType})
 
 
@@ -99,6 +99,8 @@ def get_common_type(type1: Type, type2: Type) -> Type:
     """
     if type1 == type2:
         return type1
+    if type1 == DoubleType or type2 == DoubleType:
+        return DoubleType()
     size1 = _TYPE_SIZE.get(type(type1), 0)
     size2 = _TYPE_SIZE.get(type(type2), 0)
     if size1 == size2:
@@ -756,15 +758,27 @@ class SemanticAnalyser:
                 return ast.Var(name, exp_type=var_type)
             case ast.Constant(value=ast.ConstLong()):
                 return ast.Constant(e.value, exp_type=LongType())
+            case ast.Constant(value=ast.ConstUInt()):
+                return ast.Constant(e.value, exp_type=UIntType())
+            case ast.Constant(value=ast.ConstULong()):
+                return ast.Constant(e.value, exp_type=ULongType())
+            case ast.Constant(value=ast.ConstDouble()):
+                return ast.Constant(e.value, exp_type=DoubleType())
             case ast.Constant():
                 return ast.Constant(e.value, exp_type=IntType())
             case ast.Unary(operator=op, exp=exp):
                 typed_exp = self._type_check_exp(exp)
+                if isinstance(typed_exp.exp_type, DoubleType) and isinstance(op, ast.Complement):
+                    raise SemanticError("Can't take the bitwise complement of a double")
                 exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
                 return ast.Unary(op, typed_exp, exp_type=exp_type)
             case ast.Binary(operator=op, left=left, right=right):
                 typed_left = self._type_check_exp(left)
                 typed_right = self._type_check_exp(right)
+                if (
+                    isinstance(typed_left.exp_type, DoubleType) or isinstance(typed_right.exp_type, DoubleType)
+                ) and isinstance(op, ast.Remainder):
+                    raise SemanticError("Can't take the modulus of a double")
                 if isinstance(op, (And, Or)):
                     bin_type: Type | None = IntType()
                 elif isinstance(op, (Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual)):
