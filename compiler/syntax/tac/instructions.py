@@ -180,3 +180,55 @@ class FunCall(Instruction):
     name: str
     args: tuple[Val]
     dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleToInt(Instruction):
+    """Cast a double to an integer
+
+    Attributes:
+        src: The source `double` value
+        dst: The destination `int` or `long` value
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleToUInt(Instruction):
+    """Cast a double to an unsigned integer
+
+    Attributes:
+        src: The source `double` value
+        dst: The destination `unsigned int` or `unsigned long` value
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class IntToDouble(Instruction):
+    """Cast an `int` or `long` to a double
+
+    Attributes:
+        src: The source integer value
+        dst: The destination `double` value
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class UIntToDouble(Instruction):
+    """Cast an unsigned integer value to a double
+
+    Attributes:
+        src: The source unsigned integer value
+        dst: The destination `double` value
+    """
+
+    src: Val
+    dst: Val

@@ -11,6 +11,10 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | SignExtend(val src, val dst)
                         | Truncate(val src, val dst)
                         | ZeroExtend(val src, val dst)
+                        | DoubleToInt(val src, val dst)
+                        | DoubleToUInt(val src, val dst)
+                        | IntToDouble(val src, val dst)
+                        | UIntToDouble(val src, val dst)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
                         | Copy(val src, val dst)
@@ -47,8 +51,11 @@ from compiler.syntax.tac.declarations import Function, Program, StaticVariable, 
 from compiler.syntax.tac.instructions import (
     Binary,
     Copy,
+    DoubleToInt,
+    DoubleToUInt,
     FunCall,
     Instruction,
+    IntToDouble,
     Jump,
     JumpIfNotZero,
     JumpIfZero,
@@ -56,6 +63,7 @@ from compiler.syntax.tac.instructions import (
     Return,
     SignExtend,
     Truncate,
+    UIntToDouble,
     Unary,
     ZeroExtend,
 )
@@ -85,6 +93,10 @@ from compiler.syntax.tac.operators import (
 from compiler.syntax.tac.values import Constant, IntInit, LongInit, StaticInit, Val, Var
 
 __all__ = [
+    "DoubleToInt",
+    "DoubleToUInt",
+    "IntToDouble",
+    "UIntToDouble",
     "ZeroExtend",
     "StaticVariable",
     "TopLevel",

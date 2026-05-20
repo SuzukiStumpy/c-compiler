@@ -653,7 +653,7 @@ class _TacGenerator:
                 result.extend(self._collect_switch_cases(inner))
         return result
 
-    def translate_exp(self, exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:
+    def translate_exp(self, exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:  # noqa: C901 - suppress function too complicated
         """Translate an AST expression into a TAC value and any preceding instructions.
 
         Compound expressions (unary and binary operations) are broken down into a
@@ -678,16 +678,27 @@ class _TacGenerator:
                 if t == inner_type:
                     return result, inner_instrs
                 dst = self._make_temp(t)
-                dst_size = _type_size(t)
-                src_size = _type_size(inner_type)  # type: ignore[arg-type]
-                if dst_size == src_size:
-                    conv = tac.Copy(src=result, dst=dst)
-                elif dst_size < src_size:
-                    conv = tac.Truncate(src=result, dst=dst)
-                elif _is_signed(inner_type):  # type: ignore[arg-type]
-                    conv = tac.SignExtend(src=result, dst=dst)
+                if isinstance(t, ast.DoubleType):
+                    if isinstance(inner_type, (ast.IntType, ast.LongType)):
+                        conv: tac.Instruction = tac.IntToDouble(src=result, dst=dst)
+                    else:
+                        conv = tac.UIntToDouble(src=result, dst=dst)
+                elif isinstance(inner_type, ast.DoubleType):
+                    if isinstance(t, (ast.IntType, ast.LongType)):
+                        conv = tac.DoubleToInt(src=result, dst=dst)
+                    else:
+                        conv = tac.DoubleToUInt(src=result, dst=dst)
                 else:
-                    conv = tac.ZeroExtend(src=result, dst=dst)
+                    dst_size = _type_size(t)
+                    src_size = _type_size(inner_type)  # type: ignore[arg-type]
+                    if dst_size == src_size:
+                        conv = tac.Copy(src=result, dst=dst)
+                    elif dst_size < src_size:
+                        conv = tac.Truncate(src=result, dst=dst)
+                    elif _is_signed(inner_type):  # type: ignore[arg-type]
+                        conv = tac.SignExtend(src=result, dst=dst)
+                    else:
+                        conv = tac.ZeroExtend(src=result, dst=dst)
                 return dst, [*inner_instrs, conv]
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
