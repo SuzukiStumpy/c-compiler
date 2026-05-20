@@ -16,3 +16,6 @@ int signedValue(void) {
 int unsignedValue(void) {
     return 0;
 }
+int doubler(void) {
+    return 0;
+}

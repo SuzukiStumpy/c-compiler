@@ -457,3 +457,81 @@ def test_ulong_token_is_not_split_into_number_and_identifier(preprocess_c_file: 
     ulong_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.ULONG and t.value == "100ul")
     assert tokens[ulong_idx - 1].type != TokenType.NUMBER
     assert tokens[ulong_idx + 1].type != TokenType.IDENTIFIER
+
+
+# ---------------------------------------------------------------------------
+# double type keyword and floating-point double constants (FPDOUBLE)
+# ---------------------------------------------------------------------------
+
+
+def test_double_keyword_produces_double_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    double_token = next(t for t in tokens if t.value == "double")
+    assert double_token.type == TokenType.DOUBLE
+
+
+def test_identifier_sharing_double_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "doubler" starts with "double" — must not be classified as DOUBLE
+    tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
+    assert all(t.type != TokenType.DOUBLE for t in tokens)
+
+
+def test_fpdouble_decimal_form_produces_fpdouble_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    assert any(t.type == TokenType.FPDOUBLE and t.value == "1.5" for t in tokens)
+
+
+def test_fpdouble_exponent_form_produces_fpdouble_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    assert any(t.type == TokenType.FPDOUBLE and t.value == "1.5e10" for t in tokens)
+
+
+def test_fpdouble_integer_exponent_form_produces_fpdouble_token(preprocess_c_file: Preprocessor) -> None:
+    # "1e5" has no decimal point but is still a floating-point constant
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    assert any(t.type == TokenType.FPDOUBLE and t.value == "1e5" for t in tokens)
+
+
+def test_fpdouble_trailing_dot_form_produces_fpdouble_token(preprocess_c_file: Preprocessor) -> None:
+    # "1." is a valid floating-point constant with a trailing dot
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    assert any(t.type == TokenType.FPDOUBLE and t.value == "1." for t in tokens)
+
+
+def test_fpdouble_token_is_distinct_from_number_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    fpdouble_values = {t.value for t in tokens if t.type == TokenType.FPDOUBLE}
+    number_values = {t.value for t in tokens if t.type == TokenType.NUMBER}
+    assert fpdouble_values.isdisjoint(number_values)
+
+
+def test_fpdouble_decimal_is_single_token_not_number_and_dot(preprocess_c_file: Preprocessor) -> None:
+    # "1.5" must be a single FPDOUBLE, not NUMBER("1") followed by separate tokens
+    tokens = lexer(preprocess_c_file("valid/double_type.c"))
+    fpdouble_idx = next(i for i, t in enumerate(tokens) if t.type == TokenType.FPDOUBLE and t.value == "1.5")
+    assert tokens[fpdouble_idx - 1].type != TokenType.NUMBER
+    assert tokens[fpdouble_idx + 1].type != TokenType.FPDOUBLE
+
+
+def test_fpdouble_with_second_dot_suffix_raises_lexer_error(preprocess_c_file: Preprocessor) -> None:
+    # "1.0e10.0" is not a valid constant; the second dot must not be silently accepted
+    with pytest.raises(LexerError):
+        lexer(preprocess_c_file("invalid/bad_float.c"))
+
+
+def test_longint_followed_by_dot_raises_lexer_error(preprocess_c_file: Preprocessor) -> None:
+    # "42l.0" is a malformed preprocessing-number, not LONGINT + FPDOUBLE
+    with pytest.raises(LexerError):
+        lexer(preprocess_c_file("invalid/bad_longint.c"))
+
+
+def test_uint_followed_by_dot_raises_lexer_error(preprocess_c_file: Preprocessor) -> None:
+    # "42u.0" is a malformed preprocessing-number, not UINT + FPDOUBLE
+    with pytest.raises(LexerError):
+        lexer(preprocess_c_file("invalid/bad_uint.c"))
+
+
+def test_ulong_followed_by_dot_raises_lexer_error(preprocess_c_file: Preprocessor) -> None:
+    # "42ul.0" is a malformed preprocessing-number, not ULONG + FPDOUBLE
+    with pytest.raises(LexerError):
+        lexer(preprocess_c_file("invalid/bad_ulong.c"))
