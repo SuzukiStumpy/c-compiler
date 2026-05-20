@@ -8,7 +8,7 @@ which are handled by precedence climbing.  The grammar is:
     function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
     variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
     param-list           ::= "void" | {type-specifier}+ identifier {"," {type-specifier}+ identifier}
-    type-specifier       ::= "int" | "long" | "unsigned" | "signed"
+    type-specifier       ::= "int" | "long" | "unsigned" | "signed" | "double"
     specifier            ::= type-specifier | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
@@ -43,12 +43,13 @@ which are handled by precedence climbing.  The grammar is:
                            | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
     assignop             ::= "+=" | "-=" | "*=" | "/=" | "%="
                            | "&=" | "|=" | "^=" | "<<=" | ">>="
-    const                ::= int | long | uint | ulong
+    const                ::= int | long | uint | ulong | double
     identifier           ::= ? An identifier token ?
     int                  ::= ? An int token ?
     long                 ::= ? An int or long token ?
     uint                 ::= ? An unsigned int token ?
     ulong                ::= ? An unsigned int or unsigned long token ?
+    double               ::= ? A floating-point constant token ?
 
 Each grammar rule (except ``exp``) maps directly to a private ``_parse_*``
 method on ``Parser``.  ``_parse_exp`` implements precedence climbing so that
@@ -78,6 +79,7 @@ from compiler.syntax.ast import (
     Compound,
     Conditional,
     Constant,
+    ConstDouble,
     ConstInt,
     ConstLong,
     ConstUInt,
@@ -87,6 +89,7 @@ from compiler.syntax.ast import (
     Declaration,
     Default,
     Divide,
+    DoubleType,
     DoWhile,
     Equal,
     Exp,
@@ -177,6 +180,25 @@ _BINARY_PRECEDENCE: dict[TokenType, int] = {
     TokenType.DIVIDE: 50,
     TokenType.PERCENT: 50,
 }
+
+# All token types that may appear as part of a C type specifier.
+_TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
+    {
+        TokenType.INT,
+        TokenType.LONG,
+        TokenType.SIGNED,
+        TokenType.UNSIGNED,
+        TokenType.DOUBLE,
+    }
+)
+
+# Type specifiers plus storage-class keywords; the full set consumed by _parse_specifiers.
+_DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | frozenset(
+    {
+        TokenType.STATIC,
+        TokenType.EXTERN,
+    }
+)
 
 
 class Parser:
@@ -414,6 +436,74 @@ class Parser:
         return ParseError(message, "<unknown>", 0, 0, "", [])
 
     # ------------------------------------------------------------------
+    # Type-specifier helpers
+    # ------------------------------------------------------------------
+
+    def _consume_type_specifiers(self) -> tuple[frozenset[TokenType], Token | None]:
+        """Consume a run of type-specifier tokens and return the set seen.
+
+        Reads tokens from the stream as long as they belong to
+        ``_TYPE_SPECIFIER_TOKENS``.  Raises immediately on a duplicate specifier.
+
+        Returns:
+            A ``(seen, last_tok)`` pair.  ``seen`` is the frozen set of token
+            types consumed; ``last_tok`` is the final token consumed, used to
+            anchor subsequent error messages.  ``last_tok`` is ``None`` only
+            when ``seen`` is empty.
+
+        Raises:
+            ParseError: If the same specifier token appears more than once.
+        """
+        seen: set[TokenType] = set()
+        last_tok: Token | None = None
+        while (peek := self._peek()) is not None and peek.type in _TYPE_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
+            tok = self._consume()
+            if tok.type in seen:
+                raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
+            seen.add(tok.type)
+            last_tok = tok
+        return frozenset(seen), last_tok
+
+    def _resolve_type(self, seen: frozenset[TokenType], last_tok: Token | None) -> Type:
+        """Map a set of consumed type-specifier token types to a ``Type`` node.
+
+        Args:
+            seen: Frozen set of ``TokenType`` values collected by
+                ``_consume_type_specifiers``.
+            last_tok: The final token consumed from the stream, used as the
+                error anchor when a conflict is detected.  Non-``None``
+                whenever ``seen`` is non-empty.
+
+        Returns:
+            The ``Type`` node corresponding to the combination of specifiers.
+
+        Raises:
+            ParseError: If ``seen`` is empty, if ``double`` is combined with
+                any other specifier, or if ``signed`` and ``unsigned`` appear
+                together.
+        """
+        if not seen:
+            tok = self._peek()
+            if tok is None:
+                raise self._eof_error("expected a type specifier, got end of input")
+            raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
+        if TokenType.DOUBLE in seen:
+            if len(seen) > 1:
+                assert last_tok is not None
+                raise self._token_error("'double' cannot be combined with other type specifiers", last_tok)
+            return DoubleType()
+        assert last_tok is not None
+        if TokenType.SIGNED in seen and TokenType.UNSIGNED in seen:
+            raise self._token_error("invalid type specifier: can't have both 'signed' and 'unsigned'", last_tok)
+        if TokenType.LONG in seen and TokenType.UNSIGNED in seen:
+            return ULongType()
+        if TokenType.UNSIGNED in seen:
+            return UIntType()
+        if TokenType.LONG in seen:
+            return LongType()
+        return IntType()
+
+    # ------------------------------------------------------------------
     # Grammar rules
     # ------------------------------------------------------------------
 
@@ -442,7 +532,7 @@ class Parser:
 
         Grammar::
 
-            type-specifier ::= "int" | "long" | "signed" | "unsigned"
+            type-specifier ::= "int" | "long" | "signed" | "unsigned" | "double"
             specifier      ::= type-specifier | "static" | "extern"
 
         Consumes a run of specifier tokens in any order.  At least one type
@@ -457,67 +547,26 @@ class Parser:
         Raises:
             ParseError: If no type specifier is present, if a type specifier
                 appears more than once, if both ``signed`` and ``unsigned``
-                appear, or if two storage-class specifiers conflict.
+                appear, if ``double`` is combined with another type specifier,
+                or if two storage-class specifiers conflict.
         """
-        has_int = False
-        has_long = False
-        has_signed = False
-        has_unsigned = False
+        type_seen: set[TokenType] = set()
+        last_type_tok: Token | None = None
         storage: StorageClass | None = None
 
-        while self._peek() is not None and self._peek().type in (  # type: ignore[missing-attribute]
-            TokenType.INT,
-            TokenType.LONG,
-            TokenType.SIGNED,
-            TokenType.UNSIGNED,
-            TokenType.STATIC,
-            TokenType.EXTERN,
-        ):
+        while (peek := self._peek()) is not None and peek.type in _DECLARATION_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
             tok = self._consume()
-            match tok.type:
-                case TokenType.INT:
-                    if has_int:
-                        raise self._token_error("duplicate type specifier 'int'", tok)
-                    has_int = True
-                case TokenType.LONG:
-                    if has_long:
-                        raise self._token_error("duplicate type specifier 'long'", tok)
-                    has_long = True
-                case TokenType.SIGNED:
-                    if has_signed:
-                        raise self._token_error("duplicate type specifier 'signed'", tok)
-                    has_signed = True
-                case TokenType.UNSIGNED:
-                    if has_unsigned:
-                        raise self._token_error("duplicate type specifier 'unsigned'", tok)
-                    has_unsigned = True
-                case TokenType.STATIC:
-                    if storage is not None:
-                        raise self._token_error("conflicting storage class specifiers", tok)
-                    storage = StorageClass.Static
-                case TokenType.EXTERN:
-                    if storage is not None:
-                        raise self._token_error("conflicting storage class specifiers", tok)
-                    storage = StorageClass.Extern
+            if tok.type in {TokenType.STATIC, TokenType.EXTERN}:
+                if storage is not None:
+                    raise self._token_error("conflicting storage class specifiers", tok)
+                storage = StorageClass.Static if tok.type == TokenType.STATIC else StorageClass.Extern
+            else:
+                if tok.type in type_seen:
+                    raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
+                type_seen.add(tok.type)
+                last_type_tok = tok
 
-            if has_signed and has_unsigned:
-                raise self._token_error("invalid type specifier: can't have both 'signed' and 'unsigned'", tok)
-
-        if not has_int and not has_long and not has_signed and not has_unsigned:
-            tok = self._peek()
-            if tok is None:
-                raise self._eof_error("expected a type specifier, got end of input")
-            raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
-
-        if has_long and has_unsigned:
-            type_: Type = ULongType()
-        elif has_unsigned:
-            type_ = UIntType()
-        elif has_long:
-            type_ = LongType()
-        else:
-            type_ = IntType()
-        return type_, storage
+        return self._resolve_type(frozenset(type_seen), last_type_tok), storage
 
     def _parse_params(self) -> tuple[Parameter, ...]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -591,8 +640,8 @@ class Parser:
     def _parse_block_item(self) -> BlockItem:
         """Parse a single block item: either a declaration or a statement.
 
-        A declaration begins with a type keyword (currently only ``int``);
-        everything else is treated as a statement.
+        A declaration begins with a declaration-specifier keyword; everything
+        else is treated as a statement.
 
         Returns:
             A ``D`` node wrapping a ``VarDecl`` or ``FunDecl``, or an ``S``
@@ -602,14 +651,7 @@ class Parser:
             ParseError: If the item is malformed.
         """
         token = self._peek()
-        if token is not None and token.type in (
-            TokenType.INT,
-            TokenType.LONG,
-            TokenType.SIGNED,
-            TokenType.UNSIGNED,
-            TokenType.STATIC,
-            TokenType.EXTERN,
-        ):
+        if token is not None and token.type in _DECLARATION_SPECIFIER_TOKENS:
             return D(declaration=self._parse_declaration())
         return S(statement=self._parse_statement())
 
@@ -753,14 +795,7 @@ class Parser:
             ParseError: If a function declaration is attempted, if the optional
                 expression is malformed, or if the trailing ``;`` is missing.
         """
-        if self._peek() is not None and self._peek().type in (  # type:ignore[missing-attribute]
-            TokenType.INT,
-            TokenType.LONG,
-            TokenType.SIGNED,
-            TokenType.UNSIGNED,
-            TokenType.STATIC,
-            TokenType.EXTERN,
-        ):
+        if self._peek() is not None and self._peek().type in _DECLARATION_SPECIFIER_TOKENS:  # type:ignore[missing-attribute]
             return InitDecl(self._parse_variable_declaration())
         return InitExp(self._parse_optional_exp(TokenType.SEMICOLON))
 
@@ -1060,7 +1095,7 @@ class Parser:
         match token.type:
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
                 return Unary(self._parse_unaryop(), self._parse_factor())
-            case TokenType.NUMBER | TokenType.LONGINT | TokenType.UINT | TokenType.ULONG:
+            case TokenType.NUMBER | TokenType.LONGINT | TokenType.UINT | TokenType.ULONG | TokenType.FPDOUBLE:
                 primary: Exp = self._parse_constant()
             case TokenType.IDENTIFIER:
                 self._consume()
@@ -1070,12 +1105,7 @@ class Parser:
                     primary = Var(name=token.value)
             case TokenType.LPAREN:
                 next_tok = self._peek(1)
-                if next_tok is not None and next_tok.type in (
-                    TokenType.INT,
-                    TokenType.LONG,
-                    TokenType.SIGNED,
-                    TokenType.UNSIGNED,
-                ):
+                if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
                     self._consume()  # consume "("
                     target_type = self._parse_type()
                     self._expect(TokenType.RPAREN)
@@ -1129,7 +1159,7 @@ class Parser:
         return FunctionCall(name=name, args=args)
 
     def _parse_constant(self) -> Constant:
-        """Parse an integer or long constant expression.
+        """Parse an integer, long or double constant expression.
 
         Follows C11 §6.4.4.1:
 
@@ -1153,6 +1183,9 @@ class Parser:
         token = self._peek()
         if token is None:
             raise self._eof_error("expected a constant, got end of input")
+        if token.type == TokenType.FPDOUBLE:
+            self._consume()
+            return ConstDouble(token.value)
         if token.type == TokenType.NUMBER:
             self._consume()
             val = int(token.value)
@@ -1196,7 +1229,7 @@ class Parser:
 
         Grammar::
 
-            type-specifier ::= "int" | "long" | "signed" | "unsigned"
+            type-specifier ::= "int" | "long" | "signed" | "unsigned" | "double"
 
         Consumes a run of specifier tokens in any order.  ``unsigned`` or
         ``signed`` alone are treated as shorthand for ``unsigned int`` /
@@ -1206,59 +1239,12 @@ class Parser:
             A ``Type`` node.
 
         Raises:
-            ParseError: If no recognised type-specifier token is present, or
-                if a specifier appears more than once.
+            ParseError: If no recognised type-specifier token is present, if a
+                specifier appears more than once, or if ``double`` is combined
+                with another type specifier.
         """
-        has_int = False
-        has_long = False
-        has_signed = False
-        has_unsigned = False
-
-        while self._peek() is not None and self._peek().type in (  # type: ignore[missing-attribute]
-            TokenType.INT,
-            TokenType.LONG,
-            TokenType.SIGNED,
-            TokenType.UNSIGNED,
-        ):
-            tok = self._consume()
-
-            match tok.type:
-                case TokenType.INT:
-                    if has_int:
-                        raise self._token_error("duplicate type specifier 'int'", tok)
-                    has_int = True
-                case TokenType.LONG:
-                    if has_long:
-                        raise self._token_error("duplicate type specifier 'long'", tok)
-                    has_long = True
-                case TokenType.SIGNED:
-                    if has_signed:
-                        raise self._token_error("duplicate type specifier 'signed'", tok)
-                    has_signed = True
-                case TokenType.UNSIGNED:
-                    if has_unsigned:
-                        raise self._token_error("duplicate type specifier `unsigned`", tok)
-                    has_unsigned = True
-                case _:
-                    pass
-
-            if has_signed and has_unsigned:
-                raise self._token_error("invalid type specifier: can't have both `signed` and `unsigned`", tok)
-
-        if not has_int and not has_long and not has_signed and not has_unsigned:
-            tok = self._peek()
-            if tok is None:
-                raise self._eof_error("expected a type, got end of input")
-            raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
-
-        if has_long and has_unsigned:
-            return ULongType()
-        elif has_unsigned:
-            return UIntType()
-        elif has_long:
-            return LongType()
-        else:
-            return IntType()
+        seen, last_tok = self._consume_type_specifiers()
+        return self._resolve_type(seen, last_tok)
 
 
 def parse(token_stream: list[Token]) -> Program:

@@ -60,6 +60,15 @@ class ULongType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class DoubleType(Type):
+    """Represents the C ``double`` type.
+
+    Used wherever ``double`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class FunType(Type):
     """Represents the type signature of a function definition.
 
