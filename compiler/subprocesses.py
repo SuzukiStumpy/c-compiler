@@ -56,7 +56,7 @@ def preprocess(source: Path) -> tuple[int, str] | Path:
     lambda result: SubprocessError(result[0], "gcc", result[1]),
     ok=lambda result: isinstance(result, Path),
 )
-def assemble_and_link(source: Path, exe_out: bool = True) -> tuple[int, str] | Path:
+def assemble_and_link(source: Path, exe_out: bool = True, libs: tuple[str, ...] = ()) -> tuple[int, str] | Path:
     """Assemble and optionally link a generated assembly file.
 
     Invokes ``gcc`` on the given ``.s`` file.  When ``exe_out`` is ``True``
@@ -68,6 +68,7 @@ def assemble_and_link(source: Path, exe_out: bool = True) -> tuple[int, str] | P
         source: Path to the ``.s`` assembly file to assemble and link.
         exe_out: ``True`` to produce a linked executable; ``False`` to produce
             an object file only (passes ``-c`` to ``gcc``).
+        libs: Any libraries that we need to link into the resultant binary.
 
     Returns:
         The path to the generated output file on success.
@@ -80,6 +81,10 @@ def assemble_and_link(source: Path, exe_out: bool = True) -> tuple[int, str] | P
     if exe_out:
         output = source.parent / source.stem
         gcc_args = ["gcc", source.as_posix(), "-o", output.as_posix()]
+
+        if len(libs) > 0:
+            for lib in libs:
+                gcc_args.append(f"-l{lib}")
     else:
         output = source.parent / f"{source.stem}.o"
         gcc_args = ["gcc", "-c", source.as_posix(), "-o", output.as_posix()]

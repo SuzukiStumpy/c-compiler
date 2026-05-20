@@ -70,7 +70,7 @@ class MutuallyExclusiveOption(click.Option):
         return super().handle_parse_result(ctx, opts, args)
 
 
-def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> None:
+def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs: tuple[str, ...] = ()) -> None:
     """Run the selected compilation stages on a preprocessed source file.
 
     Executes each requested stage in pipeline order: lexing, parsing, TAC
@@ -88,6 +88,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
         stages: Bitmask of stages to execute.  Defaults to ``Stage.ALL``.
         exe_out: When ``Stage.LINK`` is included, ``True`` produces a linked executable
             and ``False`` produces an object file only.
+        libs: Any libraries which need to be linked into the resulting binary.
 
     Raises:
         LexerError: If the lexer stage encounters an invalid character.
@@ -131,7 +132,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
         assert asm_program is not None
         assembly = source.parent / f"{source.stem}.s"
         emit_program(asm_program, assembly)
-        executable = assemble_and_link(assembly, exe_out=exe_out)
+        executable = assemble_and_link(assembly, exe_out=exe_out, libs=libs)
         click.echo(f"Compilation complete.  Output file is: {executable}")
 
 
@@ -150,6 +151,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
     is_flag=True,
     help="Don't link, just produce an object file.",
 )
+@click.option("-l", "libraries", multiple=True, help="Link a library into the compiled binary")
 @click.option(
     "--lex",
     is_flag=True,
@@ -189,6 +191,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True) -> No
 def compiler(
     source: str,
     c: bool,
+    libraries: tuple[str, ...],
     lex: bool,
     parse: bool,
     validate: bool,
@@ -221,7 +224,7 @@ def compiler(
 
     try:
         pre_processed = preprocess(Path(source))
-        compile(pre_processed, stages, exe_out=not c)
+        compile(pre_processed, stages, exe_out=not c, libs=libraries)
     except (LexerError, ParseError, CodeGenerationError) as ex:
         click.echo(format_for_terminal(ex), err=True)
         sys.exit(1)

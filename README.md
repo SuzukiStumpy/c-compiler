@@ -79,6 +79,7 @@ Usage: compiler [OPTIONS] SOURCE
 
 Options:
   -c          Don't link; produce an object file instead of an executable.
+  -l NAME     Link library NAME into the executable (repeatable).
   --lex       Stop after lexing.
   --parse     Stop after parsing; print the AST.
   --validate  Stop after semantic analysis; print the resolved AST.
@@ -87,13 +88,23 @@ Options:
   --help      Show this message and exit.
 ```
 
-The stage flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`) are mutually exclusive. The `-c` flag may be combined with stage flags or used alone.
+The stage flags (`--lex`, `--parse`, `--validate`, `--tacky`, `--codegen`) are mutually exclusive. The `-c` and `-l` flags may be combined with each other and used without a stage flag.
 
 ### Example
 
 ```bash
 # Compile a C source file to an executable
 compiler hello.c
+
+# Link against the math library (concatenated or spaced form both work)
+compiler -lm hello.c
+compiler -l m hello.c
+
+# Link against multiple libraries
+compiler -lm -lpthread hello.c
+
+# Compile to an object file (no linking)
+compiler -c hello.c
 
 # Inspect the token stream only
 compiler --lex hello.c

@@ -128,3 +128,52 @@ class TestAssembleAndLink:
 
         args = mock_run.call_args[0][0]
         assert "" not in args
+
+    def test_single_lib_appears_in_gcc_args(self, tmp_path: Path) -> None:
+        """A single entry in ``libs`` must produce a ``-l<name>`` gcc argument."""
+        asm_file = tmp_path / "prog.s"
+        asm_file.touch()
+
+        mock_run = _make_run(0)
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            assemble_and_link(asm_file, exe_out=True, libs=("m",))
+
+        args = mock_run.call_args[0][0]
+        assert "-lm" in args
+
+    def test_multiple_libs_all_appear_in_gcc_args(self, tmp_path: Path) -> None:
+        """Every entry in ``libs`` must produce its own ``-l<name>`` gcc argument."""
+        asm_file = tmp_path / "prog.s"
+        asm_file.touch()
+
+        mock_run = _make_run(0)
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            assemble_and_link(asm_file, exe_out=True, libs=("m", "pthread"))
+
+        args = mock_run.call_args[0][0]
+        assert "-lm" in args
+        assert "-lpthread" in args
+
+    def test_no_libs_produces_no_dash_l_args(self, tmp_path: Path) -> None:
+        """When ``libs`` is empty, no ``-l`` argument must appear in the gcc call."""
+        asm_file = tmp_path / "prog.s"
+        asm_file.touch()
+
+        mock_run = _make_run(0)
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            assemble_and_link(asm_file, exe_out=True, libs=())
+
+        args = mock_run.call_args[0][0]
+        assert not any(a.startswith("-l") for a in args)
+
+    def test_libs_ignored_in_object_file_mode(self, tmp_path: Path) -> None:
+        """``libs`` must be silently ignored when ``exe_out=False``; no ``-l`` args emitted."""
+        asm_file = tmp_path / "prog.s"
+        asm_file.touch()
+
+        mock_run = _make_run(0)
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            assemble_and_link(asm_file, exe_out=False, libs=("m",))
+
+        args = mock_run.call_args[0][0]
+        assert not any(a.startswith("-l") for a in args)
