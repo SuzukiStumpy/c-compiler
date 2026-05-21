@@ -6,9 +6,10 @@ and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
     program             = Program(top_level*)
-    assembly_type       = Longword | Quadword
+    assembly_type       = Longword | Quadword | Double
     top_level           = Function(identifier name, bool globl, instruction* instructions)
                         | StaticVariable(identifier name, bool globl, int init, int alignment, static_init init)
+                        | StaticConstant(identifier name, int alignment, static_init init)
     instruction         = Mov(assembly_type, operand src, operand dst)
                         | Movsx(operand src, operand dst)
                         | MoveZeroExtend(operand src, operand dst)
@@ -30,8 +31,11 @@ for the supported assembly subset:
                         | Push(operand)
                         | Call(identifier)
                         | Ret
+                        | Cvttsd2si(assembly_type dst_type, operand src, operand dst)
+                        | Cvtsi2sd(assembly_type src_type, operand src, operand dst)
     unary_operator      = Neg | Not
     binary_operator     = Add | Sub | Mult | And | Or | Xor
+                        | AddDouble | SubDouble | MultDouble | DivDouble | XorDouble
     operand             = Imm(int)
                         | Register(reg)
                         | Pseudo(identifier)
@@ -39,6 +43,8 @@ for the supported assembly subset:
                         | Data(identifier)
     cond_code           = E | NE | G | GE | L | LE | A | AE | B | BE
     reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP
+                        | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7
+                        | XMM14 | XMM15
 
 Nodes are organised into submodules by logical role:
 
@@ -61,7 +67,7 @@ modified.
 be replaced by ``Stack`` operands before the assembly is emitted.
 """
 
-from compiler.syntax.asm.declarations import Function, Program, StaticVariable, TopLevel
+from compiler.syntax.asm.declarations import Function, Program, StaticConstant, StaticVariable, TopLevel
 from compiler.syntax.asm.instructions import (
     AllocateStack,
     Binary,
@@ -69,6 +75,8 @@ from compiler.syntax.asm.instructions import (
     Cdq,
     Cmp,
     CondCodes,
+    Cvtsi2sd,
+    Cvttsd2si,
     DeallocateStack,
     Div,
     Idiv,
@@ -88,57 +96,87 @@ from compiler.syntax.asm.instructions import (
     Unary,
 )
 from compiler.syntax.asm.operands import Data, Imm, Operand, Pseudo, Register, Registers, Stack, Width
-from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Neg, Not, Or, Sub, UnaryOperator, Xor
-from compiler.syntax.asm.values import AssemblyType, IntInit, LongInit, StaticInit
+from compiler.syntax.asm.operators import (
+    Add,
+    AddDouble,
+    And,
+    BinaryOperator,
+    DivDouble,
+    Mult,
+    MultDouble,
+    Neg,
+    Not,
+    Or,
+    Sub,
+    SubDouble,
+    UnaryOperator,
+    Xor,
+    XorDouble,
+)
+from compiler.syntax.asm.values import AssemblyType, DoubleInit, IntInit, LongInit, StaticInit
 
 __all__ = [
-    "AssemblyType",
-    "StaticInit",
-    "IntInit",
-    "LongInit",
-    "Movsx",
-    "MoveZeroExtend",
-    "Div",
-    "Shr",
-    "TopLevel",
-    "StaticVariable",
-    "UnaryOperator",
-    "Neg",
-    "Not",
-    "BinaryOperator",
-    "Add",
-    "Sub",
-    "Mult",
-    "And",
-    "Or",
-    "Xor",
-    "Operand",
-    "Imm",
-    "Register",
-    "Registers",
-    "Width",
-    "Pseudo",
-    "Stack",
-    "Data",
-    "CondCodes",
-    "Instruction",
-    "Mov",
-    "Ret",
-    "Unary",
-    "Binary",
-    "Cdq",
-    "Idiv",
-    "Shl",
-    "Sar",
+    # instructions
     "AllocateStack",
-    "DeallocateStack",
-    "Push",
+    "Binary",
     "Call",
+    "Cdq",
     "Cmp",
+    "Cvtsi2sd",
+    "Cvttsd2si",
+    "DeallocateStack",
+    "Div",
+    "Idiv",
+    "Instruction",
     "Jmp",
     "JmpCC",
-    "SetCC",
     "Label",
+    "Mov",
+    "MoveZeroExtend",
+    "Movsx",
+    "Push",
+    "Ret",
+    "Sar",
+    "SetCC",
+    "Shl",
+    "Shr",
+    "Unary",
+    "CondCodes",
+    # operators
+    "BinaryOperator",
+    "UnaryOperator",
+    "Add",
+    "AddDouble",
+    "And",
+    "DivDouble",
+    "Mult",
+    "MultDouble",
+    "Neg",
+    "Not",
+    "Or",
+    "Sub",
+    "SubDouble",
+    "Xor",
+    "XorDouble",
+    # operands
+    "Data",
+    "Imm",
+    "Operand",
+    "Pseudo",
+    "Register",
+    "Registers",
+    "Stack",
+    "Width",
+    # declarations
     "Function",
     "Program",
+    "StaticConstant",
+    "StaticVariable",
+    "TopLevel",
+    # values
+    "AssemblyType",
+    "DoubleInit",
+    "IntInit",
+    "LongInit",
+    "StaticInit",
 ]

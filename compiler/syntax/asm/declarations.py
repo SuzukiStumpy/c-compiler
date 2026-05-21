@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from compiler.syntax.asm.instructions import Instruction
 from compiler.syntax.asm.operands import Operand
-from compiler.syntax.asm.values import IntInit, LongInit, StaticInit
+from compiler.syntax.asm.values import DoubleInit, IntInit, LongInit, StaticInit
 
 
 class TopLevel(ABC):
@@ -107,8 +107,8 @@ class StaticVariable(TopLevel):
         if self.globl:
             lines.append(f"   .globl {self.identifier}")
 
-        is_zero = self.init.value == 0
-        lines.append("   .bss" if is_zero else "   .data")
+        is_zero_int = self.init.value == 0 and isinstance(self.init, (IntInit, LongInit))
+        lines.append("   .bss" if is_zero_int else "   .data")
         lines.append(f"   .balign {self.alignment}")
         lines.append(f"{self.identifier}:")
 
@@ -121,7 +121,51 @@ class StaticVariable(TopLevel):
                 lines.append("   .zero 8")
             case LongInit(value=v):
                 lines.append(f"   .quad {v}")
+            case DoubleInit(value=0.0):
+                lines.append("   .zero 8")
+            case DoubleInit() as d:
+                lines.append(f"   .quad {d.as_bits()}")
 
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class StaticConstant(TopLevel):
+    """Represents the definition of a statically linked constant within the program.
+
+    Attributes:
+        identifier: The name associated with the value
+        alignment: The number of bytes to align the value to in memory
+        init: The value of the constant to set
+    """
+
+    identifier: str
+    alignment: int
+    init: StaticInit
+
+    def emit(self) -> str:
+        """Return the assembly text for the constant definition.
+
+        Constants are placed in ``.rodata`` (read-only data).  Double values are
+        emitted as their raw IEEE 754 bit pattern via ``.quad`` to guarantee
+        exact bit-level fidelity.
+
+        Returns:
+            A multi-line string containing the section directive, alignment
+            directive, label, and data directive.
+        """
+        lines = [
+            "   .section .rodata",
+            f"   .balign {self.alignment}",
+            f"{self.identifier}:",
+        ]
+        match self.init:
+            case DoubleInit() as d:
+                lines.append(f"   .quad {d.as_bits()}")
+            case IntInit(value=v):
+                lines.append(f"   .long {v}")
+            case LongInit(value=v):
+                lines.append(f"   .quad {v}")
         return "\n".join(lines)
 
 

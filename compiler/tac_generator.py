@@ -150,12 +150,23 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
     result: list[tac.StaticVariable] = []
     for name, entry in symbol_table.items():
         is_long = isinstance(entry.t, ast.LongType | ast.ULongType)
+        is_double = isinstance(entry.t, ast.DoubleType)
         match entry.attrs:
             case StaticAttr(init=Initial(value=i), globl=globl):
-                static_init = tac.LongInit(i) if is_long else tac.IntInit(i)
+                if is_double:
+                    static_init: tac.StaticInit = tac.DoubleInit(float(i))
+                elif is_long:
+                    static_init = tac.LongInit(int(i))
+                else:
+                    static_init = tac.IntInit(int(i))
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=static_init))
             case StaticAttr(init=Tentative(), globl=globl):
-                static_init = tac.LongInit(0) if is_long else tac.IntInit(0)
+                if is_double:
+                    static_init = tac.DoubleInit(0.0)
+                elif is_long:
+                    static_init = tac.LongInit(0)
+                else:
+                    static_init = tac.IntInit(0)
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=static_init))
             case StaticAttr(init=NoInitializer()):
                 pass

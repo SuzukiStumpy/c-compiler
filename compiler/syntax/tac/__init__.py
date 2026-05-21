@@ -90,7 +90,7 @@ from compiler.syntax.tac.operators import (
     Subtract,
     UnaryOperator,
 )
-from compiler.syntax.tac.values import Constant, IntInit, LongInit, StaticInit, Val, Var
+from compiler.syntax.tac.values import Constant, DoubleInit, IntInit, LongInit, StaticInit, Val, Var
 
 __all__ = [
     "DoubleToInt",
@@ -141,4 +141,5 @@ __all__ = [
     "StaticInit",
     "IntInit",
     "LongInit",
+    "DoubleInit",
 ]

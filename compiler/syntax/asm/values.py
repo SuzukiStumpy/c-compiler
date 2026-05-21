@@ -1,3 +1,4 @@
+import struct
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -8,6 +9,7 @@ class AssemblyType(Enum):
 
     Longword = auto()
     Quadword = auto()
+    Double = auto()
 
 
 class StaticInit(ABC):
@@ -24,8 +26,8 @@ class StaticInit(ABC):
 
     @property
     @abstractmethod
-    def value(self) -> int:
-        """The integer value of the initialiser."""
+    def value(self) -> int | float:
+        """The numeric value of the initialiser."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,3 +50,29 @@ class LongInit(StaticInit):
     """
 
     value: int
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleInit(StaticInit):
+    """Initialiser for a static variable or constant of C ``double`` type.
+
+    When used with ``StaticConstant``, the value is emitted as a raw 64-bit
+    little-endian word (``.quad``) in ``.rodata`` so that the bit pattern is
+    preserved exactly.  When used with ``StaticVariable``, zero goes to ``.bss``
+    and non-zero values go to ``.data``.
+
+    Attributes:
+        value: The initial double value, as a plain Python float.
+    """
+
+    value: float
+
+    def as_bits(self) -> int:
+        """Return the IEEE 754 bit pattern of ``value`` as an unsigned 64-bit integer.
+
+        Returns:
+            An unsigned integer whose binary representation is identical to the
+            double's IEEE 754 encoding, suitable for emission as ``.quad <bits>``.
+        """
+        (bits,) = struct.unpack("Q", struct.pack("d", self.value))
+        return bits

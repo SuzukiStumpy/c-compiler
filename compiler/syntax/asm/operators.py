@@ -189,3 +189,88 @@ class Xor(BinaryOperator):
             ``"xorl"`` for Longword, ``"xorq"`` for Quadword.
         """
         return "xorl" if assembly_type == AssemblyType.Longword else "xorq"
+
+
+@dataclass(frozen=True, slots=True)
+class AddDouble(BinaryOperator):
+    """The ``addsd`` instruction: scalar double-precision floating-point addition."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``addsd`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"addsd"`` unconditionally.
+        """
+        return "addsd"
+
+
+@dataclass(frozen=True, slots=True)
+class SubDouble(BinaryOperator):
+    """The ``subsd`` instruction: scalar double-precision floating-point subtraction."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``subsd`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"subsd"`` unconditionally.
+        """
+        return "subsd"
+
+
+@dataclass(frozen=True, slots=True)
+class MultDouble(BinaryOperator):
+    """The ``mulsd`` instruction: scalar double-precision floating-point multiplication."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``mulsd`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"mulsd"`` unconditionally.
+        """
+        return "mulsd"
+
+
+@dataclass(frozen=True, slots=True)
+class DivDouble(BinaryOperator):
+    """The ``divsd`` instruction: scalar double-precision floating-point division."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``divsd`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"divsd"`` unconditionally.
+        """
+        return "divsd"
+
+
+@dataclass(frozen=True, slots=True)
+class XorDouble(BinaryOperator):
+    """The ``xorpd`` instruction: bitwise XOR of packed double-precision floating-point values.
+
+    Used to flip the sign bit of a double by XOR-ing with a constant whose sign bit is set.
+    The memory operand must be 16-byte aligned for strict SSE2 compliance, though modern
+    x86-64 processors tolerate 8-byte alignment.
+    """
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``xorpd`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"xorpd"`` unconditionally.
+        """
+        return "xorpd"

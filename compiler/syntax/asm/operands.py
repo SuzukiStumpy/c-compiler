@@ -28,6 +28,11 @@ class Registers(Enum):
     Each member's value is a ``{Width: str}`` mapping from access width to the
     AT&T register name for that width.  Add a new entry to the dict to support
     additional widths without touching any other code.
+
+    SIMD registers (``XMM0``–``XMM7``, ``XMM14``, ``XMM15``) map all widths to
+    the same name because SSE instructions encode the operand size in the
+    mnemonic rather than the register name.  By convention, always construct
+    XMM ``Register`` operands with ``Width.QWORD``.
     """
 
     AX = {Width.QWORD: "rax", Width.DWORD: "eax", Width.BYTE: "al"}
@@ -40,6 +45,17 @@ class Registers(Enum):
     R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.BYTE: "r10b"}
     R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.BYTE: "r11b"}
     SP = {Width.QWORD: "rsp", Width.DWORD: "rsp", Width.BYTE: "rsp"}
+    # SIMD floating-point registers — name is the same at every width.
+    XMM0 = {Width.QWORD: "xmm0", Width.DWORD: "xmm0", Width.BYTE: "xmm0"}
+    XMM1 = {Width.QWORD: "xmm1", Width.DWORD: "xmm1", Width.BYTE: "xmm1"}
+    XMM2 = {Width.QWORD: "xmm2", Width.DWORD: "xmm2", Width.BYTE: "xmm2"}
+    XMM3 = {Width.QWORD: "xmm3", Width.DWORD: "xmm3", Width.BYTE: "xmm3"}
+    XMM4 = {Width.QWORD: "xmm4", Width.DWORD: "xmm4", Width.BYTE: "xmm4"}
+    XMM5 = {Width.QWORD: "xmm5", Width.DWORD: "xmm5", Width.BYTE: "xmm5"}
+    XMM6 = {Width.QWORD: "xmm6", Width.DWORD: "xmm6", Width.BYTE: "xmm6"}
+    XMM7 = {Width.QWORD: "xmm7", Width.DWORD: "xmm7", Width.BYTE: "xmm7"}
+    XMM14 = {Width.QWORD: "xmm14", Width.DWORD: "xmm14", Width.BYTE: "xmm14"}
+    XMM15 = {Width.QWORD: "xmm15", Width.DWORD: "xmm15", Width.BYTE: "xmm15"}
 
 
 class Operand(ABC):

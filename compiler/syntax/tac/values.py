@@ -51,14 +51,14 @@ class StaticInit(ABC):
     ``Var``: those are instruction operands; these are data-segment
     initialisers only.
 
-    All concrete subclasses must provide a ``value`` attribute of type ``int``.
-    Dataclass fields named ``value`` satisfy this contract automatically.
+    All concrete subclasses must provide a ``value`` attribute of the
+    appropriate numeric type.
     """
 
     @property
     @abstractmethod
-    def value(self) -> int:
-        """The integer value of the initialiser."""
+    def value(self) -> int | float:
+        """The numeric value of the initialiser."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,3 +81,14 @@ class LongInit(StaticInit):
     """
 
     value: int
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleInit(StaticInit):
+    """Initialiser for a static variable of C ``double`` type.
+
+    Attributes:
+        value: The initial double value, as a plain Python float.
+    """
+
+    value: float

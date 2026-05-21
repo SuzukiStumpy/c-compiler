@@ -99,7 +99,7 @@ def get_common_type(type1: Type, type2: Type) -> Type:
     """
     if type1 == type2:
         return type1
-    if type1 == DoubleType or type2 == DoubleType:
+    if isinstance(type1, DoubleType) or isinstance(type2, DoubleType):
         return DoubleType()
     size1 = _TYPE_SIZE.get(type(type1), 0)
     size2 = _TYPE_SIZE.get(type(type2), 0)

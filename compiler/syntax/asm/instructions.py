@@ -15,7 +15,21 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from compiler.syntax.asm.operands import Operand, Register
-from compiler.syntax.asm.operators import Add, And, BinaryOperator, Mult, Or, Sub, UnaryOperator, Xor
+from compiler.syntax.asm.operators import (
+    Add,
+    AddDouble,
+    And,
+    BinaryOperator,
+    DivDouble,
+    Mult,
+    MultDouble,
+    Or,
+    Sub,
+    SubDouble,
+    UnaryOperator,
+    Xor,
+    XorDouble,
+)
 from compiler.syntax.asm.values import AssemblyType
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -69,11 +83,14 @@ class Mov(Instruction):
     assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
-        """Return a ``movl`` or ``movq`` instruction in AT&T syntax.
+        """Return a ``movl``, ``movq``, or ``movsd`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``  movl <src>, <dst>`` or ``  movq <src>, <dst>``.
+            A string of the form ``  movl <src>, <dst>``, ``  movq <src>, <dst>``,
+            or ``  movsd <src>, <dst>``.
         """
+        if self.assembly_type == AssemblyType.Double:
+            return f"  movsd {self.src.emit()}, {self.dst.emit()}"
         suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
         return f"  mov{suffix} {self.src.emit()}, {self.dst.emit()}"
 
@@ -239,6 +256,8 @@ class Binary(Instruction):
         """Return a binary instruction sequence in AT&T syntax.
 
         Moves ``src1`` into ``dst``, then applies the operator with ``src2``.
+        Integer operators use ``movl``/``movq`` and the operator's integer mnemonic.
+        SSE operators use ``movsd`` and the operator's scalar-double mnemonic.
 
         Returns:
             A two-line string: ``mov? src1, dst`` followed by ``op src2, dst``.
@@ -252,6 +271,13 @@ class Binary(Instruction):
                 return "\n".join(
                     [
                         f"  mov{suffix} {self.src1.emit()}, {self.dst.emit()}",
+                        f"  {self.operator.emit(self.assembly_type)} {self.src2.emit()}, {self.dst.emit()}",
+                    ]
+                )
+            case AddDouble() | SubDouble() | MultDouble() | DivDouble() | XorDouble():
+                return "\n".join(
+                    [
+                        f"  movsd {self.src1.emit()}, {self.dst.emit()}",
                         f"  {self.operator.emit(self.assembly_type)} {self.src2.emit()}, {self.dst.emit()}",
                     ]
                 )
@@ -418,15 +444,17 @@ class Shr(Instruction):
 
 @dataclass(frozen=True, slots=True)
 class Cmp(Instruction):
-    """A ``cmpl``/``cmpq`` instruction that compares two operands and sets the flags register.
+    """A ``cmpl``/``cmpq``/``ucomisd`` instruction that compares two operands and sets the flags register.
 
     The operands are subtracted (``op2 - op1``) for flag-setting; neither is modified.
+    When ``assembly_type`` is ``Double`` the instruction emitted is ``ucomisd``, which
+    sets CF/ZF/PF (compatible with the A/AE/B/BE unsigned condition codes).
 
     Attributes:
         op1: The right-hand (subtracted) operand.
         op2: The left-hand (base) operand.
-        assembly_type: Selects ``cmpl`` (Longword) or ``cmpq`` (Quadword);
-            defaults to ``Longword``.
+        assembly_type: Selects ``cmpl`` (Longword), ``cmpq`` (Quadword), or
+            ``ucomisd`` (Double); defaults to ``Longword``.
     """
 
     op1: Operand
@@ -434,11 +462,14 @@ class Cmp(Instruction):
     assembly_type: AssemblyType = AssemblyType.Longword
 
     def emit(self) -> str:
-        """Return a ``cmpl`` or ``cmpq`` instruction in AT&T syntax.
+        """Return a ``cmpl``, ``cmpq``, or ``ucomisd`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  cmpl <op1>, <op2>"`` or ``"  cmpq <op1>, <op2>"``.
+            A string of the form ``"  cmpl <op1>, <op2>"``, ``"  cmpq <op1>, <op2>"``,
+            or ``"  ucomisd <op1>, <op2>"``.
         """
+        if self.assembly_type == AssemblyType.Double:
+            return f"  ucomisd {self.op1.emit()}, {self.op2.emit()}"
         suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
         return f"  cmp{suffix} {self.op1.emit()}, {self.op2.emit()}"
 
@@ -563,3 +594,59 @@ class Call(Instruction):
             A string of the form ``"  call <name>"``.
         """
         return f"  call {self.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class Cvttsd2si(Instruction):
+    """A ``cvttsd2sil``/``cvttsd2siq`` instruction that truncates a scalar double to a signed integer.
+
+    The source must be an XMM register or memory location; the destination is a general-purpose
+    register.  ``assembly_type`` selects the *destination* integer width.
+
+    Attributes:
+        src: The scalar double source (XMM register or memory).
+        dst: The signed-integer destination (general-purpose register).
+        assembly_type: Selects 32-bit (``Longword``) or 64-bit (``Quadword``) integer output;
+            defaults to ``Longword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
+
+    def emit(self) -> str:
+        """Return a ``cvttsd2sil`` or ``cvttsd2siq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cvttsd2sil <src>, <dst>"`` or ``"  cvttsd2siq <src>, <dst>"``.
+        """
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  cvttsd2si{suffix} {self.src.emit()}, {self.dst.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Cvtsi2sd(Instruction):
+    """A ``cvtsi2sdl``/``cvtsi2sdq`` instruction that converts a signed integer to a scalar double.
+
+    The source is a general-purpose register or memory location; the destination must be an XMM
+    register.  ``assembly_type`` selects the *source* integer width.
+
+    Attributes:
+        src: The signed-integer source (general-purpose register or memory).
+        dst: The scalar double destination (XMM register).
+        assembly_type: Selects 32-bit (``Longword``) or 64-bit (``Quadword``) integer input;
+            defaults to ``Longword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = AssemblyType.Longword
+
+    def emit(self) -> str:
+        """Return a ``cvtsi2sdl`` or ``cvtsi2sdq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cvtsi2sdl <src>, <dst>"`` or ``"  cvtsi2sdq <src>, <dst>"``.
+        """
+        suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
+        return f"  cvtsi2sd{suffix} {self.src.emit()}, {self.dst.emit()}"

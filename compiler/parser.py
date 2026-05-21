@@ -1185,7 +1185,7 @@ class Parser:
             raise self._eof_error("expected a constant, got end of input")
         if token.type == TokenType.FPDOUBLE:
             self._consume()
-            return Constant(value=ConstDouble(token.value), exp_type=DoubleType())
+            return Constant(value=ConstDouble(float(token.value)), exp_type=DoubleType())
         if token.type == TokenType.NUMBER:
             self._consume()
             val = int(token.value)
