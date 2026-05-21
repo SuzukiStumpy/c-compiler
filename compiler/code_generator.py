@@ -350,9 +350,9 @@ def _translate_binary(
             tac.Equal() | tac.NotEqual() | tac.LessThan() | tac.LessOrEqual() | tac.GreaterThan() | tac.GreaterOrEqual()
         ):
             cmp_at = _asm_type(src1, symbol_table)
-            # Floating-point ucomisd sets CF/ZF like unsigned integer flags, so use
-            # the above/below condition codes (not the signed less/greater ones).
-            unsigned = True if cmp_at == asm.AssemblyType.Double else _is_unsigned(src1, symbol_table)
+            if cmp_at == asm.AssemblyType.Double:
+                return _translate_double_comparison(op, src1_asm, src2_asm, dst_asm)
+            unsigned = _is_unsigned(src1, symbol_table)
             return [
                 asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=cmp_at),
                 asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
@@ -520,15 +520,35 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         case tac.JumpIfZero(condition=condition, target=target):
             at = _asm_type(condition, symbol_table)
             op1 = _zero_operand_for(at, constants)
+            cond_asm = _translate_val(condition, constants)
+            if at == asm.AssemblyType.Double:
+                # ucomisd sets PF=1 for NaN; je fires on ZF=1 which is also set by NaN.
+                # Skip the je when PF=1 so NaN is never treated as zero.
+                skip_label = f"nan_jz.{_fresh_uid()}"
+                return [
+                    asm.Cmp(op1=op1, op2=cond_asm, assembly_type=at),
+                    asm.JmpCC(asm.CondCodes.P, skip_label),
+                    asm.JmpCC(asm.CondCodes.E, target),
+                    asm.Label(skip_label),
+                ]
             return [
-                asm.Cmp(op1=op1, op2=_translate_val(condition, constants), assembly_type=at),
+                asm.Cmp(op1=op1, op2=cond_asm, assembly_type=at),
                 asm.JmpCC(asm.CondCodes.E, target),
             ]
         case tac.JumpIfNotZero(condition=condition, target=target):
             at = _asm_type(condition, symbol_table)
             op1 = _zero_operand_for(at, constants)
+            cond_asm = _translate_val(condition, constants)
+            if at == asm.AssemblyType.Double:
+                # ucomisd sets PF=1 and ZF=1 for NaN; jne checks ZF=0 so misses NaN.
+                # Jump on PF first so NaN is treated as nonzero.
+                return [
+                    asm.Cmp(op1=op1, op2=cond_asm, assembly_type=at),
+                    asm.JmpCC(asm.CondCodes.P, target),
+                    asm.JmpCC(asm.CondCodes.NE, target),
+                ]
             return [
-                asm.Cmp(op1=op1, op2=_translate_val(condition, constants), assembly_type=at),
+                asm.Cmp(op1=op1, op2=cond_asm, assembly_type=at),
                 asm.JmpCC(asm.CondCodes.NE, target),
             ]
         case tac.Copy(src=src, dst=dst):
@@ -544,6 +564,17 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
                 case tac.Not():
                     src_at = _asm_type(src, symbol_table)
                     zero = _zero_operand_for(src_at, constants)
+                    if src_at == asm.AssemblyType.Double:
+                        # ucomisd sets PF=1 and ZF=1 for NaN; sete fires on ZF=1 so would
+                        # return 1 for NaN.  Jump over sete when PF=1 so !NaN stays 0.
+                        nan_label = f"nan_not.{_fresh_uid()}"
+                        return [
+                            asm.Cmp(op1=zero, op2=src_asm, assembly_type=src_at),
+                            asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                            asm.JmpCC(asm.CondCodes.P, nan_label),
+                            asm.SetCC(asm.CondCodes.E, dst_asm),
+                            asm.Label(nan_label),
+                        ]
                     return [
                         asm.Cmp(op1=zero, op2=src_asm, assembly_type=src_at),
                         asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
@@ -1006,6 +1037,97 @@ def _translate_relational_op(op: tac.BinaryOperator, unsigned: bool = False) -> 
             return asm.CondCodes.AE if unsigned else asm.CondCodes.GE
         case _:
             raise CodeGenerationError(f"unsupported TAC relational operator for asm.Binary: {type(op).__name__}")
+
+
+def _translate_double_comparison(
+    op: tac.BinaryOperator,
+    src1_asm: asm.Operand,
+    src2_asm: asm.Operand,
+    dst_asm: asm.Operand,
+) -> list[asm.Instruction]:
+    """Lower a double-precision comparison to assembly, with correct NaN handling.
+
+    ``ucomisd`` sets ZF=1, CF=1, PF=1 when either operand is NaN (unordered result).
+    For ``==``, ``<``, and ``<=`` the naïve ``SetCC`` would incorrectly return 1 for NaN because
+    ``sete`` reads ZF and ``setb``/``setbe`` read CF, all of which are 1.  For ``!=`` the
+    naïve ``setne`` would incorrectly return 0 because ZF=1.  ``>`` and ``>=`` are naturally
+    correct: ``seta`` (CF=0 AND ZF=0) and ``setae`` (CF=0) both return 0 when CF=1.
+
+    The fix uses a conditional jump on PF (the parity flag, set to 1 only for NaN):
+    * For ``==``, ``<``, ``<=``: pre-load 0 into ``dst``, jump over ``SetCC`` if PF=1
+      so the result stays 0 (all orderings vs. NaN are false).
+    * For ``!=``: pre-load 1 into ``dst``, jump over ``setne`` if PF=1
+      so the result stays 1 (NaN != anything is always true).
+
+    Args:
+        op: The TAC relational operator (Equal, NotEqual, LessThan, LessOrEqual, GreaterThan,
+            or GreaterOrEqual).
+        src1_asm: The left operand in assembly form.
+        src2_asm: The right operand in assembly form.
+        dst_asm: The destination operand in assembly form.
+
+    Returns:
+        A list of ``asm.Instruction`` nodes implementing the NaN-aware comparison.
+
+    Raises:
+        CodeGenerationError: If ``op`` is not a supported relational operator.
+    """
+    uid = _fresh_uid()
+    nan_label = f"nan_cmp.{uid}"
+    cmp = asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=asm.AssemblyType.Double)
+    match op:
+        case tac.Equal():
+            # sete returns 1 for NaN (ZF=1); jump over it so dst stays 0.
+            return [
+                cmp,
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.JmpCC(asm.CondCodes.P, nan_label),
+                asm.SetCC(asm.CondCodes.E, dst_asm),
+                asm.Label(nan_label),
+            ]
+        case tac.NotEqual():
+            # setne returns 0 for NaN (ZF=1); pre-load 1 and jump over setne so dst stays 1.
+            return [
+                cmp,
+                asm.Mov(src=asm.Imm(1), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.JmpCC(asm.CondCodes.P, nan_label),
+                asm.SetCC(asm.CondCodes.NE, dst_asm),
+                asm.Label(nan_label),
+            ]
+        case tac.LessThan():
+            # setb returns 1 for NaN (CF=1); jump over it so dst stays 0.
+            return [
+                cmp,
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.JmpCC(asm.CondCodes.P, nan_label),
+                asm.SetCC(asm.CondCodes.B, dst_asm),
+                asm.Label(nan_label),
+            ]
+        case tac.LessOrEqual():
+            # setbe returns 1 for NaN (CF=1 or ZF=1); jump over it so dst stays 0.
+            return [
+                cmp,
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.JmpCC(asm.CondCodes.P, nan_label),
+                asm.SetCC(asm.CondCodes.BE, dst_asm),
+                asm.Label(nan_label),
+            ]
+        case tac.GreaterThan():
+            # seta (CF=0 AND ZF=0) naturally returns 0 for NaN (CF=1); no extra jump needed.
+            return [
+                cmp,
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.SetCC(asm.CondCodes.A, dst_asm),
+            ]
+        case tac.GreaterOrEqual():
+            # setae (CF=0) naturally returns 0 for NaN (CF=1); no extra jump needed.
+            return [
+                cmp,
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.SetCC(asm.CondCodes.AE, dst_asm),
+            ]
+        case _:
+            raise CodeGenerationError(f"unsupported TAC relational operator for double comparison: {type(op).__name__}")
 
 
 # ==============================================================================

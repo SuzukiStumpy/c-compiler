@@ -715,16 +715,20 @@ class _TacGenerator:
                 return tac.Constant(value=value), []
             case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                tmp = self._make_temp(exp.exp_type or ast.IntType())
+                t = exp.exp_type or ast.IntType()
+                tmp = self._make_temp(t)
+                one: ast.Const = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
                 return var, [
-                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(one), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name=name)):
                 var = tac.Var(value=name)
-                tmp = self._make_temp(exp.exp_type or ast.IntType())
+                t = exp.exp_type or ast.IntType()
+                tmp = self._make_temp(t)
+                one = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
                 return var, [
-                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(one), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name=name)):
@@ -732,9 +736,10 @@ class _TacGenerator:
                 t = exp.exp_type or ast.IntType()
                 old = self._make_temp(t)
                 tmp = self._make_temp(t)
+                one = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
                 return old, [
                     tac.Copy(src=var, dst=old),
-                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(one), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name=name)):
@@ -742,9 +747,10 @@ class _TacGenerator:
                 t = exp.exp_type or ast.IntType()
                 old = self._make_temp(t)
                 tmp = self._make_temp(t)
+                one = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
                 return old, [
                     tac.Copy(src=var, dst=old),
-                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(ast.ConstInt(1)), dst=tmp),
+                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(one), dst=tmp),
                     tac.Copy(src=tmp, dst=var),
                 ]
             case ast.Unary(operator=op, exp=inner):

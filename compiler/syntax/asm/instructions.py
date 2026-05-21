@@ -47,6 +47,8 @@ class CondCodes(StrEnum):
     AE = "ae"
     B = "b"
     BE = "be"
+    P = "p"
+    NP = "np"
 
 
 class Instruction(ABC):

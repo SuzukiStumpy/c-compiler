@@ -57,11 +57,13 @@ from compiler.syntax.ast.operators import (
     Equal,
     GreaterOrEqual,
     GreaterThan,
+    LeftShift,
     LessOrEqual,
     LessThan,
     Not,
     NotEqual,
     Or,
+    RightShift,
 )
 from compiler.syntax.ast.types import DoubleType, FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
 from compiler.types.symbols import (
@@ -106,6 +108,35 @@ def get_common_type(type1: Type, type2: Type) -> Type:
     if size1 == size2:
         return type2 if type(type1) in _SIGNED_TYPES else type1
     return type1 if size1 > size2 else type2
+
+
+def _truncate_case_value(val: int, switch_type: Type) -> int:
+    """Truncate an integer case constant to the switch expression's type.
+
+    C converts case label values to the type of the switch control expression
+    before comparing them.  For example, ``case 34359738768l`` in an ``int``
+    switch equals ``case 400`` because ``34359738768 mod 2**32 == 400``.
+
+    Args:
+        val: The raw integer value of the case constant.
+        switch_type: The C type of the switch control expression.
+
+    Returns:
+        The value after truncation and (for signed types) sign extension.
+    """
+    match switch_type:
+        case IntType():
+            v = val & 0xFFFFFFFF
+            return v - (1 << 32) if v >= (1 << 31) else v
+        case LongType():
+            v = val & 0xFFFFFFFFFFFFFFFF
+            return v - (1 << 64) if v >= (1 << 63) else v
+        case UIntType():
+            return val & 0xFFFFFFFF
+        case ULongType():
+            return val & 0xFFFFFFFFFFFFFFFF
+        case _:
+            return val
 
 
 class VariableBinding(NamedTuple):
@@ -226,11 +257,16 @@ class SemanticAnalyser:
             indicates that ``case``/``default`` appear outside any switch,
             which is a semantic error.
         _case_values_stack: Parallel stack to ``_switch_stack``.  Each entry
-            is the set of ``ast.Constant`` nodes already seen by ``Case`` labels
-            within the corresponding switch.  Storing the node rather than its
-            raw value keeps the check type-independent as the expression language
-            grows: equality and hashing are delegated to the frozen dataclass.
+            is the set of integer values already seen by ``Case`` labels within
+            the corresponding switch, after truncating each constant to the type
+            of the switch control expression.  Truncation is required because C
+            compares case labels against the switch expression using the type of
+            that expression — so ``case 34359738768l`` in an ``int`` switch is
+            duplicate with ``case 400`` (both truncate to 400).
             Used to detect duplicate case values within a single switch statement.
+        _switch_type_stack: Parallel stack to ``_switch_stack``.  Each entry is
+            the C type of the corresponding switch control expression, used to
+            truncate case constants before duplicate checking.
         _default_seen_stack: Parallel stack to ``_switch_stack``.  Each entry
             is ``True`` once a ``Default`` label has been encountered within the
             corresponding switch, and ``False`` until then.  Used to enforce the
@@ -269,7 +305,8 @@ class SemanticAnalyser:
         self._loop_stack: list[str] = []
         self._break_stack: list[str] = []
         self._switch_stack: list[str] = []
-        self._case_values_stack: list[set[ast.Constant]] = []
+        self._case_values_stack: list[set[int]] = []
+        self._switch_type_stack: list[Type] = []
         self._default_seen_stack: list[bool] = []
 
     def _make_unique(self, name: str) -> str:
@@ -789,6 +826,12 @@ class SemanticAnalyser:
                             typed_left = ast.Cast(common, typed_left, exp_type=common)
                         if typed_right.exp_type != common:
                             typed_right = ast.Cast(common, typed_right, exp_type=common)
+                elif isinstance(op, (LeftShift, RightShift)):
+                    if isinstance(typed_left.exp_type, DoubleType) or isinstance(typed_right.exp_type, DoubleType):
+                        raise SemanticError("Can't apply shift operators to a double")
+                    # C §6.5.7: type of a shift is the type of the promoted left operand.
+                    # The right operand is evaluated independently and not cast to a common type.
+                    bin_type = typed_left.exp_type
                 else:
                     if typed_left.exp_type is not None and typed_right.exp_type is not None:
                         bin_type = get_common_type(typed_left.exp_type, typed_right.exp_type)
@@ -1010,18 +1053,26 @@ class SemanticAnalyser:
                 self._switch_stack.append(label)
                 self._case_values_stack.append(set())
                 self._default_seen_stack.append(False)
-                result = ast.Switch(self.resolve_exp(control), self._resolve_statement(body), label)
+                resolved_control = self.resolve_exp(control)
+                if isinstance(resolved_control.exp_type, DoubleType):
+                    raise SemanticError("Switch controlling expression must be an integer, not a double")
+                self._switch_type_stack.append(resolved_control.exp_type or IntType())
+                result = ast.Switch(resolved_control, self._resolve_statement(body), label)
                 self._break_stack.pop()
                 self._switch_stack.pop()
                 self._case_values_stack.pop()
+                self._switch_type_stack.pop()
                 self._default_seen_stack.pop()
                 return result
             case ast.Case(value=value, statement=inner):
                 if not self._switch_stack:
                     raise SemanticError("'case' label not within a switch statement.")
-                if value in self._case_values_stack[-1]:
-                    raise SemanticError(f"Duplicate case value {value.value} in switch statement.")
-                self._case_values_stack[-1].add(value)
+                raw_const = value.value
+                raw_int = raw_const.val if hasattr(raw_const, "val") else int(raw_const)
+                truncated = _truncate_case_value(raw_int, self._switch_type_stack[-1])
+                if truncated in self._case_values_stack[-1]:
+                    raise SemanticError(f"Duplicate case value {raw_int} in switch statement.")
+                self._case_values_stack[-1].add(truncated)
                 return ast.Case(value, self._resolve_statement(inner), self._switch_stack[-1])
             case ast.Default(statement=inner):
                 if not self._switch_stack:
@@ -1172,6 +1223,7 @@ class SemanticAnalyser:
         self._break_stack = []
         self._switch_stack = []
         self._case_values_stack = []
+        self._switch_type_stack = []
         self._default_seen_stack = []
 
         resolved_params: list[ast.Parameter] = []

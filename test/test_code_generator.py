@@ -10,7 +10,7 @@ import pytest
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.code_generator import generate
-from compiler.syntax.ast.constants import ConstInt, ConstLong
+from compiler.syntax.ast.constants import ConstDouble, ConstInt, ConstLong
 from compiler.syntax.ast.types import IntType, LongType
 from compiler.types.symbols import LocalAttr, SymbolTable, SymbolTableEntry
 from compiler.utils.exceptions import CodeGenerationError
@@ -681,6 +681,123 @@ class TestRelationalCodeGen:
                 case asm.Mov(src=src, dst=dst):
                     assert not isinstance(src, asm.Pseudo)
                     assert not isinstance(dst, asm.Pseudo)
+
+
+# ---------------------------------------------------------------------------
+# Double (NaN-aware) comparison code generation
+# ---------------------------------------------------------------------------
+
+
+def _double_relational_tac_program(op: tac.BinaryOperator) -> tac.Program:
+    """Build a ``tac.Program`` comparing two ``double`` constants with ``op``.
+
+    Args:
+        op: A relational binary operator (Equal, NotEqual, LessThan, etc.).
+
+    Returns:
+        A ``tac.Program`` whose sole function returns the comparison result.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.Binary(
+                        operator=op,
+                        src1=tac.Constant(value=ConstDouble(1.0)),
+                        src2=tac.Constant(value=ConstDouble(2.0)),
+                        dst=tac.Var(value="tmp.0"),
+                    ),
+                    tac.Return(val=tac.Var(value="tmp.0")),
+                ),
+            ),
+        )
+    )
+
+
+def _double_fn_instrs(tac_op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
+    """Generate a double comparison program and return the main function's instructions.
+
+    Args:
+        tac_op: The relational operator to compare with.
+
+    Returns:
+        The instruction sequence from the generated main function.
+    """
+    result = generate(_double_relational_tac_program(tac_op))
+    fn = next(d for d in result.definitions if isinstance(d, asm.Function))
+    return fn.instructions
+
+
+class TestDoubleRelationalCodeGen:
+    """Double-precision relational operators use NaN-aware code sequences.
+
+    ``ucomisd`` sets ZF=CF=PF=1 for unordered (NaN) results.  Operations that would
+    naïvely mis-read those flags (``==``, ``!=``, ``<``, ``<=``) must use a conditional
+    jump on the parity flag to produce the correct 0/1 result.  ``>`` and ``>=`` are
+    naturally correct because ``seta``/``setae`` both return 0 when CF=1.
+    """
+
+    @pytest.mark.parametrize(
+        ("tac_op", "expected_cc"),
+        [
+            (tac.Equal(), asm.CondCodes.E),
+            (tac.NotEqual(), asm.CondCodes.NE),
+            (tac.LessThan(), asm.CondCodes.B),
+            (tac.LessOrEqual(), asm.CondCodes.BE),
+            (tac.GreaterThan(), asm.CondCodes.A),
+            (tac.GreaterOrEqual(), asm.CondCodes.AE),
+        ],
+        ids=["eq", "ne", "lt", "le", "gt", "ge"],
+    )
+    def test_double_relational_uses_unsigned_cond_codes(
+        self, tac_op: tac.BinaryOperator, expected_cc: asm.CondCodes
+    ) -> None:
+        """Double comparisons use above/below (unsigned) condition codes, not signed ones."""
+        instrs = _double_fn_instrs(tac_op)
+        setcc = next(i for i in instrs if isinstance(i, asm.SetCC))
+        assert setcc.cond_code == expected_cc
+
+    @pytest.mark.parametrize(
+        "tac_op",
+        [tac.Equal(), tac.NotEqual(), tac.LessThan(), tac.LessOrEqual()],
+        ids=["eq", "ne", "lt", "le"],
+    )
+    def test_double_relational_emits_parity_jump(self, tac_op: tac.BinaryOperator) -> None:
+        """``==``, ``!=``, ``<``, ``<=`` emit a ``JmpCC(P, …)`` to guard against NaN."""
+        instrs = _double_fn_instrs(tac_op)
+        assert any(isinstance(i, asm.JmpCC) and i.cond_code == asm.CondCodes.P for i in instrs)
+
+    @pytest.mark.parametrize(
+        "tac_op",
+        [tac.GreaterThan(), tac.GreaterOrEqual()],
+        ids=["gt", "ge"],
+    )
+    def test_double_relational_gt_ge_no_parity_jump(self, tac_op: tac.BinaryOperator) -> None:
+        """``>`` and ``>=`` do not need a parity-flag guard; no ``JmpCC(P)`` is emitted."""
+        instrs = _double_fn_instrs(tac_op)
+        assert not any(isinstance(i, asm.JmpCC) and i.cond_code == asm.CondCodes.P for i in instrs)
+
+    def test_double_not_equal_preloads_one(self) -> None:
+        """``!=`` pre-loads 1 into dst (so NaN returns 1 when the parity jump fires)."""
+        instrs = _double_fn_instrs(tac.NotEqual())
+        jmpcc_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.JmpCC))
+        preload = instrs[jmpcc_idx - 1]
+        assert isinstance(preload, asm.Mov)
+        assert preload.src == asm.Imm(1)
+
+    def test_double_equal_preloads_zero(self) -> None:
+        """``==`` pre-loads 0 into dst (so NaN returns 0 when the parity jump fires)."""
+        instrs = _double_fn_instrs(tac.Equal())
+        jmpcc_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.JmpCC))
+        preload = instrs[jmpcc_idx - 1]
+        assert isinstance(preload, asm.Mov)
+        assert preload.src == asm.Imm(0)
+
+    def test_double_relational_emits_ucomisd(self) -> None:
+        """Double comparisons emit a ``Cmp`` (``ucomisd``) instruction."""
+        instrs = _double_fn_instrs(tac.Equal())
+        assert any(isinstance(i, asm.Cmp) and i.assembly_type == asm.AssemblyType.Double for i in instrs)
 
 
 # ---------------------------------------------------------------------------
