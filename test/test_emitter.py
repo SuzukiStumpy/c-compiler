@@ -20,6 +20,7 @@ from compiler.syntax.asm import (
     Jmp,
     JmpCC,
     Label,
+    Memory,
     Mov,
     Program,
     Push,
@@ -27,7 +28,6 @@ from compiler.syntax.asm import (
     Registers,
     Ret,
     SetCC,
-    Stack,
     Width,
 )
 
@@ -253,7 +253,10 @@ def test_cmp_emit() -> None:
 
 def test_cmp_emit_memory_operands() -> None:
     """``Cmp`` with a stack op2 emits the correct memory reference."""
-    assert Cmp(op1=Imm(value=0), op2=Stack(offset=-4)).emit() == "  cmpl $0, -4(%rbp)"
+    assert (
+        Cmp(op1=Imm(value=0), op2=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)).emit()
+        == "  cmpl $0, -4(%rbp)"
+    )
 
 
 def test_jmp_emit() -> None:
@@ -297,7 +300,10 @@ def test_setcc_emit(cond_code: CondCodes, expected: str) -> None:
 
 def test_setcc_emit_stack_operand() -> None:
     """``SetCC`` with a stack operand emits the memory reference correctly."""
-    assert SetCC(cond_code=CondCodes.E, operand=Stack(offset=-4)).emit() == "  sete -4(%rbp)"
+    assert (
+        SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)).emit()
+        == "  sete -4(%rbp)"
+    )
 
 
 def test_label_emit() -> None:

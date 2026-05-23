@@ -146,9 +146,16 @@ def test_unary_negate_produces_allocate_mov_unary_mov_ret() -> None:
     instrs = result.definitions[0].instructions
     # AllocateStack, Mov(Imm(5), Stack(-4)), Unary(Neg, Stack(-4)), Mov(Stack(-4), Register()), Ret()
     assert isinstance(instrs[0], asm.AllocateStack)
-    assert instrs[1] == asm.Mov(src=asm.Imm(value=5), dst=asm.Stack(offset=-4))
-    assert instrs[2] == asm.Unary(operator=asm.Neg(), operand=asm.Stack(offset=-4))
-    assert instrs[3] == asm.Mov(src=asm.Stack(offset=-4), dst=asm.Register(asm.Registers.AX))
+    assert instrs[1] == asm.Mov(
+        src=asm.Imm(value=5), dst=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)
+    )
+    assert instrs[2] == asm.Unary(
+        operator=asm.Neg(), operand=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)
+    )
+    assert instrs[3] == asm.Mov(
+        src=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4),
+        dst=asm.Register(asm.Registers.AX),
+    )
     assert instrs[4] == asm.Ret()
 
 
@@ -255,7 +262,7 @@ def test_chained_temps_produce_no_mem_mem_mov() -> None:
     result = generate(program)
     for instr in result.definitions[0].instructions:
         if isinstance(instr, asm.Mov):
-            assert not (isinstance(instr.src, asm.Stack) and isinstance(instr.dst, asm.Stack)), (
+            assert not (isinstance(instr.src, asm.Memory) and isinstance(instr.dst, asm.Memory)), (
                 f"Invalid Mov(mem, mem) found: {instr}"
             )
 
@@ -331,7 +338,10 @@ def test_binary_add_result_moved_from_r11_to_stack() -> None:
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     # AllocateStack, Binary, Mov(R11, Stack(-4)), Mov(Stack(-4), AX), Ret
     mov = result.definitions[0].instructions[2]
-    assert mov == asm.Mov(src=asm.Register(asm.Registers.R11), dst=asm.Stack(offset=-4))
+    assert mov == asm.Mov(
+        src=asm.Register(asm.Registers.R11),
+        dst=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4),
+    )
 
 
 def test_binary_add_instruction_count() -> None:
@@ -424,7 +434,7 @@ def test_idiv_memory_divisor_not_routed_through_r11() -> None:
     # Find the Idiv instruction and verify its operand is a Stack slot, not a register
     idiv_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.Idiv)]
     assert len(idiv_instrs) == 1
-    assert isinstance(idiv_instrs[0].operand, asm.Stack)
+    assert isinstance(idiv_instrs[0].operand, asm.Memory)
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +570,10 @@ class TestShiftCodeGen:
 
     def test_shl_emit_stack_operand(self) -> None:
         """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` — memory operand is valid."""
-        assert asm.Shl(operand=asm.Stack(-4)).emit() == "  shll %cl, -4(%rbp)"
+        assert (
+            asm.Shl(operand=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)).emit()
+            == "  shll %cl, -4(%rbp)"
+        )
 
     def test_no_pseudo_operands_after_left_shift_code_gen(self) -> None:
         """No ``Pseudo`` operands survive pseudo-replacement for a shift instruction."""
@@ -923,7 +936,7 @@ class TestCmpFixup:
         result = generate(_relational_tac_program(tac.Equal(), tac.Var("a"), tac.Var("b")))
         for instr in result.definitions[0].instructions:
             if isinstance(instr, asm.Cmp):
-                assert not (isinstance(instr.op1, asm.Stack) and isinstance(instr.op2, asm.Stack)), (
+                assert not (isinstance(instr.op1, asm.Memory) and isinstance(instr.op2, asm.Memory)), (
                     "Cmp(mem, mem) survived fixup"
                 )
 
@@ -935,7 +948,7 @@ class TestCmpFixup:
         assert len(cmp_instrs) == 1
         cmp = cmp_instrs[0]
         assert cmp.op2 == asm.Register(asm.Registers.R11), "op2 should be routed through R11"
-        assert isinstance(cmp.op1, asm.Stack), "op1 (Stack) should be unchanged"
+        assert isinstance(cmp.op1, asm.Memory), "op1 (Memory) should be unchanged"
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +997,7 @@ def _fn_instructions_with_table(program: tac.Program, symbol_table: SymbolTable)
 
 
 class TestStaticVariablePseudoReplacement:
-    """``tac.Var`` references to static-variable names become ``asm.Data``, not ``asm.Stack``."""
+    """``tac.Var`` references to static-variable names become ``asm.Data``, not ``asm.Memory``."""
 
     def test_static_var_read_produces_data_operand(self) -> None:
         """Returning a static variable uses ``asm.Data`` as the source operand."""
@@ -1022,11 +1035,11 @@ class TestStaticVariablePseudoReplacement:
         )
         instrs = _fn_instructions(program)
         # "local" must occupy a stack slot.
-        assert any(isinstance(i, asm.Mov) and isinstance(i.dst, asm.Stack) for i in instrs)
+        assert any(isinstance(i, asm.Mov) and isinstance(i.dst, asm.Memory) for i in instrs)
         # There must be no stack slot at -8 (which would indicate two locals were allocated,
         # meaning "g" was wrongly treated as a local alongside "local").
         all_stack_offsets = {
-            op.offset for i in instrs if isinstance(i, asm.Mov) for op in (i.src, i.dst) if isinstance(op, asm.Stack)
+            op.offset for i in instrs if isinstance(i, asm.Mov) for op in (i.src, i.dst) if isinstance(op, asm.Memory)
         }
         assert -8 not in all_stack_offsets, "static 'g' was incorrectly assigned a local stack slot"
 
@@ -1049,7 +1062,7 @@ class TestStaticVariablePseudoReplacement:
 
 
 class TestDataOperandFixup:
-    """``_fix_instructions`` treats ``asm.Data`` as a memory operand, the same as ``asm.Stack``."""
+    """``_fix_instructions`` treats ``asm.Data`` as a memory operand, the same as ``asm.Memory``."""
 
     def test_mov_data_data_no_mem_mem_after_fixup(self) -> None:
         """``Copy(static_x, static_y)`` produces no ``Mov(mem, mem)`` after fixup."""
@@ -1064,7 +1077,7 @@ class TestDataOperandFixup:
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Mov):
                 assert not (
-                    isinstance(instr.src, (asm.Stack, asm.Data)) and isinstance(instr.dst, (asm.Stack, asm.Data))
+                    isinstance(instr.src, (asm.Memory, asm.Data)) and isinstance(instr.dst, (asm.Memory, asm.Data))
                 ), "Mov(mem, mem) survived fixup"
 
     def test_mov_data_stack_no_mem_mem_after_fixup(self) -> None:
@@ -1079,7 +1092,7 @@ class TestDataOperandFixup:
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Mov):
                 assert not (
-                    isinstance(instr.src, (asm.Stack, asm.Data)) and isinstance(instr.dst, (asm.Stack, asm.Data))
+                    isinstance(instr.src, (asm.Memory, asm.Data)) and isinstance(instr.dst, (asm.Memory, asm.Data))
                 ), "Mov(mem, mem) survived fixup"
 
     def test_mov_stack_data_no_mem_mem_after_fixup(self) -> None:
@@ -1094,7 +1107,7 @@ class TestDataOperandFixup:
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Mov):
                 assert not (
-                    isinstance(instr.src, (asm.Stack, asm.Data)) and isinstance(instr.dst, (asm.Stack, asm.Data))
+                    isinstance(instr.src, (asm.Memory, asm.Data)) and isinstance(instr.dst, (asm.Memory, asm.Data))
                 ), "Mov(mem, mem) survived fixup"
 
     def test_cmp_data_op1_routed_through_r10(self) -> None:
@@ -1114,7 +1127,7 @@ class TestDataOperandFixup:
         )
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Cmp):
-                assert not isinstance(instr.op1, (asm.Stack, asm.Data)), "memory op1 survived Cmp fixup"
+                assert not isinstance(instr.op1, (asm.Memory, asm.Data)), "memory op1 survived Cmp fixup"
 
 
 # ---------------------------------------------------------------------------
@@ -1166,7 +1179,7 @@ class TestPushMemOperandFixup:
         program = _seven_arg_call_program(seventh_arg=tac.Var("x"))
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Push):
-                assert not isinstance(instr.operand, (asm.Stack, asm.Data)), (
+                assert not isinstance(instr.operand, (asm.Memory, asm.Data)), (
                     "Push(mem) survived fixup — should be expanded through %eax/%rax"
                 )
 
@@ -1176,7 +1189,7 @@ class TestPushMemOperandFixup:
         program = _seven_arg_call_program(static, seventh_arg=tac.Var("g"))
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Push):
-                assert not isinstance(instr.operand, (asm.Stack, asm.Data)), (
+                assert not isinstance(instr.operand, (asm.Memory, asm.Data)), (
                     "Push(Data) survived fixup — should be expanded through %eax/%rax"
                 )
 

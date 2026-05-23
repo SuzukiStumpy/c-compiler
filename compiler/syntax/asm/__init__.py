@@ -33,23 +33,24 @@ for the supported assembly subset:
                         | Ret
                         | Cvttsd2si(assembly_type dst_type, operand src, operand dst)
                         | Cvtsi2sd(assembly_type src_type, operand src, operand dst)
+                        | Lea(operand src, operand dst)
     unary_operator      = Neg | Not
     binary_operator     = Add | Sub | Mult | And | Or | Xor
                         | AddDouble | SubDouble | MultDouble | DivDouble | XorDouble
     operand             = Imm(int)
                         | Register(reg)
                         | Pseudo(identifier)
-                        | Stack(int)
+                        | Memory(reg, int)
                         | Data(identifier)
     cond_code           = E | NE | G | GE | L | LE | A | AE | B | BE
-    reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP
+    reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP | BP
                         | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7
                         | XMM14 | XMM15
 
 Nodes are organised into submodules by logical role:
 
     operators     — Unary operator nodes (UnaryOperator, Neg, Not)
-    operands      — Operand nodes (Operand, Imm, Register, Pseudo, Stack)
+    operands      — Operand nodes (Operand, Imm, Register, Pseudo, Memory)
     instructions  — Instruction nodes (Instruction, Mov, Ret, Unary, Binary, Cdq, Idiv, AllocateStack)
     declarations  — Program structure nodes (Function, Program)
 
@@ -64,7 +65,7 @@ base.  All nodes are immutable — once constructed an assembly AST node cannot 
 modified.
 
 ``Pseudo`` operands are an intermediate form used during code generation and must
-be replaced by ``Stack`` operands before the assembly is emitted.
+be replaced by ``Memory`` operands before the assembly is emitted.
 """
 
 from compiler.syntax.asm.declarations import Function, Program, StaticConstant, StaticVariable, TopLevel
@@ -84,6 +85,7 @@ from compiler.syntax.asm.instructions import (
     Jmp,
     JmpCC,
     Label,
+    Lea,
     Mov,
     MoveZeroExtend,
     Movsx,
@@ -95,7 +97,7 @@ from compiler.syntax.asm.instructions import (
     Shr,
     Unary,
 )
-from compiler.syntax.asm.operands import Data, Imm, Operand, Pseudo, Register, Registers, Stack, Width
+from compiler.syntax.asm.operands import Data, Imm, Memory, Operand, Pseudo, Register, Registers, Width
 from compiler.syntax.asm.operators import (
     Add,
     AddDouble,
@@ -131,6 +133,7 @@ __all__ = [
     "Jmp",
     "JmpCC",
     "Label",
+    "Lea",
     "Mov",
     "MoveZeroExtend",
     "Movsx",
@@ -165,7 +168,7 @@ __all__ = [
     "Pseudo",
     "Register",
     "Registers",
-    "Stack",
+    "Memory",
     "Width",
     # declarations
     "Function",

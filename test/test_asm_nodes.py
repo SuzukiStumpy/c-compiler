@@ -20,6 +20,7 @@ from compiler.syntax.asm import (
     Jmp,
     JmpCC,
     Label,
+    Memory,
     Mov,
     Operand,
     Program,
@@ -28,7 +29,6 @@ from compiler.syntax.asm import (
     Registers,
     Ret,
     SetCC,
-    Stack,
     Width,
 )
 
@@ -291,7 +291,10 @@ class TestSetCC:
 
     def test_is_instruction(self) -> None:
         """``SetCC`` is a subclass of ``Instruction``."""
-        assert isinstance(SetCC(cond_code=CondCodes.E, operand=Stack(offset=-4)), Instruction)
+        assert isinstance(
+            SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)),
+            Instruction,
+        )
 
     def test_equality(self) -> None:
         """Two ``SetCC`` nodes with the same code and operand are equal."""
@@ -300,7 +303,7 @@ class TestSetCC:
 
     def test_inequality_different_cond_code(self) -> None:
         """``SetCC`` nodes with different condition codes are not equal."""
-        op = Stack(offset=-4)
+        op = Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)
         assert SetCC(cond_code=CondCodes.E, operand=op) != SetCC(cond_code=CondCodes.NE, operand=op)
 
 

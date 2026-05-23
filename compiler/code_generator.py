@@ -56,7 +56,7 @@ import itertools
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.syntax.ast.constants import ConstDouble, ConstInt, ConstLong, ConstUInt, ConstULong
-from compiler.syntax.ast.types import DoubleType, LongType, UIntType, ULongType
+from compiler.syntax.ast.types import DoubleType, LongType, Pointer, UIntType, ULongType
 from compiler.types.symbols import StaticAttr, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -122,7 +122,7 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
             return asm.AssemblyType.Double
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
             match symbol_table[name].t:
-                case LongType() | ULongType():
+                case LongType() | ULongType() | Pointer():
                     return asm.AssemblyType.Quadword
                 case DoubleType():
                     return asm.AssemblyType.Double
@@ -215,7 +215,7 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
                 fixed_fn = _fix_instructions(resolved_fn)
                 definitions.append(_add_stack_allocation(fixed_fn, stack_size))
             case tac.StaticVariable(name=name, globl=globl, t=t, init=init):
-                alignment = 8 if isinstance(t, (LongType, ULongType, DoubleType)) else 4
+                alignment = 8 if isinstance(t, (LongType, ULongType, DoubleType, Pointer)) else 4
                 definitions.append(
                     asm.StaticVariable(
                         identifier=name,
@@ -297,14 +297,14 @@ def _translate_function(
                 src: asm.Operand = asm.Register(_XMM_REGS[xmm_reg_idx], asm.Width.QWORD)
                 xmm_reg_idx += 1
             else:
-                src = asm.Stack(16 + 8 * stack_param_idx)
+                src = asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=16 + 8 * stack_param_idx)
                 stack_param_idx += 1
         else:
             if int_reg_idx < len(_ABI_REGS):
                 src = asm.Register(_ABI_REGS[int_reg_idx], _reg_width(at))
                 int_reg_idx += 1
             else:
-                src = asm.Stack(16 + 8 * stack_param_idx)
+                src = asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=16 + 8 * stack_param_idx)
                 stack_param_idx += 1
         instructions.append(asm.Mov(src=src, dst=asm.Pseudo(param), assembly_type=at))
 
@@ -629,6 +629,27 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
             return _translate_uint_to_double(src, dst, symbol_table)
         case tac.DoubleToUInt(src=src, dst=dst):
             return _translate_double_to_uint(src, dst, symbol_table, constants)
+        case tac.Load(src_ptr=src_ptr, dst=dst):
+            at = _asm_type(dst, symbol_table)
+            ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            return [
+                asm.Mov(src=_translate_val(src_ptr, constants), dst=ax, assembly_type=asm.AssemblyType.Quadword),
+                asm.Mov(src=asm.Memory(reg=ax, offset=0), dst=_translate_val(dst, constants), assembly_type=at),
+            ]
+        case tac.Store(src=src, dst_ptr=dst_ptr):
+            at = _asm_type(src, symbol_table)
+            ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            return [
+                asm.Mov(src=_translate_val(dst_ptr, constants), dst=ax, assembly_type=asm.AssemblyType.Quadword),
+                asm.Mov(src=_translate_val(src, constants), dst=asm.Memory(reg=ax, offset=0), assembly_type=at),
+            ]
+        case tac.GetAddress(src=src, dst=dst):
+            src_asm = _translate_val(src, constants)
+            if isinstance(src_asm, (asm.Imm, asm.Register)):
+                raise CodeGenerationError(
+                    f"GetAddress requires an addressable memory operand, got {type(src_asm).__name__}"
+                )
+            return [asm.Lea(src=src_asm, dst=_translate_val(dst, constants))]
         case _:
             raise CodeGenerationError(f"unsupported TAC instruction: {type(instr).__name__}")
 
@@ -1143,7 +1164,7 @@ def _translate_double_comparison(
 # ==============================================================================
 
 
-def _replace_pseudos(
+def _replace_pseudos(  # noqa: C901 - ignore complexity warning
     fn: asm.Function, static_names: frozenset[str], symbol_table: SymbolTable | None = None
 ) -> tuple[asm.Function, int]:
     """Replace every ``Pseudo`` operand with a concrete operand.
@@ -1182,11 +1203,11 @@ def _replace_pseudos(
         if operand.name not in pseudo_offsets:
             size = 4
             if symbol_table is not None and operand.name in symbol_table:
-                if isinstance(symbol_table[operand.name].t, (LongType, ULongType, DoubleType)):
+                if isinstance(symbol_table[operand.name].t, (LongType, ULongType, DoubleType, Pointer)):
                     size = 8
             next_offset[0] -= size
             pseudo_offsets[operand.name] = next_offset[0]
-        return asm.Stack(offset=pseudo_offsets[operand.name])
+        return asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=pseudo_offsets[operand.name])
 
     new_instructions: list[asm.Instruction] = []
     for instr in fn.instructions:
@@ -1221,6 +1242,8 @@ def _replace_pseudos(
                 new_instructions.append(asm.Push(operand=resolve(operand), assembly_type=at))
             case asm.Cvttsd2si(assembly_type=at, src=src, dst=dst) | asm.Cvtsi2sd(assembly_type=at, src=src, dst=dst):
                 new_instructions.append(type(instr)(src=resolve(src), dst=resolve(dst), assembly_type=at))
+            case asm.Lea(src=src, dst=dst):
+                new_instructions.append(asm.Lea(src=resolve(src), dst=resolve(dst)))
             case _:
                 new_instructions.append(instr)
 
@@ -1307,6 +1330,10 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
       into ``%r10`` first.
     * ``Push(mem)`` — ``pushq`` cannot address a memory slot directly; load
       into ``%eax``/``%rax`` first.
+    * ``Push(Double, Register)`` — ``pushq`` cannot encode an XMM register; expand
+      to ``subq $8, %rsp`` followed by ``movsd xmm, (%rsp)``.
+    * ``Lea(src, mem)`` — ``leaq`` destination must be a register; route through
+      ``%r11`` then store.
 
     Args:
         fn: The assembly function to fix up.
@@ -1316,8 +1343,8 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
     """
 
     def _is_mem(op: asm.Operand) -> bool:
-        """Return True when ``op`` is a memory address (Stack or Data)."""
-        return isinstance(op, (asm.Stack, asm.Data))
+        """Return True when ``op`` is a memory address (Memory or Data)."""
+        return isinstance(op, (asm.Memory, asm.Data))
 
     def _fits_in_int32(v: int) -> bool:
         """Return True when ``v`` is representable as a signed 32-bit integer."""
@@ -1447,6 +1474,13 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
                 fixed.append(asm.Push(operand=r10q, assembly_type=asm.AssemblyType.Quadword))
+            case asm.Push(assembly_type=asm.AssemblyType.Double, operand=asm.Register() as xmm_reg):
+                # pushq %xmmN is not encodable; write explicitly through the stack pointer.
+                rsp = asm.Register(asm.Registers.SP, asm.Width.QWORD)
+                fixed.append(asm.AllocateStack(8))
+                fixed.append(
+                    asm.Mov(src=xmm_reg, dst=asm.Memory(reg=rsp, offset=0), assembly_type=asm.AssemblyType.Double)
+                )
             case asm.Push(assembly_type=asm.AssemblyType.Double, operand=operand) if _is_mem(operand):
                 # movsd cannot move to a GP register, but the double's bits can be
                 # loaded as a raw quadword with movq and then pushed normally.
@@ -1459,6 +1493,11 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 ax = asm.Register(asm.Registers.AX, _reg_width(at))
                 fixed.append(asm.Mov(src=operand, dst=ax, assembly_type=at))
                 fixed.append(asm.Push(operand=asm.Register(asm.Registers.AX, asm.Width.QWORD), assembly_type=at))
+            case asm.Lea(src=src, dst=dst) if _is_mem(dst):
+                # leaq destination must be a register; route through %r11 then store.
+                r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+                fixed.append(asm.Lea(src=src, dst=r11q))
+                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
             case _:
                 fixed.append(instr)
     return asm.Function(name=fn.name, globl=fn.globl, params=fn.params, instructions=tuple(fixed))

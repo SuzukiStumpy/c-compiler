@@ -45,6 +45,7 @@ class Registers(Enum):
     R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.BYTE: "r10b"}
     R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.BYTE: "r11b"}
     SP = {Width.QWORD: "rsp", Width.DWORD: "rsp", Width.BYTE: "rsp"}
+    BP = {Width.QWORD: "rbp", Width.DWORD: "rbp", Width.BYTE: "rbp"}
     # SIMD floating-point registers — name is the same at every width.
     XMM0 = {Width.QWORD: "xmm0", Width.DWORD: "xmm0", Width.BYTE: "xmm0"}
     XMM1 = {Width.QWORD: "xmm1", Width.DWORD: "xmm1", Width.BYTE: "xmm1"}
@@ -123,7 +124,7 @@ class Pseudo(Operand):
     """A pseudo-register representing a named temporary variable.
 
     Pseudo-registers are produced by the initial TAC-to-assembly translation
-    pass and must be resolved to ``Stack`` operands by a subsequent fixup pass
+    pass and must be resolved to ``Memory`` operands by a subsequent fixup pass
     before emission.
 
     Attributes:
@@ -137,7 +138,7 @@ class Pseudo(Operand):
 
         Raises:
             AssertionError: Always — ``Pseudo`` operands must be replaced with
-                ``Stack`` operands by the pseudo-replacement pass before any
+                ``Memory`` operands by the pseudo-replacement pass before any
                 code is emitted.
 
         Returns:
@@ -147,8 +148,8 @@ class Pseudo(Operand):
 
 
 @dataclass(frozen=True, slots=True)
-class Stack(Operand):
-    """A stack memory operand at a fixed byte offset from ``%rbp``.
+class Memory(Operand):
+    """A memory operand at a fixed byte offset from the address stored in a given register.
 
     Used to represent local variables and temporaries after pseudo-register
     replacement.  Offsets are negative for variables in the current frame
@@ -158,6 +159,7 @@ class Stack(Operand):
         offset: The signed byte offset from ``%rbp``.
     """
 
+    reg: Register
     offset: int
 
     def emit(self) -> str:
@@ -166,7 +168,7 @@ class Stack(Operand):
         Returns:
             A string of the form ``<offset>(%rbp)``, e.g. ``-4(%rbp)``.
         """
-        return f"{self.offset}(%rbp)"
+        return f"{self.offset}({self.reg.emit()})"
 
 
 @dataclass(frozen=True, slots=True)

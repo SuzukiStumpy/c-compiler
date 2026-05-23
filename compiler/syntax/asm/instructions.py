@@ -652,3 +652,29 @@ class Cvtsi2sd(Instruction):
         """
         suffix = "l" if self.assembly_type == AssemblyType.Longword else "q"
         return f"  cvtsi2sd{suffix} {self.src.emit()}, {self.dst.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
+class Lea(Instruction):
+    """A ``leaq`` instruction that loads the effective address of a memory operand into a register.
+
+    Used to lower ``tac.GetAddress``: given a ``Memory`` operand that describes where a variable
+    lives in the current frame, ``leaq`` computes its address and writes the pointer value into
+    ``dst`` without performing a memory access.
+
+    Attributes:
+        src: The memory operand whose address is to be computed (e.g. ``-4(%rbp)``).
+        dst: The destination register that receives the computed address.
+    """
+
+    src: Operand
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``leaq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  leaq <src>, <dst>"``,
+            e.g. ``"  leaq -4(%rbp), %rax"``.
+        """
+        return f"  leaq {self.src.emit()}, {self.dst.emit()}"
