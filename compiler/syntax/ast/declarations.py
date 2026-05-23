@@ -12,7 +12,7 @@ from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from compiler.syntax.ast.expressions import Exp
+from compiler.syntax.ast.expressions import Exp, Initializer, SingleInit
 from compiler.syntax.ast.statements import Statement
 from compiler.syntax.ast.types import Type
 
@@ -30,16 +30,27 @@ class VariableDeclaration:
 
     Attributes:
         name: The name of the variable being declared.
-        init: The initialisation expression, or ``None`` if the variable is
-            declared without an initial value.
+        init: The initialiser — a ``SingleInit`` wrapping a scalar expression,
+            a ``CompoundInit`` for brace-enclosed aggregate initialisers, or
+            ``None`` if the variable is declared without an initial value.
         var_type: The type of this variable.
         storage_class: The storage class specifier, or ``None`` if omitted.
     """
 
     name: str
-    init: Exp | None
+    init: Initializer | None
     var_type: Type
     storage_class: StorageClass | None = None
+
+    def __post_init__(self) -> None:
+        """Wrap a bare ``Exp`` passed as ``init`` in a ``SingleInit`` node.
+
+        Allows callers that pre-date the ``Initializer`` wrapper (tests, semantic
+        analyser internals) to continue passing an ``Exp`` directly without
+        breaking the type contract.
+        """
+        if isinstance(self.init, Exp):
+            object.__setattr__(self, "init", SingleInit(exp=self.init))
 
 
 class Declaration(ABC):

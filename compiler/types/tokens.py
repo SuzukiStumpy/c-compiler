@@ -46,6 +46,8 @@ class TokenType(Enum):
     RPAREN = auto()
     LBRACE = auto()
     RBRACE = auto()
+    LBRACKET = auto()  # [
+    RBRACKET = auto()  # ]
     SEMICOLON = auto()
     # Boolean Operators
     BITWISE_NOT = auto()

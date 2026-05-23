@@ -21,11 +21,13 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Default(statement body, identifier)
                          | Null
     declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
-    variable_declaration = (identifier name, exp? init, type var_type, storage_class?)
+    variable_declaration = (identifier name, initializer? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
+    initializer          = SingleInit(exp) | CompoundInit(intializer*)
     type                 = Int | Long | UInt | ULong | Double
                          | FunType(type* params, type ret)
                          | Pointer(type referenced)
+                         | Array(type element, int size)
     storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
@@ -39,6 +41,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | FunctionCall(exp callee, exp* args)
                          | Dereference(exp)
                          | AddrOf(exp)
+                         | Subscript(exp, exp)
     unary_operator       = Complement | Negate | Not
                          | PreIncrement | PreDecrement
                          | PostIncrement | PostDecrement
@@ -110,11 +113,15 @@ from compiler.syntax.ast.expressions import (
     Assignment,
     Binary,
     Cast,
+    CompoundInit,
     Conditional,
     Constant,
     Dereference,
     Exp,
     FunctionCall,
+    Initializer,
+    SingleInit,
+    Subscript,
     Unary,
     Var,
 )
@@ -165,6 +172,7 @@ from compiler.syntax.ast.statements import (
     While,
 )
 from compiler.syntax.ast.types import (
+    Array,
     DoubleType,
     FunType,
     IntType,
@@ -177,6 +185,11 @@ from compiler.syntax.ast.types import (
 )
 
 __all__ = [
+    "Subscript",
+    "Array",
+    "Initializer",
+    "SingleInit",
+    "CompoundInit",
     "Dereference",
     "AddrOf",
     "Pointer",

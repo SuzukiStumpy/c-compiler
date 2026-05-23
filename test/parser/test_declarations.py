@@ -18,6 +18,7 @@ from compiler.syntax.ast import (
     Program,
     Return,
     S,
+    SingleInit,
     StorageClass,
     Unary,
     VarDecl,
@@ -509,7 +510,7 @@ class TestStorageClassSpecifiers:
         assert isinstance(decl, VarDecl)
         vd = decl.variable_declaration
         assert vd.storage_class == StorageClass.Static
-        assert vd.init == Constant(ConstInt(5))
+        assert vd.init == SingleInit(exp=Constant(ConstInt(5)))
 
     def test_static_function_forward_declaration(self) -> None:
         """``static int foo(void);`` → ``FunDecl`` whose ``Function`` carries ``StorageClass.Static``."""
@@ -728,7 +729,7 @@ class TestPointerVariableDeclarations:
         assert isinstance(decl, VarDecl)
         vd = decl.variable_declaration
         assert vd.var_type == Pointer(IntType())
-        assert vd.init == Constant(ConstInt(0))
+        assert vd.init == SingleInit(exp=Constant(ConstInt(0)))
 
     def test_pointer_with_storage_class(self) -> None:
         """``static int *p;`` — pointer with storage-class specifier."""
@@ -941,7 +942,7 @@ class TestFunctionPointerDeclarations:
         assert isinstance(decl, VarDecl)
         vd = decl.variable_declaration
         assert vd.var_type == Pointer(FunType(params=(IntType(), IntType()), ret=IntType()))
-        assert vd.init == Var("add")
+        assert vd.init == SingleInit(exp=Var("add"))
 
     def test_function_pointer_param_with_pointer_param(self) -> None:
         """``int (*ptr)(int *)`` — function pointer whose param is itself a pointer."""

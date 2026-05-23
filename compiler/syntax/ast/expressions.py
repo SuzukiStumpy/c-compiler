@@ -163,3 +163,45 @@ class AddrOf(Exp):
     """
 
     exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class Subscript(Exp):
+    """Represents a subscripted expression in the C code of the form:
+    ```exp1[exp2]```
+
+    Attributes:
+        exp1: The first (outer) subexpression
+        exp2: The second (inner) subexpression
+    """
+
+    exp1: Exp
+    exp2: Exp
+
+
+class Initializer(ABC):
+    """Abstract base for initializer objects.  Wraps the SingleInit and CompoundInit
+    AST Nodes
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class SingleInit(Initializer):
+    """Represents a variable initializer for a scalar variable type
+
+    Attributes:
+        exp: The expression with which we are initialising the variable
+    """
+
+    exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class CompoundInit(Initializer):
+    """Represents a variable initializer for compound variable types
+
+    Attributes:
+        initializers: An ordered list of initializations (could be empty)
+    """
+
+    initializers: list[Initializer]

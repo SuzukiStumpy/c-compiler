@@ -6,10 +6,12 @@ which are handled by precedence climbing.  The grammar is:
     program              ::= {declaration}
     declaration          ::= variable-declaration | function-declaration
     function-declaration ::= {specifier}+ declarator "(" param-list ")" (block | ";")
-    variable-declaration ::= {specifier}+ declarator ["=" exp] ";"
+    variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
     declarator           ::= "*" declarator | direct-declarator
-    direct-declarator    ::= simple-declarator [param-list]
+    direct-declarator    ::= simple-declarator [declarator-suffix]
+    declarator-suffix    ::= param-list | {"[" const "]"}+
     simple-declarator    ::= identifier | "(" declarator ")"
+    initializer          ::= "{" initializer {"," initializer} [","] "}" | exp
     param-list           ::= "(" "void" ")" | "(" param {"," param} ")"
     param                ::= {type-specifier}+ declarator
                            | {type-specifier}+ abstract-declarator
@@ -42,10 +44,12 @@ which are handled by precedence climbing.  The grammar is:
                            | "(" {type-specifier}+ [abstract-declarator] ")" factor
                            | "(" exp ")"
                            | identifier "(" [argument-list] ")"
+    postfix-exp          ::= primary {"[" exp "]"}
     argument-list        ::= exp {"," exp}
     abstract-declarator  ::= "*" [abstract-declarator]
                            | direct-abstract-declarator
-    direct-abstract-declarator ::= "(" abstract-declarator ")"
+    direct-abstract-declarator ::= "(" abstract-declarator ")" {"[" const "]"}
+                           | {"[" const "]"}+
     prefix_unop          ::= "-" | "~" | "!" | "++" | "--" | "*" | "&"
     postfix_unop         ::= "++" | "--"
     binop                ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
@@ -75,6 +79,7 @@ from compiler.syntax.ast import (
     Add,
     AddrOf,
     And,
+    Array,
     Assignment,
     Binary,
     BinaryOperator,
@@ -88,6 +93,7 @@ from compiler.syntax.ast import (
     Cast,
     Complement,
     Compound,
+    CompoundInit,
     Conditional,
     Constant,
     ConstDouble,
@@ -118,6 +124,7 @@ from compiler.syntax.ast import (
     If,
     InitDecl,
     InitExp,
+    Initializer,
     IntType,
     Label,
     LeftShift,
@@ -141,8 +148,10 @@ from compiler.syntax.ast import (
     Return,
     RightShift,
     S,
+    SingleInit,
     Statement,
     StorageClass,
+    Subscript,
     Subtract,
     Switch,
     Type,
@@ -668,7 +677,8 @@ class Parser:
 
         Grammar::
 
-            direct-declarator ::= simple-declarator [param-list]
+            direct-declarator ::= simple-declarator [declarator-suffix]
+            declarator-suffix  ::= param-list | {"[" const "]"}+
 
         Mirrors ``_parse_direct_declarator`` with optional-name semantics.
 
@@ -681,6 +691,20 @@ class Parser:
         """
         name, simple_transform, simple_params = self._parse_param_simple_declarator()
 
+        if self._match(TokenType.LBRACKET):
+            sizes: list[int] = []
+            while self._match(TokenType.LBRACKET):
+                self._consume()  # consume "["
+                sizes.append(self._parse_array_dimension())
+                self._expect(TokenType.RBRACKET)
+
+            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int] = sizes) -> Type:
+                for size in reversed(_sizes):
+                    t = Array(t, size)
+                return _st(t)
+
+            return name, _arr, None
+
         if not self._match(TokenType.LPAREN):
             return name, simple_transform, simple_params
 
@@ -688,6 +712,12 @@ class Parser:
             tok = self._peek()
             display = name or "<unnamed>"
             msg = f"'{display}' declared as function returning a function"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+
+        if isinstance(simple_transform(FunType(params=(), ret=IntType())), Array):
+            tok = self._peek()
+            display = name or "<unnamed>"
+            msg = f"'{display}' declared as array of functions"
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
 
         self._consume()  # consume "("
@@ -779,9 +809,10 @@ class Parser:
 
             declaration          ::= variable-declaration | function-declaration
             function-declaration ::= {specifier}+ declarator (block | ";")
-            variable-declaration ::= {specifier}+ declarator ["=" exp] ";"
+            variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
             declarator           ::= "*" declarator | direct-declarator
-            direct-declarator    ::= simple-declarator [param-list]
+            direct-declarator    ::= simple-declarator [declarator-suffix]
+            declarator-suffix    ::= param-list | {"[" const "]"}+
             simple-declarator    ::= identifier | "(" declarator ")"
             specifier            ::= type-specifier | "static" | "extern"
 
@@ -819,10 +850,10 @@ class Parser:
                     storage_class=storage,
                 )
             )
-        init: Exp | None = None
+        init: Initializer | None = None
         if self._match(TokenType.ASSIGNMENT):
             self._consume()
-            init = self._parse_exp()
+            init = self._parse_initializer()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
             variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
@@ -854,12 +885,43 @@ class Parser:
         self._expect(terminator)
         return exp
 
+    def _parse_initializer(self) -> Initializer:
+        """Parse a variable initialiser: either a brace-enclosed compound or a scalar expression.
+
+        Grammar::
+
+            initializer ::= "{" initializer {"," initializer} [","] "}" | exp
+
+        Returns:
+            A ``CompoundInit`` node for brace-enclosed initialisers, or a
+            ``SingleInit`` node wrapping the parsed expression.
+
+        Raises:
+            ParseError: If the initialiser is malformed.
+        """
+        if self._match(TokenType.LBRACE):
+            self._consume()
+            if self._match(TokenType.RBRACE):
+                tok = self._peek()
+                msg = "empty initializer list is not permitted in C11"
+                raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+            initializers: list[Initializer] = []
+            initializers.append(self._parse_initializer())
+            while self._match(TokenType.COMMA):
+                self._consume()
+                if self._match(TokenType.RBRACE):  # trailing comma
+                    break
+                initializers.append(self._parse_initializer())
+            self._expect(TokenType.RBRACE)
+            return CompoundInit(initializers=initializers)
+        return SingleInit(exp=self._parse_exp())
+
     def _parse_variable_declaration(self) -> VarDecl:
         """Parse a variable declaration with an optional initialiser.
 
         Grammar::
 
-            variable-declaration ::= {specifier}+ declarator ["=" exp] ";"
+            variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
 
         Storage-class specifiers are parsed and recorded on the resulting
         ``VariableDeclaration``.  A function declarator is rejected immediately
@@ -879,10 +941,10 @@ class Parser:
             err_tok = self._last
             msg = "function declarations are not permitted in for-loop initialisers"
             raise self._token_error(msg, err_tok) if err_tok is not None else self._eof_error(msg)
-        init: Exp | None = None
+        init: Initializer | None = None
         if self._match(TokenType.ASSIGNMENT):
             self._consume()
-            init = self._parse_exp()
+            init = self._parse_initializer()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
             variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
@@ -1231,7 +1293,11 @@ class Parser:
                 if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
                     self._consume()  # consume "("
                     base_cast_type = self._parse_type()
-                    if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN):
+                    if (
+                        self._match(TokenType.ASTERISK)
+                        or self._match(TokenType.LPAREN)
+                        or self._match(TokenType.LBRACKET)
+                    ):
                         target_type: Type = self._parse_abstract_declarator()(base_cast_type)
                     else:
                         target_type = base_cast_type
@@ -1251,6 +1317,11 @@ class Parser:
             elif self._match(TokenType.DECREMENT):
                 self._consume()
                 primary = Unary(PostDecrement(), primary)
+            elif self._match(TokenType.LBRACKET):
+                self._consume()
+                index = self._parse_exp()
+                self._expect(TokenType.RBRACKET)
+                primary = Subscript(exp1=primary, exp2=index)
             else:
                 return primary
 
@@ -1384,18 +1455,20 @@ class Parser:
 
             abstract-declarator          ::= "*" [abstract-declarator]
                                            | direct-abstract-declarator
-            direct-abstract-declarator   ::= "(" abstract-declarator ")"
+            direct-abstract-declarator   ::= "(" abstract-declarator ")" {"[" const "]"}
+                                           | {"[" const "]"}+
 
         Returns:
             A callable that maps the base type to the fully-derived type.
-            For example, ``*`` applied to ``IntType()`` yields ``Pointer(IntType())``.
+            For example, ``*`` applied to ``IntType()`` yields ``Pointer(IntType())``,
+            and ``(*)[3]`` applied to ``IntType()`` yields ``Pointer(Array(IntType(), 3))``.
 
         Raises:
             ParseError: If the abstract declarator is malformed.
         """
         if self._match(TokenType.ASTERISK):
             self._consume()
-            if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN):
+            if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
                 inner = self._parse_abstract_declarator()
 
                 def _ptr_inner(t: Type, _i: Callable[[Type], Type] = inner) -> Type:
@@ -1403,10 +1476,43 @@ class Parser:
 
                 return _ptr_inner
             return lambda t: Pointer(t)
-        self._expect(TokenType.LPAREN)
-        inner = self._parse_abstract_declarator()
-        self._expect(TokenType.RPAREN)
-        return inner
+
+        if self._match(TokenType.LPAREN):
+            self._consume()
+            inner = self._parse_abstract_declarator()
+            self._expect(TokenType.RPAREN)
+            if not self._match(TokenType.LBRACKET):
+                return inner
+            suffix_sizes: list[int] = []
+            while self._match(TokenType.LBRACKET):
+                self._consume()
+                suffix_sizes.append(self._parse_array_dimension())
+                self._expect(TokenType.RBRACKET)
+
+            def _parens_arr(t: Type, _i: Callable[[Type], Type] = inner, _sizes: list[int] = suffix_sizes) -> Type:
+                for size in reversed(_sizes):
+                    t = Array(t, size)
+                return _i(t)
+
+            return _parens_arr
+
+        bare_sizes: list[int] = []
+        while self._match(TokenType.LBRACKET):
+            self._consume()
+            bare_sizes.append(self._parse_array_dimension())
+            self._expect(TokenType.RBRACKET)
+
+        if not bare_sizes:
+            tok = self._peek()
+            msg = "expected abstract declarator ('*', '(', or '[')"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+
+        def _bare_arr(t: Type, _sizes: list[int] = bare_sizes) -> Type:
+            for size in reversed(_sizes):
+                t = Array(t, size)
+            return t
+
+        return _bare_arr
 
     def _parse_simple_declarator(self) -> tuple[str, Callable[[Type], Type], tuple[Parameter, ...] | None]:
         """Parse a simple-declarator: an identifier or a parenthesised declarator.
@@ -1434,12 +1540,44 @@ class Parser:
         name_token = self._expect(TokenType.IDENTIFIER)
         return name_token.value, lambda t: t, None
 
+    def _parse_array_dimension(self) -> int:
+        """Parse a single array dimension from a ``[`` ``]`` declarator suffix.
+
+        Expects the opening ``[`` to have been consumed already.  Reads an
+        integer constant (plain, ``l``/``L``, ``u``/``U``, or ``ul``/``UL``
+        suffix) and leaves the stream positioned at the closing ``]``, which
+        the caller must consume via ``_expect``.
+
+        Returns:
+            The dimension size as a Python ``int``.
+
+        Raises:
+            ParseError: If the dimension is missing or is not an integer constant.
+        """
+        tok = self._peek()
+        if tok is None:
+            raise self._eof_error("Expected array size")
+        match tok.type:
+            case TokenType.NUMBER:
+                val = int(tok.value)
+            case TokenType.LONGINT:
+                val = int(tok.value.rstrip("lL"))
+            case TokenType.UINT:
+                val = int(tok.value.rstrip("uU"))
+            case TokenType.ULONG:
+                val = int(tok.value.rstrip("uUlL"))
+            case _:
+                raise self._token_error("Array size must be an integer constant", tok)
+        self._consume()
+        return val
+
     def _parse_direct_declarator(self) -> tuple[str, Callable[[Type], Type], tuple[Parameter, ...] | None]:
         """Parse a direct-declarator.
 
         Grammar::
 
-            direct-declarator ::= simple-declarator [param-list]
+            direct-declarator ::= simple-declarator [declarator-suffix]
+            declarator-suffix  ::= param-list | {"[" const "]"}+
 
         A function declarator nested inside a parenthesised simple-declarator that
         is itself followed by a param-list would produce a function-returning-function
@@ -1456,6 +1594,20 @@ class Parser:
         """
         name, simple_transform, simple_params = self._parse_simple_declarator()
 
+        if self._match(TokenType.LBRACKET):
+            sizes: list[int] = []
+            while self._match(TokenType.LBRACKET):
+                self._consume()  # consume "["
+                sizes.append(self._parse_array_dimension())
+                self._expect(TokenType.RBRACKET)
+
+            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int] = sizes) -> Type:
+                for size in reversed(_sizes):
+                    t = Array(t, size)
+                return _st(t)
+
+            return name, _arr, simple_params
+
         if not self._match(TokenType.LPAREN):
             return name, simple_transform, simple_params
 
@@ -1465,6 +1617,13 @@ class Parser:
         if simple_params is not None:
             tok = self._peek()
             msg = f"'{name}' declared as function returning a function"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+
+        # If the simple-declarator's transform wraps the result in an Array, applying
+        # a function suffix would yield an array-of-functions type, which C forbids.
+        if isinstance(simple_transform(FunType(params=(), ret=IntType())), Array):
+            tok = self._peek()
+            msg = f"'{name}' declared as array of functions"
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
 
         self._consume()  # consume "("

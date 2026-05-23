@@ -92,6 +92,19 @@ class Pointer(Type):
     referenced: Type
 
 
+@dataclass(frozen=True, slots=True)
+class Array(Type):
+    """Represents an array within the C code
+
+    Attributes:
+        element: The type of element within the array
+        size: The size of each element within the array
+    """
+
+    element: Type
+    size: int
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 §6.2.2).
 

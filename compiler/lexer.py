@@ -40,6 +40,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("RPAREN", r"\)"),
     ("LBRACE", r"\{"),
     ("RBRACE", r"}"),
+    ("LBRACKET", r"\["),
+    ("RBRACKET", r"]"),
     ("SEMICOLON", r";"),
     ("COMMA", r","),
     # Multi-char tokens containing '=' must precede the single '=' ASSIGNMENT token

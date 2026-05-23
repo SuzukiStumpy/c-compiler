@@ -25,6 +25,7 @@ from compiler.syntax.ast import (
     Null,
     Return,
     S,
+    SingleInit,
     StorageClass,
     Switch,
     VarDecl,
@@ -350,7 +351,7 @@ class TestCompoundStatements:
                 D(
                     declaration=VarDecl(
                         variable_declaration=VariableDeclaration(
-                            name="x", init=Constant(ConstInt(1)), var_type=IntType()
+                            name="x", init=SingleInit(exp=Constant(ConstInt(1))), var_type=IntType()
                         )
                     )
                 ),
@@ -375,7 +376,7 @@ class TestCompoundStatements:
                 D(
                     declaration=VarDecl(
                         variable_declaration=VariableDeclaration(
-                            name="x", init=Constant(ConstInt(1)), var_type=IntType()
+                            name="x", init=SingleInit(exp=Constant(ConstInt(1))), var_type=IntType()
                         )
                     )
                 ),
@@ -685,7 +686,9 @@ class TestForStatements:
         assert result == For(
             init=InitDecl(
                 declaration=VarDecl(
-                    variable_declaration=VariableDeclaration(name="i", init=Constant(ConstInt(0)), var_type=IntType())
+                    variable_declaration=VariableDeclaration(
+                        name="i", init=SingleInit(exp=Constant(ConstInt(0))), var_type=IntType()
+                    )
                 )
             ),
             condition=Binary(LessThan(), Var("i"), Constant(ConstInt(10))),
@@ -761,7 +764,9 @@ class TestForStatements:
         assert result == For(
             init=InitDecl(
                 declaration=VarDecl(
-                    variable_declaration=VariableDeclaration(name="i", init=Constant(ConstInt(0)), var_type=IntType())
+                    variable_declaration=VariableDeclaration(
+                        name="i", init=SingleInit(exp=Constant(ConstInt(0))), var_type=IntType()
+                    )
                 )
             ),
             condition=None,
@@ -789,7 +794,9 @@ class TestForStatements:
         assert result == For(
             init=InitDecl(
                 declaration=VarDecl(
-                    variable_declaration=VariableDeclaration(name="i", init=Constant(ConstInt(0)), var_type=IntType())
+                    variable_declaration=VariableDeclaration(
+                        name="i", init=SingleInit(exp=Constant(ConstInt(0))), var_type=IntType()
+                    )
                 )
             ),
             condition=Binary(LessThan(), Var("i"), Constant(ConstInt(10))),
