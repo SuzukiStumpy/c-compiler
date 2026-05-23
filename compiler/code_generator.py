@@ -57,7 +57,7 @@ import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.syntax.ast.constants import ConstDouble, ConstInt, ConstLong, ConstUInt, ConstULong
 from compiler.syntax.ast.types import DoubleType, LongType, Pointer, UIntType, ULongType
-from compiler.types.symbols import StaticAttr, SymbolTable
+from compiler.types.symbols import FunAttr, StaticAttr, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
 # System V AMD64 ABI integer argument registers, in order.
@@ -197,7 +197,7 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
     # Names from the symbol table for NoInitializer (extern-only) declarations that
     # produce no tac.StaticVariable but must still be addressed via Data operands.
     sym_static_names: frozenset[str] = (
-        frozenset(name for name, entry in symbol_table.items() if isinstance(entry.attrs, StaticAttr))
+        frozenset(name for name, entry in symbol_table.items() if isinstance(entry.attrs, (StaticAttr, FunAttr)))
         if symbol_table is not None
         else frozenset()
     )
@@ -552,8 +552,19 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
                 asm.JmpCC(asm.CondCodes.NE, target),
             ]
         case tac.Copy(src=src, dst=dst):
+            src_asm = _translate_val(src, constants)
+            dst_asm = _translate_val(dst, constants)
+            # A function name used as a value carries its address, not a dereferenceable word;
+            # use Lea so the emitter produces leaq <fn>(%rip), <dst> rather than a movq.
+            if (
+                isinstance(src, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].attrs, FunAttr)
+            ):
+                return [asm.Lea(src=src_asm, dst=dst_asm)]
             at = _asm_type(src, symbol_table)
-            return [asm.Mov(src=_translate_val(src, constants), dst=_translate_val(dst, constants), assembly_type=at)]
+            return [asm.Mov(src=src_asm, dst=dst_asm, assembly_type=at)]
         case tac.Label(name=name):
             return [asm.Label(name)]
         case tac.Unary(operator=op, src=src, dst=dst):
@@ -830,9 +841,9 @@ def _translate_funcall(
     ``%eax``/``%rax`` (integer) into ``dst``.
 
     Args:
-        fun_val: The TAC value identifying the callable.  Must be a ``Var`` whose name
-            resolves to a function symbol; indirect calls through pointer variables are
-            not yet supported at the assembly level.
+        fun_val: The TAC value identifying the callable.  Must be a ``Var``.  When its
+            symbol table entry carries ``FunAttr`` a direct ``call`` is emitted; otherwise
+            the pointer value is loaded into ``%r10`` and an indirect ``call *%r10`` is used.
         args: The ordered list of TAC argument values.
         dst: The assembly operand that receives the return value.
         symbol_table: Used to derive assembly types for variable arguments.
@@ -842,11 +853,12 @@ def _translate_funcall(
         A list of ``asm.Instruction`` nodes implementing the call site.
 
     Raises:
-        CodeGenerationError: If ``fun_val`` is not a ``Var`` (indirect calls not yet lowered).
+        CodeGenerationError: If ``fun_val`` is not a ``Var``.
     """
     if not isinstance(fun_val, tac.Var):
-        raise CodeGenerationError("Indirect function calls through non-Var fun_val are not yet supported.")
+        raise CodeGenerationError("fun_val must be a Var.")
     name = fun_val.value
+    is_direct = symbol_table is not None and name in symbol_table and isinstance(symbol_table[name].attrs, FunAttr)
     instrs: list[asm.Instruction] = []
 
     # Classify each argument and assign it to a register or the stack.
@@ -903,7 +915,14 @@ def _translate_funcall(
             )
         )
 
-    instrs.append(asm.Call(name))
+    if is_direct:
+        instrs.append(asm.Call(name))
+    else:
+        r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+        instrs.append(
+            asm.Mov(src=_translate_val(fun_val, constants), dst=r10q, assembly_type=asm.AssemblyType.Quadword)
+        )
+        instrs.append(asm.IndirectCall(target=r10q))
 
     # Reclaim stack space used for stack-passed args and any alignment padding.
     bytes_to_free = 8 * len(stack_args) + (8 if needs_padding else 0)

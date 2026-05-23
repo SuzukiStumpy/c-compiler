@@ -599,6 +599,28 @@ class Call(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class IndirectCall(Instruction):
+    """A ``call`` instruction that transfers control through a register or memory operand.
+
+    Used to lower calls through function pointer variables.  The target operand holds
+    the run-time address of the callee, so the emitted form is ``call *<target>``.
+
+    Attributes:
+        target: The operand containing the function pointer value (typically a register).
+    """
+
+    target: Operand
+
+    def emit(self) -> str:
+        """Return an indirect ``call`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  call *<target>"``, e.g. ``"  call *%r10"``.
+        """
+        return f"  call *{self.target.emit()}"
+
+
+@dataclass(frozen=True, slots=True)
 class Cvttsd2si(Instruction):
     """A ``cvttsd2sil``/``cvttsd2siq`` instruction that truncates a scalar double to a signed integer.
 
