@@ -608,8 +608,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
                     ]
         case tac.Binary(operator=op, src1=src1, src2=src2, dst=dst):
             return _translate_binary(op, src1, src2, dst, symbol_table, constants)
-        case tac.FunCall(name=name, args=args, dst=dst):
-            return _translate_funcall(name, list(args), _translate_val(dst), symbol_table, constants)
+        case tac.FunCall(fun_val=fun_val, args=args, dst=dst):
+            return _translate_funcall(fun_val, list(args), _translate_val(dst), symbol_table, constants)
         case tac.SignExtend(src=src, dst=dst):
             return [asm.Movsx(src=_translate_val(src), dst=_translate_val(dst))]
         case tac.ZeroExtend(src=src, dst=dst):
@@ -791,7 +791,7 @@ def _translate_double_to_uint(
 
 
 def _translate_funcall(
-    name: str,
+    fun_val: tac.Val,
     args: list[tac.Val],
     dst: asm.Operand,
     symbol_table: SymbolTable | None = None,
@@ -809,7 +809,9 @@ def _translate_funcall(
     ``%eax``/``%rax`` (integer) into ``dst``.
 
     Args:
-        name: The symbol name of the function to call.
+        fun_val: The TAC value identifying the callable.  Must be a ``Var`` whose name
+            resolves to a function symbol; indirect calls through pointer variables are
+            not yet supported at the assembly level.
         args: The ordered list of TAC argument values.
         dst: The assembly operand that receives the return value.
         symbol_table: Used to derive assembly types for variable arguments.
@@ -817,7 +819,13 @@ def _translate_funcall(
 
     Returns:
         A list of ``asm.Instruction`` nodes implementing the call site.
+
+    Raises:
+        CodeGenerationError: If ``fun_val`` is not a ``Var`` (indirect calls not yet lowered).
     """
+    if not isinstance(fun_val, tac.Var):
+        raise CodeGenerationError("Indirect function calls through non-Var fun_val are not yet supported.")
+    name = fun_val.value
     instrs: list[asm.Instruction] = []
 
     # Classify each argument and assign it to a register or the stack.

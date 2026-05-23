@@ -32,6 +32,15 @@ The translation follows this mapping:
                                                Copy(1, tmp), Jump(end_lbl),
                                                false_lbl, Copy(0, tmp), end_lbl]
                                             returns tmp as the result val
+    ast.AddrOf(Dereference(inner))        → <emit(inner)>   (&* cancels out)
+    ast.AddrOf(Var(name))                 → [GetAddress(Var(name), tmp)]
+                                            returns tmp (pointer-typed)
+    ast.Dereference(inner)                → <emit(inner)>
+                                            + [Load(inner_val, tmp)]
+                                            returns tmp
+    ast.Assignment(Dereference(ptr_exp),  → <emit(rvalue)> + <emit(ptr_exp)>
+                   rvalue)                  + [Store(rval, ptr_val)]
+                                            returns rval
     ast.Binary(Or, l, r)                  → <emit(l)>
                                             + [JumpIfNotZero(l_val, true_lbl)]
                                             + <emit(r)>
@@ -260,37 +269,42 @@ def _translate_unary_op(op: ast.UnaryOperator) -> tac.UnaryOperator:
 def _type_size(t: ast.Type) -> int:
     """Return the size in bytes of a C type.
 
+    Pointer types are treated as pointer-sized (8 bytes), identical to ``unsigned long``.
+
     Args:
         t: The C type whose size is required.
 
     Returns:
-        4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``.
+        4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``/any pointer type.
 
     Raises:
-        CodeGenerationError: If the type is not a scalar integer type.
+        CodeGenerationError: If the type is not a scalar integer or pointer type.
     """
     if isinstance(t, (ast.IntType, ast.UIntType)):
         return 4
-    if isinstance(t, (ast.LongType, ast.ULongType)):
+    if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer)):
         return 8
     raise CodeGenerationError(f"unsupported type in size calculation: {type(t).__name__}")
 
 
 def _is_signed(t: ast.Type) -> bool:
-    """Return whether a C integer type is signed.
+    """Return whether a C integer or pointer type is signed.
+
+    Pointer types are treated as unsigned (equivalent to ``unsigned long``).
 
     Args:
         t: The C type to inspect.
 
     Returns:
-        ``True`` for ``int`` and ``long``; ``False`` for ``unsigned int`` and ``unsigned long``.
+        ``True`` for ``int`` and ``long``; ``False`` for ``unsigned int``, ``unsigned long``,
+        and any pointer type.
 
     Raises:
-        CodeGenerationError: If the type is not a scalar integer type.
+        CodeGenerationError: If the type is not a scalar integer or pointer type.
     """
     if isinstance(t, (ast.IntType, ast.LongType)):
         return True
-    if isinstance(t, (ast.UIntType, ast.ULongType)):
+    if isinstance(t, (ast.UIntType, ast.ULongType, ast.Pointer)):
         return False
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 
@@ -812,6 +826,10 @@ class _TacGenerator:
                 return dst, [*left_instrs, *right_instrs, binary]
             case ast.Var(name=name):
                 return tac.Var(value=name), []
+            case ast.Assignment(lvalue=ast.Dereference(exp=ptr_exp), rvalue=rvalue):
+                rval, rval_instrs = self.translate_exp(rvalue)
+                ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
+                return rval, [*rval_instrs, *ptr_instrs, tac.Store(src=rval, dst_ptr=ptr_val)]
             case ast.Assignment(lvalue=ast.Var(name=name), rvalue=rvalue):
                 val, instrs = self.translate_exp(rvalue)
                 dst = tac.Var(value=name)
@@ -835,15 +853,29 @@ class _TacGenerator:
                     label_end,
                 ]
             case ast.FunctionCall(callee=callee, args=args):
+                # (*fp)(args) — dereference on a function pointer cancels out, same as &*
+                inner_callee = callee.exp if isinstance(callee, ast.Dereference) else callee
+                callee_val, callee_instrs = self.translate_exp(inner_callee)
                 arg_vals: list[tac.Val] = []
-                all_instrs: list[tac.Instruction] = []
+                arg_instrs: list[tac.Instruction] = []
                 for arg in args:
                     val, instrs = self.translate_exp(arg)
-                    all_instrs.extend(instrs)
+                    arg_instrs.extend(instrs)
                     arg_vals.append(val)
                 dst = self._make_temp(exp.exp_type or ast.IntType())
-                if not isinstance(callee, ast.Var):
-                    raise CodeGenerationError("Indirect function calls through non-Var callees are not yet supported.")
-                return dst, [*all_instrs, tac.FunCall(name=callee.name, args=tuple(arg_vals), dst=dst)]
+                return dst, [
+                    *callee_instrs,
+                    *arg_instrs,
+                    tac.FunCall(fun_val=callee_val, args=tuple(arg_vals), dst=dst),
+                ]
+            case ast.AddrOf(exp=ast.Dereference(exp=inner)):
+                return self.translate_exp(inner)
+            case ast.AddrOf(exp=ast.Var(name=name)):
+                dst = self._make_temp(exp.exp_type or ast.Pointer(ast.IntType()))
+                return dst, [tac.GetAddress(src=tac.Var(value=name), dst=dst)]
+            case ast.Dereference(exp=inner):
+                ptr_val, ptr_instrs = self.translate_exp(inner)
+                dst = self._make_temp(exp.exp_type or ast.IntType())
+                return dst, [*ptr_instrs, tac.Load(src_ptr=ptr_val, dst=dst)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

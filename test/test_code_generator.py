@@ -1140,7 +1140,7 @@ def _seven_arg_call_program(*extra_top_level: tac.TopLevel, seventh_arg: tac.Val
         name="main",
         body=(
             tac.FunCall(
-                name="foo",
+                fun_val=tac.Var("foo"),
                 args=(
                     tac.Constant(ConstInt(1)),
                     tac.Constant(ConstInt(2)),

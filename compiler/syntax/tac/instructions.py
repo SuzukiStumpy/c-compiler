@@ -172,12 +172,13 @@ class FunCall(Instruction):
     """Call site for a function.
 
     Attributes:
-        name: Name of the function which we want to call
-        args: Ordered sequence of arguments to pass to the function
-        dst: The destination that the function will return to
+        fun_val: Value that identifies the callable — a ``Var`` naming a function for a
+            direct call, or a ``Var`` holding a function pointer for an indirect call.
+        args: Ordered sequence of arguments to pass to the function.
+        dst: The destination that the function will return to.
     """
 
-    name: str
+    fun_val: Val
     args: tuple[Val]
     dst: Val
 
@@ -232,3 +233,42 @@ class UIntToDouble(Instruction):
 
     src: Val
     dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class GetAddress(Instruction):
+    """Obtain the memory address of a variable.
+
+    Attributes:
+        src: The variable whose address is taken.
+        dst: The pointer-typed destination that receives the address.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class Load(Instruction):
+    """Dereference a pointer and copy the value it points to into a destination.
+
+    Attributes:
+        src_ptr: A pointer-typed source value.
+        dst: The destination that receives the loaded value.
+    """
+
+    src_ptr: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class Store(Instruction):
+    """Write a value through a pointer to its target memory location.
+
+    Attributes:
+        src: The value to store.
+        dst_ptr: A pointer-typed destination that identifies where to write.
+    """
+
+    src: Val
+    dst_ptr: Val

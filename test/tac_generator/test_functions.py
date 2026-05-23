@@ -217,7 +217,7 @@ class TestTacGeneratorFunctionCall:
         instrs = _body(ast.FunctionCall(callee=ast.Var("foo"), args=[]))
         funcalls = [i for i in instrs if isinstance(i, tac.FunCall)]
         assert len(funcalls) == 1
-        assert funcalls[0].name == "foo"
+        assert funcalls[0].fun_val == tac.Var(value="foo")
 
     def test_no_arg_call_has_empty_args(self) -> None:
         """A zero-argument call stores an empty args tuple in ``FunCall``."""

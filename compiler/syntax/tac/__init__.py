@@ -22,7 +22,10 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | JumpIfZero(val condition, identifier target)
                         | JumpIfNotZero(val condition, identifier target)
                         | Label(identifier)
-                        | FunCall(identifier fun_name, val* args, val dst)
+                        | FunCall(val fun_val, val* args, val dst)
+                        | GetAddress(val src, val dst)
+                        | Load(val src_ptr, val dst)
+                        | Store(val src, val dst_ptr)
     val                 = Constant(const) | Var(identifier)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
@@ -54,14 +57,17 @@ from compiler.syntax.tac.instructions import (
     DoubleToInt,
     DoubleToUInt,
     FunCall,
+    GetAddress,
     Instruction,
     IntToDouble,
     Jump,
     JumpIfNotZero,
     JumpIfZero,
     Label,
+    Load,
     Return,
     SignExtend,
+    Store,
     Truncate,
     UIntToDouble,
     Unary,
@@ -101,6 +107,9 @@ __all__ = [
     "StaticVariable",
     "TopLevel",
     "FunCall",
+    "GetAddress",
+    "Load",
+    "Store",
     "Equal",
     "GreaterOrEqual",
     "GreaterThan",
