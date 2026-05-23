@@ -14,6 +14,7 @@ from compiler.syntax.ast import (
     IntType,
     LongType,
     Parameter,
+    Pointer,
     Program,
     Return,
     S,
@@ -22,7 +23,7 @@ from compiler.syntax.ast import (
     VarDecl,
     VariableDeclaration,
 )
-from compiler.syntax.ast.expressions import Binary, Var
+from compiler.syntax.ast.expressions import Binary, Var  # noqa: F401
 from compiler.syntax.ast.operators import Add, PostIncrement
 from compiler.types.tokens import TokenType
 from compiler.utils.exceptions import ParseError
@@ -405,41 +406,41 @@ class TestFunctionCallExpressions:
     """Parser correctly builds ``FunctionCall`` nodes for function call primaries."""
 
     def test_call_no_args(self) -> None:
-        """``return foo();`` → ``FunctionCall(name="foo", args=[])``."""
+        """``return foo();`` → ``FunctionCall(callee=Var("foo"), args=[])``."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN)
-        assert result == FunctionCall(name="foo", args=[])
+        assert result == FunctionCall(callee=Var("foo"), args=[])
 
     def test_call_one_arg(self) -> None:
-        """``return foo(1);`` → ``FunctionCall(name="foo", args=[Constant(ConstInt(1))])``."""
+        """``return foo(1);`` → ``FunctionCall(callee=Var("foo"), args=[Constant(ConstInt(1))])``."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Constant(ConstInt(1))])
+        assert result == FunctionCall(callee=Var("foo"), args=[Constant(ConstInt(1))])
 
     def test_call_two_args(self) -> None:
         """``return foo(1, 2);`` → two-element args list."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _COMMA, _number("2"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Constant(ConstInt(1)), Constant(ConstInt(2))])
+        assert result == FunctionCall(callee=Var("foo"), args=[Constant(ConstInt(1)), Constant(ConstInt(2))])
 
     def test_call_three_args(self) -> None:
         """``return foo(1, 2, 3);`` → three-element args list."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _number("1"), _COMMA, _number("2"), _COMMA, _number("3"), _RPAREN)
         assert result == FunctionCall(
-            name="foo", args=[Constant(ConstInt(1)), Constant(ConstInt(2)), Constant(ConstInt(3))]
+            callee=Var("foo"), args=[Constant(ConstInt(1)), Constant(ConstInt(2)), Constant(ConstInt(3))]
         )
 
     def test_call_with_expression_arg(self) -> None:
         """``return foo(a + 1);`` — binary expression as the sole argument."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _ident("a"), _PLUS, _number("1"), _RPAREN)
-        assert result == FunctionCall(name="foo", args=[Binary(Add(), Var("a"), Constant(ConstInt(1)))])
+        assert result == FunctionCall(callee=Var("foo"), args=[Binary(Add(), Var("a"), Constant(ConstInt(1)))])
 
     def test_call_result_used_in_binary(self) -> None:
         """``return foo() + 1;`` — function call as left operand of addition."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN, _PLUS, _number("1"))
-        assert result == Binary(Add(), FunctionCall(name="foo", args=[]), Constant(ConstInt(1)))
+        assert result == Binary(Add(), FunctionCall(callee=Var("foo"), args=[]), Constant(ConstInt(1)))
 
     def test_call_with_postfix_increment(self) -> None:
         """``return foo()++;`` — postfix ``++`` applied to the call result."""
         result = _parsed_exp(_ident("foo"), _LPAREN, _RPAREN, _INCREMENT)
-        assert result == Unary(PostIncrement(), FunctionCall(name="foo", args=[]))
+        assert result == Unary(PostIncrement(), FunctionCall(callee=Var("foo"), args=[]))
 
     def test_call_missing_closing_paren_raises_parse_error(self) -> None:
         """``return foo(1;`` — missing ``)`` raises ``ParseError``."""
@@ -671,4 +672,322 @@ class TestLongTypeSpecifiers:
         """``int int x;`` — repeated ``int`` specifier raises ``ParseError``."""
         tokens = [_INT, _INT, _ident("x"), _SEMICOLON]
         with pytest.raises(ParseError, match="duplicate type specifier"):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Pointer declarators
+# ---------------------------------------------------------------------------
+
+from test.parser.helpers import _ASTERISK  # noqa: E402
+
+
+class TestPointerVariableDeclarations:
+    """Parser correctly handles pointer declarators in variable declarations."""
+
+    def test_simple_pointer_declaration(self) -> None:
+        """``int *p;`` → ``VarDecl`` with ``var_type=Pointer(IntType())``."""
+        tokens = [_INT, _ASTERISK, _ident("p"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration == VariableDeclaration(name="p", init=None, var_type=Pointer(IntType()))
+
+    def test_parenthesised_pointer_declaration(self) -> None:
+        """``int *(p);`` → same as ``int *p;``."""
+        tokens = [_INT, _ASTERISK, _LPAREN, _ident("p"), _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Pointer(IntType())
+        assert decl.variable_declaration.name == "p"
+
+    def test_double_pointer_declaration(self) -> None:
+        """``int *(*(p));`` → ``var_type=Pointer(Pointer(IntType()))``."""
+        tokens = [
+            _INT,
+            _ASTERISK,
+            _LPAREN,
+            _ASTERISK,
+            _LPAREN,
+            _ident("p"),
+            _RPAREN,
+            _RPAREN,
+            _SEMICOLON,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Pointer(Pointer(IntType()))
+
+    def test_pointer_declaration_with_initialiser(self) -> None:
+        """``int *p = 0;`` — pointer variable with an integer initialiser."""
+        tokens = [_INT, _ASTERISK, _ident("p"), _ASSIGNMENT, _number("0"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        vd = decl.variable_declaration
+        assert vd.var_type == Pointer(IntType())
+        assert vd.init == Constant(ConstInt(0))
+
+    def test_pointer_with_storage_class(self) -> None:
+        """``static int *p;`` — pointer with storage-class specifier."""
+        tokens = [_STATIC, _INT, _ASTERISK, _ident("p"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        vd = decl.variable_declaration
+        assert vd.var_type == Pointer(IntType())
+        assert vd.storage_class == StorageClass.Static
+
+
+class TestPointerFunctionDeclarations:
+    """Parser correctly handles pointer declarators in function declarations."""
+
+    def test_function_returning_pointer(self) -> None:
+        """``int *foo(void);`` → forward declaration returning ``Pointer(IntType())``."""
+        tokens = [_INT, _ASTERISK, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        fn = decl.function_declaration
+        assert fn.name == "foo"
+        assert fn.body is None
+        assert fn.fun_type == FunType(params=(), ret=Pointer(IntType()))
+
+    def test_function_returning_pointer_with_body(self) -> None:
+        """``int *foo(void) { return 0; }`` — definition returning pointer type."""
+        tokens = [
+            _INT,
+            _ASTERISK,
+            _ident("foo"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        fn = decl.function_declaration
+        assert fn.fun_type == FunType(params=(), ret=Pointer(IntType()))
+        assert fn.body is not None
+
+    def test_pointer_parameter(self) -> None:
+        """``int foo(int *p)`` — parameter with pointer type."""
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ASTERISK,
+            _ident("p"),
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == (Parameter(param_type=Pointer(IntType()), name="p"),)
+
+    def test_multiple_pointer_parameters(self) -> None:
+        """``int foo(int *a, int *b)`` — two pointer parameters."""
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ASTERISK,
+            _ident("a"),
+            _COMMA,
+            _INT,
+            _ASTERISK,
+            _ident("b"),
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == (
+            Parameter(param_type=Pointer(IntType()), name="a"),
+            Parameter(param_type=Pointer(IntType()), name="b"),
+        )
+
+    def test_mixed_parameters(self) -> None:
+        """``int foo(int x, int *p)`` — one plain and one pointer parameter."""
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ident("x"),
+            _COMMA,
+            _INT,
+            _ASTERISK,
+            _ident("p"),
+            _RPAREN,
+            _LBRACE,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params == (
+            Parameter(param_type=IntType(), name="x"),
+            Parameter(param_type=Pointer(IntType()), name="p"),
+        )
+
+
+class TestFunctionPointerDeclarations:
+    """Parser correctly builds function-pointer variable declarations."""
+
+    def test_named_function_pointer_unnamed_params(self) -> None:
+        """``int (*ptr)(int, int)`` → VarDecl with Pointer(FunType) type."""
+        tokens = [
+            _INT,
+            _LPAREN,
+            _ASTERISK,
+            _ident("ptr"),
+            _RPAREN,
+            _LPAREN,
+            _INT,
+            _COMMA,
+            _INT,
+            _RPAREN,
+            _SEMICOLON,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        vd = decl.variable_declaration
+        assert vd.name == "ptr"
+        assert vd.var_type == Pointer(FunType(params=(IntType(), IntType()), ret=IntType()))
+
+    def test_named_function_pointer_named_params(self) -> None:
+        """``int (*ptr)(int a, int b)`` — param names are accepted but not required."""
+        tokens = [
+            _INT,
+            _LPAREN,
+            _ASTERISK,
+            _ident("ptr"),
+            _RPAREN,
+            _LPAREN,
+            _INT,
+            _ident("a"),
+            _COMMA,
+            _INT,
+            _ident("b"),
+            _RPAREN,
+            _SEMICOLON,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Pointer(FunType(params=(IntType(), IntType()), ret=IntType()))
+
+    def test_function_pointer_no_params(self) -> None:
+        """``int (*ptr)(void)`` → Pointer(FunType(params=(), ret=IntType()))."""
+        tokens = [_INT, _LPAREN, _ASTERISK, _ident("ptr"), _RPAREN, _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Pointer(FunType(params=(), ret=IntType()))
+
+    def test_function_pointer_with_pointer_return(self) -> None:
+        """``int *(*ptr)(void)`` → Pointer(FunType((), Pointer(IntType())))."""
+        tokens = [
+            _INT,
+            _ASTERISK,
+            _LPAREN,
+            _ASTERISK,
+            _ident("ptr"),
+            _RPAREN,
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _SEMICOLON,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Pointer(FunType(params=(), ret=Pointer(IntType())))
+
+    def test_function_pointer_with_initialiser(self) -> None:
+        """``int (*ptr)(int, int) = add;`` — initialiser is parsed as a Var."""
+        tokens = [
+            _INT,
+            _LPAREN,
+            _ASTERISK,
+            _ident("ptr"),
+            _RPAREN,
+            _LPAREN,
+            _INT,
+            _COMMA,
+            _INT,
+            _RPAREN,
+            _ASSIGNMENT,
+            _ident("add"),
+            _SEMICOLON,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        vd = decl.variable_declaration
+        assert vd.var_type == Pointer(FunType(params=(IntType(), IntType()), ret=IntType()))
+        assert vd.init == Var("add")
+
+    def test_function_pointer_param_with_pointer_param(self) -> None:
+        """``int (*ptr)(int *)`` — function pointer whose param is itself a pointer."""
+        tokens = [
+            _INT,
+            _LPAREN,
+            _ASTERISK,
+            _ident("ptr"),
+            _RPAREN,
+            _LPAREN,
+            _INT,
+            _ASTERISK,
+            _RPAREN,
+            _SEMICOLON,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Pointer(FunType(params=(Pointer(IntType()),), ret=IntType()))
+
+    def test_function_ptr_not_mistaken_for_function_decl(self) -> None:
+        """``int (*ptr)(void)`` must produce VarDecl, not FunDecl."""
+        tokens = [_INT, _LPAREN, _ASTERISK, _ident("ptr"), _RPAREN, _LPAREN, _VOID, _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        assert isinstance(result.declarations[0], VarDecl)
+
+
+class TestPointerDeclaratorErrors:
+    """Parser rejects invalid pointer-related declarator constructs."""
+
+    def test_function_returning_function_raises_parse_error(self) -> None:
+        """``int (foo(void))(void);`` — parenthesised function declarator followed by a
+        second param-list would declare a function returning a function, which C forbids.
+        """
+        tokens = [
+            _INT,
+            _LPAREN,
+            _ident("foo"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _RPAREN,
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _SEMICOLON,
+        ]
+        with pytest.raises(ParseError, match="function returning a function"):
             parse(tokens)

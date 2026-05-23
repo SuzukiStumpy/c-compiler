@@ -69,7 +69,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ),  # This is also a binary operator, which we disambiguate in the parser
     # Binary Operators
     ("PLUS", r"\+"),
-    ("TIMES", r"\*"),
+    ("ASTERISK", r"\*"),
     ("DIVIDE", r"/"),
     ("PERCENT", r"%"),  # Modulo operator
     # Shift operators must precede any future single < / > relational tokens

@@ -124,12 +124,42 @@ class Conditional(Exp):
 
 @dataclass(frozen=True, slots=True)
 class FunctionCall(Exp):
-    """A function call within the source code.
+    """A function call expression.
+
+    The callee is an arbitrary expression so that both direct calls (where the
+    callee is a ``Var`` naming a function) and indirect calls through a function
+    pointer (where the callee is a ``Var`` or ``Dereference`` whose type is a
+    pointer-to-function) are represented uniformly.
 
     Attributes:
-        name: The name of the function.
-        args: a list of function arguments
+        callee: Expression that yields the callable.  A ``Var`` for a named
+            function call; a ``Dereference`` (or other expression) for an
+            indirect call through a pointer.
+        args: Ordered list of argument expressions.
     """
 
-    name: str
+    callee: Exp
     args: list[Exp]
+
+
+@dataclass(frozen=True, slots=True)
+class Dereference(Exp):
+    """Represents the dereferencing of a pointer type
+
+    Attributes:
+        exp: The expression which yields the address of the object the pointer
+            points at.
+    """
+
+    exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class AddrOf(Exp):
+    """Represents the address which a pointer object is pointing at.
+
+    Attributes:
+        exp: The expression which yields the relevant address
+    """
+
+    exp: Exp

@@ -5,9 +5,15 @@ which are handled by precedence climbing.  The grammar is:
 
     program              ::= {declaration}
     declaration          ::= variable-declaration | function-declaration
-    function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
-    variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
-    param-list           ::= "void" | {type-specifier}+ identifier {"," {type-specifier}+ identifier}
+    function-declaration ::= {specifier}+ declarator "(" param-list ")" (block | ";")
+    variable-declaration ::= {specifier}+ declarator ["=" exp] ";"
+    declarator           ::= "*" declarator | direct-declarator
+    direct-declarator    ::= simple-declarator [param-list]
+    simple-declarator    ::= identifier | "(" declarator ")"
+    param-list           ::= "(" "void" ")" | "(" param {"," param} ")"
+    param                ::= {type-specifier}+ declarator
+                           | {type-specifier}+ abstract-declarator
+                           | {type-specifier}+
     type-specifier       ::= "int" | "long" | "unsigned" | "signed" | "double"
     specifier            ::= type-specifier | "static" | "extern"
     block                ::= "{" {block_item} "}"
@@ -33,11 +39,14 @@ which are handled by precedence climbing.  The grammar is:
                            | primary postfix_unop?
     primary              ::= const
                            | identifier
-                           | "(" {type-specifier}+ ")" factor
+                           | "(" {type-specifier}+ [abstract-declarator] ")" factor
                            | "(" exp ")"
                            | identifier "(" [argument-list] ")"
     argument-list        ::= exp {"," exp}
-    prefix_unop          ::= "-" | "~" | "!" | "++" | "--"
+    abstract-declarator  ::= "*" [abstract-declarator]
+                           | direct-abstract-declarator
+    direct-abstract-declarator ::= "(" abstract-declarator ")"
+    prefix_unop          ::= "-" | "~" | "!" | "++" | "--" | "*" | "&"
     postfix_unop         ::= "++" | "--"
     binop                ::= "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | "&" | "^" | "|"
                            | "&&" | "||" | "==" | "!=" | "<" | "<=" | ">" | ">="
@@ -59,10 +68,12 @@ The public ``parse()`` function is the only entry point intended for use by
 other pipeline stages.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 from compiler.syntax.ast import (
     Add,
+    AddrOf,
     And,
     Assignment,
     Binary,
@@ -88,6 +99,7 @@ from compiler.syntax.ast import (
     D,
     Declaration,
     Default,
+    Dereference,
     Divide,
     DoubleType,
     DoWhile,
@@ -119,6 +131,7 @@ from compiler.syntax.ast import (
     Null,
     Or,
     Parameter,
+    Pointer,
     PostDecrement,
     PostIncrement,
     PreDecrement,
@@ -176,7 +189,7 @@ _BINARY_PRECEDENCE: dict[TokenType, int] = {
     TokenType.MINUS: 45,
     TokenType.LSHIFT: 40,
     TokenType.RSHIFT: 40,
-    TokenType.TIMES: 50,
+    TokenType.ASTERISK: 50,
     TokenType.DIVIDE: 50,
     TokenType.PERCENT: 50,
 }
@@ -600,17 +613,121 @@ class Parser:
         return tuple(params)
 
     def _parse_param(self) -> Parameter:
-        """Parse a single ``type identifier`` parameter declaration.
+        """Parse a single typed parameter declaration.
+
+        Grammar::
+
+            param ::= {type-specifier}+ declarator
+                    | {type-specifier}+ abstract-declarator
+                    | {type-specifier}+
+
+        The identifier is optional: unnamed parameters (e.g. ``int`` or ``int *``
+        in a function-pointer type) are represented with an empty-string name.
 
         Returns:
             A ``Parameter`` node.
 
         Raises:
-            ParseError: If the type or identifier is missing or malformed.
+            ParseError: If the type is missing or the declarator is malformed.
         """
-        param_type = self._parse_type()
-        name_token = self._expect(TokenType.IDENTIFIER)
-        return Parameter(param_type=param_type, name=name_token.value)
+        base_type = self._parse_type()
+        name, transform, _params = self._parse_param_declarator()
+        return Parameter(param_type=transform(base_type), name=name or "")
+
+    def _parse_param_simple_declarator(self) -> tuple[str | None, Callable[[Type], Type], tuple[Parameter, ...] | None]:
+        """Parse a simple-declarator inside a parameter list (identifier is optional).
+
+        Grammar::
+
+            simple-declarator ::= identifier | "(" declarator ")"
+
+        Mirrors ``_parse_simple_declarator`` but returns ``None`` for the name when
+        no identifier is present, supporting abstract/unnamed parameters.
+
+        Returns:
+            A ``(name, type_builder, params)`` triple where ``name`` may be ``None``
+            for an unnamed parameter.
+
+        Raises:
+            ParseError: If a parenthesised declarator is opened but not closed.
+        """
+        if self._match(TokenType.LPAREN):
+            self._consume()
+            name, transform, params = self._parse_param_declarator()
+            self._expect(TokenType.RPAREN)
+            return name, transform, params
+        if self._match(TokenType.IDENTIFIER):
+            name_token = self._consume()
+            return name_token.value, lambda t: t, None
+        return None, lambda t: t, None
+
+    def _parse_param_direct_declarator(
+        self,
+    ) -> tuple[str | None, Callable[[Type], Type], tuple[Parameter, ...] | None]:
+        """Parse a direct-declarator inside a parameter list (identifier is optional).
+
+        Grammar::
+
+            direct-declarator ::= simple-declarator [param-list]
+
+        Mirrors ``_parse_direct_declarator`` with optional-name semantics.
+
+        Returns:
+            A ``(name, type_builder, params)`` triple.
+
+        Raises:
+            ParseError: If a function declarator is nested inside another function
+                declarator, or the structure is otherwise malformed.
+        """
+        name, simple_transform, simple_params = self._parse_param_simple_declarator()
+
+        if not self._match(TokenType.LPAREN):
+            return name, simple_transform, simple_params
+
+        if simple_params is not None:
+            tok = self._peek()
+            display = name or "<unnamed>"
+            msg = f"'{display}' declared as function returning a function"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+
+        self._consume()  # consume "("
+        params = self._parse_params()
+        self._expect(TokenType.RPAREN)
+        param_types = tuple(p.param_type for p in params)
+
+        def _fun(t: Type, _st: Callable[[Type], Type] = simple_transform, _pt: tuple[Type, ...] = param_types) -> Type:
+            return _st(FunType(params=_pt, ret=t))
+
+        return name, _fun, params
+
+    def _parse_param_declarator(self) -> tuple[str | None, Callable[[Type], Type], tuple[Parameter, ...] | None]:
+        """Parse a declarator inside a parameter list (identifier is optional).
+
+        Grammar::
+
+            declarator        ::= "*" declarator | direct-declarator
+            direct-declarator ::= simple-declarator [param-list]
+            simple-declarator ::= identifier | "(" declarator ")"
+
+        Mirrors ``_parse_declarator`` with optional-name semantics, supporting
+        unnamed parameters such as ``int``, ``int *``, or ``int (*)(int)``.
+
+        Returns:
+            A ``(name, type_builder, params)`` triple where ``name`` is ``None``
+            when no identifier was present.
+
+        Raises:
+            ParseError: If the declarator is malformed.
+        """
+        if self._match(TokenType.ASTERISK):
+            self._consume()
+            inner_name, inner_transform, params = self._parse_param_declarator()
+
+            def _ptr(t: Type, _inner: Callable[[Type], Type] = inner_transform) -> Type:
+                return _inner(Pointer(t))
+
+            return inner_name, _ptr, params
+        return self._parse_param_direct_declarator()
 
     def _parse_block(self) -> Block:
         """Parse a complete ``{ block_item* }`` block, including surrounding braces.
@@ -661,38 +778,44 @@ class Parser:
         Grammar::
 
             declaration          ::= variable-declaration | function-declaration
-            function-declaration ::= {specifier}+ identifier "(" param-list ")" (block | ";")
-            variable-declaration ::= {specifier}+ identifier ["=" exp] ";"
-            specifier            ::= "int" | "static" | "extern"
+            function-declaration ::= {specifier}+ declarator (block | ";")
+            variable-declaration ::= {specifier}+ declarator ["=" exp] ";"
+            declarator           ::= "*" declarator | direct-declarator
+            direct-declarator    ::= simple-declarator [param-list]
+            simple-declarator    ::= identifier | "(" declarator ")"
+            specifier            ::= type-specifier | "static" | "extern"
 
-        Parses the leading specifier list, then dispatches on the token after
-        the identifier: ``(`` indicates a function declaration (returning a
-        ``FunDecl``); anything else is a variable declaration (``VarDecl``).
+        Parses the leading specifier list, then the declarator (which handles pointer
+        prefixes and parameter lists), and dispatches to produce a ``FunDecl`` or
+        ``VarDecl`` accordingly.
 
         Returns:
             A ``VarDecl`` or ``FunDecl`` node.
 
         Raises:
-            ParseError: If no type specifier is present, the identifier or
-                terminator is missing, or the initialiser expression is malformed.
+            ParseError: If no type specifier is present, the declarator is malformed,
+                or the initialiser expression or function body is malformed.
         """
-        type_, storage = self._parse_specifiers()
-        name_token = self._expect(TokenType.IDENTIFIER)
-        if self._match(TokenType.LPAREN):
-            self._consume()
-            params = self._parse_params()
-            self._expect(TokenType.RPAREN)
+        base_type, storage = self._parse_specifiers()
+        name, transform, params = self._parse_declarator()
+        full_type = transform(base_type)
+
+        # A FunType result means the declared entity is itself a function.
+        # A Pointer(FunType(...)) — or any other non-FunType — means a variable
+        # (possibly of function-pointer type), even if params was non-None.
+        if isinstance(full_type, FunType):
             if self._match(TokenType.SEMICOLON):
                 self._consume()
                 body: Block | None = None
             else:
                 body = self._parse_block()
+            assert params is not None
             return FunDecl(
                 function_declaration=Function(
-                    name=name_token.value,
+                    name=name,
                     params=params,
                     body=body,
-                    fun_type=FunType(params=tuple(p.param_type for p in params), ret=type_),
+                    fun_type=full_type,
                     storage_class=storage,
                 )
             )
@@ -702,9 +825,7 @@ class Parser:
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
-            variable_declaration=VariableDeclaration(
-                name=name_token.value, init=init, var_type=type_, storage_class=storage
-            )
+            variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
         )
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
@@ -738,37 +859,33 @@ class Parser:
 
         Grammar::
 
-            variable-declaration ::= "int" identifier ["=" exp] ";"
+            variable-declaration ::= {specifier}+ declarator ["=" exp] ";"
 
-        Storage-class specifiers (``static``, ``extern``) are parsed by
-        ``_parse_specifiers`` and recorded on the resulting ``VariableDeclaration``
-        so that the semantic analysis stage can reject them with a ``SemanticError``.
-        A ``(`` after the identifier is rejected immediately because function
-        declarations are not permitted in for-loop initialisers.
+        Storage-class specifiers are parsed and recorded on the resulting
+        ``VariableDeclaration``.  A function declarator is rejected immediately
+        because function declarations are not permitted in for-loop initialisers.
 
         Returns:
             A ``VarDecl`` node.
 
         Raises:
-            ParseError: If a function declaration is attempted, if the identifier
-                or semicolon is missing, or if the initialiser expression is malformed.
+            ParseError: If a function declarator is detected, if the identifier or
+                semicolon is missing, or if the initialiser expression is malformed.
         """
-        type_, storage = self._parse_specifiers()
-        name_token = self._expect(TokenType.IDENTIFIER)
-        if self._match(TokenType.LPAREN):
-            raise self._token_error(
-                "function declarations are not permitted in for-loop initialisers",
-                name_token,
-            )
+        base_type, storage = self._parse_specifiers()
+        name, transform, _params = self._parse_declarator()
+        full_type = transform(base_type)
+        if isinstance(full_type, FunType):
+            err_tok = self._last
+            msg = "function declarations are not permitted in for-loop initialisers"
+            raise self._token_error(msg, err_tok) if err_tok is not None else self._eof_error(msg)
         init: Exp | None = None
         if self._match(TokenType.ASSIGNMENT):
             self._consume()
             init = self._parse_exp()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
-            variable_declaration=VariableDeclaration(
-                name=name_token.value, init=init, var_type=type_, storage_class=storage
-            )
+            variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
         )
 
     def _parse_for_init(self) -> ForInit:
@@ -968,7 +1085,7 @@ class Parser:
                 return Add()
             case TokenType.MINUS:
                 return Subtract()
-            case TokenType.TIMES:
+            case TokenType.ASTERISK:
                 return Multiply()
             case TokenType.DIVIDE:
                 return Divide()
@@ -1078,7 +1195,7 @@ class Parser:
             primary       ::= int | identifier | "(" exp ")"
                             | identifier "(" [argument-list] ")"
             argument-list ::= exp {"," exp}
-            prefix_unop   ::= "-" | "~" | "!" | "++" | "--"
+            prefix_unop   ::= "-" | "~" | "!" | "++" | "--" | "*" | "&"
             postfix_unop  ::= "++" | "--"
 
         Returns:
@@ -1093,6 +1210,12 @@ class Parser:
             raise self._eof_error("Syntax error: expected expression, got end of input")
 
         match token.type:
+            case TokenType.ASTERISK:
+                self._consume()
+                return Dereference(self._parse_factor())
+            case TokenType.AMPERSAND:
+                self._consume()
+                return AddrOf(self._parse_factor())
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
                 return Unary(self._parse_unaryop(), self._parse_factor())
             case TokenType.NUMBER | TokenType.LONGINT | TokenType.UINT | TokenType.ULONG | TokenType.FPDOUBLE:
@@ -1107,7 +1230,11 @@ class Parser:
                 next_tok = self._peek(1)
                 if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
                     self._consume()  # consume "("
-                    target_type = self._parse_type()
+                    base_cast_type = self._parse_type()
+                    if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN):
+                        target_type: Type = self._parse_abstract_declarator()(base_cast_type)
+                    else:
+                        target_type = base_cast_type
                     self._expect(TokenType.RPAREN)
                     primary = Cast(target_type=target_type, exp=self._parse_factor())
                 else:
@@ -1138,11 +1265,15 @@ class Parser:
         Consumes the opening ``(``, parses zero or more comma-separated
         argument expressions, and consumes the closing ``)``.
 
+        The callee is represented as a ``Var`` wrapping the identifier so that
+        direct calls and indirect calls through function-pointer variables are
+        both expressed as ``FunctionCall(callee=<Exp>, args=…)``.
+
         Args:
             name: The function name, already consumed by the caller.
 
         Returns:
-            A ``FunctionCall`` node.
+            A ``FunctionCall`` node whose ``callee`` is ``Var(name)``.
 
         Raises:
             ParseError: If any argument expression is malformed or the closing
@@ -1156,7 +1287,7 @@ class Parser:
                 self._consume()
                 args.append(self._parse_exp())
         self._expect(TokenType.RPAREN)
-        return FunctionCall(name=name, args=args)
+        return FunctionCall(callee=Var(name=name), args=args)
 
     def _parse_constant(self) -> Constant:
         """Parse an integer, long or double constant expression.
@@ -1245,6 +1376,142 @@ class Parser:
         """
         seen, last_tok = self._consume_type_specifiers()
         return self._resolve_type(seen, last_tok)
+
+    def _parse_abstract_declarator(self) -> Callable[[Type], Type]:
+        """Parse an abstract declarator (no identifier) for use in cast expressions.
+
+        Grammar::
+
+            abstract-declarator          ::= "*" [abstract-declarator]
+                                           | direct-abstract-declarator
+            direct-abstract-declarator   ::= "(" abstract-declarator ")"
+
+        Returns:
+            A callable that maps the base type to the fully-derived type.
+            For example, ``*`` applied to ``IntType()`` yields ``Pointer(IntType())``.
+
+        Raises:
+            ParseError: If the abstract declarator is malformed.
+        """
+        if self._match(TokenType.ASTERISK):
+            self._consume()
+            if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN):
+                inner = self._parse_abstract_declarator()
+
+                def _ptr_inner(t: Type, _i: Callable[[Type], Type] = inner) -> Type:
+                    return _i(Pointer(t))
+
+                return _ptr_inner
+            return lambda t: Pointer(t)
+        self._expect(TokenType.LPAREN)
+        inner = self._parse_abstract_declarator()
+        self._expect(TokenType.RPAREN)
+        return inner
+
+    def _parse_simple_declarator(self) -> tuple[str, Callable[[Type], Type], tuple[Parameter, ...] | None]:
+        """Parse a simple-declarator: an identifier or a parenthesised declarator.
+
+        Grammar::
+
+            simple-declarator ::= identifier | "(" declarator ")"
+
+        Returns:
+            A ``(name, type_builder, params)`` triple.  For a plain identifier the
+            type_builder is the identity and params is ``None``.  For a parenthesised
+            declarator all three values are propagated from the inner declarator so
+            that ``_parse_direct_declarator`` can detect and reject a function
+            declarator that is itself wrapped in another function declarator.
+
+        Raises:
+            ParseError: If neither an identifier nor a valid parenthesised declarator
+                is found.
+        """
+        if self._match(TokenType.LPAREN):
+            self._consume()
+            name, transform, params = self._parse_declarator()
+            self._expect(TokenType.RPAREN)
+            return name, transform, params
+        name_token = self._expect(TokenType.IDENTIFIER)
+        return name_token.value, lambda t: t, None
+
+    def _parse_direct_declarator(self) -> tuple[str, Callable[[Type], Type], tuple[Parameter, ...] | None]:
+        """Parse a direct-declarator.
+
+        Grammar::
+
+            direct-declarator ::= simple-declarator [param-list]
+
+        A function declarator nested inside a parenthesised simple-declarator that
+        is itself followed by a param-list would produce a function-returning-function
+        type, which C does not permit.  Such a construction is rejected here.
+
+        Returns:
+            A ``(name, type_builder, params)`` triple. ``params`` is ``None`` when no
+            parameter list follows; otherwise a (possibly empty) tuple of ``Parameter``
+            nodes making this a function declarator.
+
+        Raises:
+            ParseError: If the direct-declarator is malformed, or if a function
+                declarator is nested inside another function declarator.
+        """
+        name, simple_transform, simple_params = self._parse_simple_declarator()
+
+        if not self._match(TokenType.LPAREN):
+            return name, simple_transform, simple_params
+
+        # A param-list here would make this a function declarator.  If the
+        # simple-declarator already produced a function declarator (simple_params
+        # is not None), that would mean a function returning a function — invalid.
+        if simple_params is not None:
+            tok = self._peek()
+            msg = f"'{name}' declared as function returning a function"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+
+        self._consume()  # consume "("
+        params = self._parse_params()
+        self._expect(TokenType.RPAREN)
+        param_types = tuple(p.param_type for p in params)
+
+        def _fun(t: Type, _st: Callable[[Type], Type] = simple_transform, _pt: tuple[Type, ...] = param_types) -> Type:
+            return _st(FunType(params=_pt, ret=t))
+
+        return name, _fun, params
+
+    def _parse_declarator(self) -> tuple[str, Callable[[Type], Type], tuple[Parameter, ...] | None]:
+        """Parse a declarator, returning the name, a type-builder, and optional parameters.
+
+        Grammar::
+
+            declarator        ::= "*" declarator | direct-declarator
+            direct-declarator ::= simple-declarator [param-list]
+            simple-declarator ::= identifier | "(" declarator ")"
+
+        The type-builder takes the base (specifier) type and returns the full derived type.
+        Examples with base type ``IntType()``:
+
+        * ``x``          → ``IntType()``
+        * ``*x``         → ``Pointer(IntType())``
+        * ``*(*(x))``    → ``Pointer(Pointer(IntType()))``
+        * ``*foo(void)`` → ``FunType(params=(), ret=Pointer(IntType()))``
+
+        Returns:
+            A ``(name, type_builder, params)`` triple where ``name`` is the declared
+            identifier, ``type_builder`` maps the base type to the derived type, and
+            ``params`` is a tuple of ``Parameter`` nodes when a parameter list was
+            present (function declarator) or ``None`` otherwise.
+
+        Raises:
+            ParseError: If the declarator is malformed.
+        """
+        if self._match(TokenType.ASTERISK):
+            self._consume()
+            inner_name, inner_transform, params = self._parse_declarator()
+
+            def _ptr(t: Type, _inner: Callable[[Type], Type] = inner_transform) -> Type:
+                return _inner(Pointer(t))
+
+            return inner_name, _ptr, params
+        return self._parse_direct_declarator()
 
 
 def parse(token_stream: list[Token]) -> Program:

@@ -23,7 +23,9 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
     variable_declaration = (identifier name, exp? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
-    type                 = Int | Long | UInt | ULong | Double | FunType(type* params, type ret)
+    type                 = Int | Long | UInt | ULong | Double
+                         | FunType(type* params, type ret)
+                         | Pointer(type referenced)
     storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
@@ -34,7 +36,9 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Binary(binary_operator, exp, exp)
                          | Assignment(exp, exp)
                          | Conditional(exp condition, exp exp_true, exp exp_false)
-                         | FunctionCall(identifier, exp* args)
+                         | FunctionCall(exp callee, exp* args)
+                         | Dereference(exp)
+                         | AddrOf(exp)
     unary_operator       = Complement | Negate | Not
                          | PreIncrement | PreDecrement
                          | PostIncrement | PostDecrement
@@ -102,11 +106,13 @@ from compiler.syntax.ast.declarations import (
     VariableDeclaration,
 )
 from compiler.syntax.ast.expressions import (
+    AddrOf,
     Assignment,
     Binary,
     Cast,
     Conditional,
     Constant,
+    Dereference,
     Exp,
     FunctionCall,
     Unary,
@@ -158,9 +164,22 @@ from compiler.syntax.ast.statements import (
     Switch,
     While,
 )
-from compiler.syntax.ast.types import DoubleType, FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
+from compiler.syntax.ast.types import (
+    DoubleType,
+    FunType,
+    IntType,
+    Linkage,
+    LongType,
+    Pointer,
+    Type,
+    UIntType,
+    ULongType,
+)
 
 __all__ = [
+    "Dereference",
+    "AddrOf",
+    "Pointer",
     "ConstDouble",
     "DoubleType",
     "ConstUInt",

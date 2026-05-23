@@ -81,6 +81,17 @@ class FunType(Type):
     ret: Type
 
 
+@dataclass(frozen=True, slots=True)
+class Pointer(Type):
+    """Represents a pointer within the C code
+
+    Attributes:
+        referenced: The type of the object the pointer references
+    """
+
+    referenced: Type
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 §6.2.2).
 

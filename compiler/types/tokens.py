@@ -66,7 +66,7 @@ class TokenType(Enum):
     INCREMENT = auto()
     # Binary Operators
     PLUS = auto()
-    TIMES = auto()
+    ASTERISK = auto()
     DIVIDE = auto()
     PERCENT = auto()  # Modulo operator
     LSHIFT = auto()  # <<

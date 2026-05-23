@@ -3,7 +3,7 @@
 import pytest
 
 from compiler.parser import parse
-from compiler.syntax.ast import Cast, Constant, ConstInt, ConstLong, IntType, LongType, Unary
+from compiler.syntax.ast import AddrOf, Cast, Constant, ConstInt, ConstLong, Dereference, IntType, LongType, Unary
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Var
 from compiler.syntax.ast.operators import (
     Add,
@@ -37,6 +37,7 @@ from test.parser.helpers import (
     _AMPERSAND,
     _AND,
     _ASSIGNMENT,
+    _ASTERISK,
     _BITWISE_NOT,
     _CARET,
     _COLON,
@@ -65,7 +66,6 @@ from test.parser.helpers import (
     _RPAREN,
     _RSHIFT,
     _SEMICOLON,
-    _TIMES,
     _VOID,
     _ident,
     _number,
@@ -124,7 +124,7 @@ class TestBinaryExpressions:
         [
             (_PLUS, Add()),
             (_MINUS, Subtract()),
-            (_TIMES, Multiply()),
+            (_ASTERISK, Multiply()),
             (_DIVIDE, Divide()),
             (_PERCENT, Remainder()),
         ],
@@ -136,13 +136,13 @@ class TestBinaryExpressions:
 
     def test_multiply_binds_tighter_than_add(self) -> None:
         """``return 1 + 2 * 3;`` → Add(1, Multiply(2, 3)) by precedence."""
-        assert _parsed_exp(_number("1"), _PLUS, _number("2"), _TIMES, _number("3")) == Binary(
+        assert _parsed_exp(_number("1"), _PLUS, _number("2"), _ASTERISK, _number("3")) == Binary(
             Add(), Constant(ConstInt(1)), Binary(Multiply(), Constant(ConstInt(2)), Constant(ConstInt(3)))
         )
 
     def test_multiply_binds_tighter_than_subtract(self) -> None:
         """``return 4 - 2 * 3;`` → Subtract(4, Multiply(2, 3)) by precedence."""
-        assert _parsed_exp(_number("4"), _MINUS, _number("2"), _TIMES, _number("3")) == Binary(
+        assert _parsed_exp(_number("4"), _MINUS, _number("2"), _ASTERISK, _number("3")) == Binary(
             Subtract(), Constant(ConstInt(4)), Binary(Multiply(), Constant(ConstInt(2)), Constant(ConstInt(3)))
         )
 
@@ -166,7 +166,7 @@ class TestBinaryExpressions:
 
     def test_parentheses_override_precedence(self) -> None:
         """``return (1 + 2) * 3;`` → Multiply(Add(1, 2), 3) via grouping."""
-        assert _parsed_exp(_LPAREN, _number("1"), _PLUS, _number("2"), _RPAREN, _TIMES, _number("3")) == Binary(
+        assert _parsed_exp(_LPAREN, _number("1"), _PLUS, _number("2"), _RPAREN, _ASTERISK, _number("3")) == Binary(
             Multiply(), Binary(Add(), Constant(ConstInt(1)), Constant(ConstInt(2))), Constant(ConstInt(3))
         )
 
@@ -587,4 +587,62 @@ class TestCastExpressions:
 
         assert _parsed_exp(_LPAREN, _INT, _RPAREN, _LPAREN, _LONG, _RPAREN, _ident("x")) == Cast(
             target_type=IntType(), exp=Cast(target_type=LongType(), exp=Var("x"))
+        )
+
+    def test_cast_to_pointer(self) -> None:
+        """``(int *)x`` → ``Cast(Pointer(IntType()), Var("x"))``."""
+        from compiler.syntax.ast import Pointer
+        from test.parser.helpers import _LONG  # noqa: F401
+
+        assert _parsed_exp(_LPAREN, _INT, _ASTERISK, _RPAREN, _ident("x")) == Cast(
+            target_type=Pointer(IntType()), exp=Var("x")
+        )
+
+    def test_cast_to_double_pointer(self) -> None:
+        """``(int **)x`` → ``Cast(Pointer(Pointer(IntType())), Var("x"))``."""
+        from compiler.syntax.ast import Pointer
+
+        assert _parsed_exp(_LPAREN, _INT, _ASTERISK, _ASTERISK, _RPAREN, _ident("x")) == Cast(
+            target_type=Pointer(Pointer(IntType())), exp=Var("x")
+        )
+
+
+# ---------------------------------------------------------------------------
+# Dereference and address-of (_parse_factor prefix operators)
+# ---------------------------------------------------------------------------
+
+
+class TestDereferenceAndAddrOf:
+    """Parser correctly builds ``Dereference`` and ``AddrOf`` nodes."""
+
+    def test_dereference_var(self) -> None:
+        """``return *p;`` → ``Dereference(Var("p"))``."""
+        assert _parsed_exp(_ASTERISK, _ident("p")) == Dereference(Var("p"))
+
+    def test_addr_of_var(self) -> None:
+        """``return &x;`` → ``AddrOf(Var("x"))``."""
+        assert _parsed_exp(_AMPERSAND, _ident("x")) == AddrOf(Var("x"))
+
+    def test_double_dereference(self) -> None:
+        """``return **pp;`` → ``Dereference(Dereference(Var("pp")))``."""
+        assert _parsed_exp(_ASTERISK, _ASTERISK, _ident("pp")) == Dereference(Dereference(Var("pp")))
+
+    def test_addr_of_dereference(self) -> None:
+        """``return &*p;`` → ``AddrOf(Dereference(Var("p")))``."""
+        assert _parsed_exp(_AMPERSAND, _ASTERISK, _ident("p")) == AddrOf(Dereference(Var("p")))
+
+    def test_dereference_of_addr_of(self) -> None:
+        """``return *&x;`` → ``Dereference(AddrOf(Var("x")))``."""
+        assert _parsed_exp(_ASTERISK, _AMPERSAND, _ident("x")) == Dereference(AddrOf(Var("x")))
+
+    def test_dereference_used_in_binary(self) -> None:
+        """``return *p + 1;`` — dereference binds tighter than addition."""
+        assert _parsed_exp(_ASTERISK, _ident("p"), _PLUS, _number("1")) == Binary(
+            Add(), Dereference(Var("p")), Constant(ConstInt(1))
+        )
+
+    def test_addr_of_used_in_assignment(self) -> None:
+        """``return q = &x;`` — address-of on the right-hand side of assignment."""
+        assert _parsed_exp(_ident("q"), _ASSIGNMENT, _AMPERSAND, _ident("x")) == Assignment(
+            lvalue=Var("q"), rvalue=AddrOf(Var("x"))
         )

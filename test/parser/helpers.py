@@ -9,6 +9,7 @@ import pytest  # noqa: F401 — re-exported for test modules that don't import i
 
 from compiler.parser import parse  # noqa: F401
 from compiler.syntax.ast import (  # noqa: F401
+    AddrOf,
     Block,
     BlockItem,
     Break,
@@ -21,6 +22,7 @@ from compiler.syntax.ast import (  # noqa: F401
     Continue,
     D,
     Default,
+    Dereference,
     DoWhile,
     Expression,
     For,
@@ -37,6 +39,7 @@ from compiler.syntax.ast import (  # noqa: F401
     LongType,
     Null,
     Parameter,
+    Pointer,
     Program,
     Return,
     S,
@@ -116,7 +119,7 @@ _SEMICOLON = _tok(TokenType.SEMICOLON, ";")
 _BITWISE_NOT = _tok(TokenType.BITWISE_NOT, "~")
 _MINUS = _tok(TokenType.MINUS, "-")
 _PLUS = _tok(TokenType.PLUS, "+")
-_TIMES = _tok(TokenType.TIMES, "*")
+_ASTERISK = _tok(TokenType.ASTERISK, "*")
 _DIVIDE = _tok(TokenType.DIVIDE, "/")
 _PERCENT = _tok(TokenType.PERCENT, "%")
 _LSHIFT = _tok(TokenType.LSHIFT, "<<")
