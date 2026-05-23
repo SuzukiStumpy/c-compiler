@@ -794,14 +794,17 @@ class TestTypeCheckExp:
         result = analyser._type_check_exp(ast.Var(name_map["x"]))
         assert result.exp_type == ast.LongType()
 
-    def test_var_with_function_name_raises(self) -> None:
-        """A ``Var`` whose resolved name maps to a ``FunAttr`` in the symbol table raises."""
+    def test_var_with_function_name_has_pointer_to_fun_type(self) -> None:
+        """A ``Var`` whose resolved name maps to a ``FunAttr`` is typed as a pointer to that function type.
+
+        C function-name decay: a function name used as a value yields a pointer to the function's type.
+        """
         analyser = SemanticAnalyser()
         analyser._register_fun_declaration(
             ast.Function("foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         )
-        with pytest.raises(SemanticError, match="Function name 'foo' used as a variable"):
-            analyser._type_check_exp(ast.Var("foo"))
+        result = analyser._type_check_exp(ast.Var("foo"))
+        assert result.exp_type == ast.Pointer(ast.FunType(params=(), ret=ast.IntType()))
 
     def test_var_undeclared_raises(self) -> None:
         """A ``Var`` whose name is absent from ``_type_table`` raises ``SemanticError``."""
@@ -977,7 +980,7 @@ class TestTypeCheckExp:
         analyser._register_fun_declaration(
             ast.Function("foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.LongType()))
         )
-        result = analyser._type_check_exp(ast.FunctionCall("foo", []))
+        result = analyser._type_check_exp(ast.FunctionCall(ast.Var("foo"), []))
         assert result.exp_type == ast.LongType()
 
     def test_function_call_int_return(self) -> None:
@@ -986,7 +989,7 @@ class TestTypeCheckExp:
         analyser._register_fun_declaration(
             ast.Function("bar", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         )
-        result = analyser._type_check_exp(ast.FunctionCall("bar", []))
+        result = analyser._type_check_exp(ast.FunctionCall(ast.Var("bar"), []))
         assert result.exp_type == ast.IntType()
 
     # ------------------------------------------------------------------

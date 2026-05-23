@@ -214,20 +214,20 @@ class TestTacGeneratorFunctionCall:
 
     def test_no_arg_call_produces_funcall(self) -> None:
         """``foo()`` emits a single ``FunCall`` before the ``Return``."""
-        instrs = _body(ast.FunctionCall(name="foo", args=[]))
+        instrs = _body(ast.FunctionCall(callee=ast.Var("foo"), args=[]))
         funcalls = [i for i in instrs if isinstance(i, tac.FunCall)]
         assert len(funcalls) == 1
         assert funcalls[0].name == "foo"
 
     def test_no_arg_call_has_empty_args(self) -> None:
         """A zero-argument call stores an empty args tuple in ``FunCall``."""
-        instrs = _body(ast.FunctionCall(name="foo", args=[]))
+        instrs = _body(ast.FunctionCall(callee=ast.Var("foo"), args=[]))
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
         assert funcall.args == ()
 
     def test_call_result_stored_in_temp(self) -> None:
         """The return value of a call is stored in a temporary that is then returned."""
-        instrs = _body(ast.FunctionCall(name="foo", args=[]))
+        instrs = _body(ast.FunctionCall(callee=ast.Var("foo"), args=[]))
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
         ret = instrs[-2]  # penultimate; last is the function guard
         assert isinstance(ret, tac.Return)
@@ -235,7 +235,7 @@ class TestTacGeneratorFunctionCall:
 
     def test_constant_arg_becomes_tac_constant(self) -> None:
         """A constant argument is passed directly as a ``tac.Constant``."""
-        instrs = _body(ast.FunctionCall(name="foo", args=[ast.Constant(value=ast.ConstInt(42))]))
+        instrs = _body(ast.FunctionCall(callee=ast.Var("foo"), args=[ast.Constant(value=ast.ConstInt(42))]))
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
         assert funcall.args == (tac.Constant(value=ast.ConstInt(42)),)
 
@@ -243,7 +243,7 @@ class TestTacGeneratorFunctionCall:
         """Multiple constant arguments appear in the ``FunCall.args`` tuple in declaration order."""
         instrs = _body(
             ast.FunctionCall(
-                name="add", args=[ast.Constant(value=ast.ConstInt(1)), ast.Constant(value=ast.ConstInt(2))]
+                callee=ast.Var("add"), args=[ast.Constant(value=ast.ConstInt(1)), ast.Constant(value=ast.ConstInt(2))]
             )
         )
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
@@ -253,7 +253,7 @@ class TestTacGeneratorFunctionCall:
         """A non-trivial argument expression is fully evaluated before the ``FunCall`` is emitted."""
         instrs = _body(
             ast.FunctionCall(
-                name="f",
+                callee=ast.Var("f"),
                 args=[ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))],
             )
         )
@@ -265,7 +265,7 @@ class TestTacGeneratorFunctionCall:
         """The temporary produced by evaluating an argument expression is passed as the arg value."""
         instrs = _body(
             ast.FunctionCall(
-                name="f",
+                callee=ast.Var("f"),
                 args=[ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1)))],
             )
         )
@@ -277,7 +277,7 @@ class TestTacGeneratorFunctionCall:
         """Arguments with side-effects are evaluated strictly left to right."""
         instrs = _body(
             ast.FunctionCall(
-                name="f",
+                callee=ast.Var("f"),
                 args=[
                     ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1))),
                     ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(2))),

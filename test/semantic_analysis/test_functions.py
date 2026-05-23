@@ -106,7 +106,7 @@ class TestFunctionDeclarations:
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             foo_decl,
-            ast.S(ast.Return(ast.FunctionCall("foo", []))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),
         )
         resolved = resolve(_program(body))
         assert len(_get_fn(resolved).body) == 3
@@ -120,12 +120,12 @@ class TestFunctionDeclarations:
         )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
-            ast.S(ast.Return(ast.FunctionCall("foo", []))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),
         )
         resolved = resolve(_program(body))
         return_stmt = _get_fn(resolved).body[1].statement
         assert isinstance(return_stmt, ast.Return)
-        assert return_stmt.exp == ast.FunctionCall("foo", [])
+        assert return_stmt.exp == ast.FunctionCall(ast.Var("foo"), [])
 
     def test_call_to_top_level_defined_function_declared_earlier_is_valid(self) -> None:
         """A ``FunctionCall`` to a function defined earlier in source order resolves without error."""
@@ -138,14 +138,14 @@ class TestFunctionDeclarations:
         bar = ast.Function(
             name="bar",
             params=(),
-            body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
+            body=(ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         program = _make_prog(foo, bar)
         resolved = resolve(program)
         return_stmt = _get_fn(resolved, 1).body[0].statement
         assert isinstance(return_stmt, ast.Return)
-        assert return_stmt.exp == ast.FunctionCall("foo", [])
+        assert return_stmt.exp == ast.FunctionCall(ast.Var("foo"), [])
 
     def test_call_to_top_level_function_defined_later_raises(self) -> None:
         """A ``FunctionCall`` to a function whose declaration has not yet appeared raises ``SemanticError``.
@@ -156,7 +156,7 @@ class TestFunctionDeclarations:
         bar = ast.Function(
             name="bar",
             params=(),
-            body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
+            body=(ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         foo = ast.Function(
@@ -171,7 +171,7 @@ class TestFunctionDeclarations:
 
     def test_call_to_undeclared_function_raises(self) -> None:
         """A ``FunctionCall`` to a name not in the function map raises ``SemanticError``."""
-        body: tuple[ast.BlockItem, ...] = (ast.S(ast.Return(ast.FunctionCall("ghost", []))),)
+        body: tuple[ast.BlockItem, ...] = (ast.S(ast.Return(ast.FunctionCall(ast.Var("ghost"), []))),)
         with pytest.raises(SemanticError, match="undeclared function"):
             resolve(_program(body))
 
@@ -190,7 +190,7 @@ class TestFunctionDeclarations:
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
             _vd("x", ast.Constant(1)),
-            ast.S(ast.Return(ast.FunctionCall("foo", [ast.Var("x")]))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), [ast.Var("x")]))),
         )
         resolved = resolve(_program(body))
         return_stmt = _get_fn(resolved).body[2].statement
@@ -416,7 +416,7 @@ class TestFunctionParameters:
         )
         body: tuple[ast.BlockItem, ...] = (
             foo_decl,
-            ast.S(ast.Return(ast.FunctionCall("foo", []))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),
         )
         with pytest.raises(SemanticError, match="static"):
             resolve(_program(body))
@@ -545,7 +545,7 @@ class TestArgumentCount:
         """Calling a one-parameter function with zero arguments raises ``SemanticError``."""
         body: tuple[ast.BlockItem, ...] = (
             self._fn_decl("foo", 1),
-            ast.S(ast.Return(ast.FunctionCall("foo", []))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),
         )
         with pytest.raises(SemanticError, match="called with 0 argument"):
             resolve(_program(body))
@@ -554,7 +554,7 @@ class TestArgumentCount:
         """Calling a zero-parameter function with one argument raises ``SemanticError``."""
         body: tuple[ast.BlockItem, ...] = (
             self._fn_decl("foo", 0),
-            ast.S(ast.Return(ast.FunctionCall("foo", [ast.Constant(1)]))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), [ast.Constant(1)]))),
         )
         with pytest.raises(SemanticError, match="called with 1 argument"):
             resolve(_program(body))
@@ -563,7 +563,7 @@ class TestArgumentCount:
         """A call whose argument count matches the declaration resolves without error."""
         body: tuple[ast.BlockItem, ...] = (
             self._fn_decl("foo", 2),
-            ast.S(ast.Return(ast.FunctionCall("foo", [ast.Constant(1), ast.Constant(2)]))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), [ast.Constant(1), ast.Constant(2)]))),
         )
         resolved = resolve(_program(body))
         ret = _get_fn(resolved).body[1].statement
@@ -574,10 +574,10 @@ class TestArgumentCount:
         """A call with no arguments to a zero-parameter function resolves without error."""
         body: tuple[ast.BlockItem, ...] = (
             self._fn_decl("foo", 0),
-            ast.S(ast.Return(ast.FunctionCall("foo", []))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),
         )
         resolved = resolve(_program(body))
-        assert _get_fn(resolved).body[1] == ast.S(ast.Return(ast.FunctionCall("foo", [])))
+        assert _get_fn(resolved).body[1] == ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), [])))
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +609,7 @@ class TestFunctionShadowsVariable:
                                 )
                             )
                         ),
-                        ast.S(ast.Expression(ast.FunctionCall("foo", []))),
+                        ast.S(ast.Expression(ast.FunctionCall(ast.Var("foo"), []))),
                         ast.S(ast.Return(ast.Constant(0))),
                     )
                 )
@@ -713,7 +713,7 @@ class TestTypeChecking:
         """
         body: tuple[ast.BlockItem, ...] = (
             _vd("x", ast.Constant(1)),
-            ast.S(ast.Return(ast.FunctionCall("x", []))),
+            ast.S(ast.Return(ast.FunctionCall(ast.Var("x"), []))),
         )
         with pytest.raises(SemanticError, match="Variable 'x' called as a function"):
             resolve(_program(body))
@@ -740,7 +740,7 @@ class TestTypeChecking:
         fn = ast.Function(
             name="foo",
             params=(ast.Parameter(param_type=ast.IntType(), name="p"),),
-            body=(ast.S(ast.Return(ast.FunctionCall("p", []))),),
+            body=(ast.S(ast.Return(ast.FunctionCall(ast.Var("p"), []))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="Variable 'p' called as a function"):
@@ -792,7 +792,7 @@ class TestTypeChecking:
                 statement=ast.Compound(
                     body=(
                         _vd("foo", ast.Constant(0)),
-                        ast.S(ast.Return(ast.FunctionCall("foo", []))),
+                        ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),
                     )
                 )
             ),
@@ -919,7 +919,7 @@ class TestFunctionLinkage:
         program = _make_prog(
             self._fn("foo", None),
             self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
-            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),)),
         )
         with pytest.raises(SemanticError, match="linkage"):
             resolve(program)
@@ -936,7 +936,7 @@ class TestFunctionLinkage:
         program = _make_prog(
             self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
             self._fn("foo", None),
-            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),)),
         )
         resolved = resolve(program)
         assert len(resolved.declarations) == 3
@@ -949,7 +949,7 @@ class TestFunctionLinkage:
         program = _make_prog(
             self._fn("foo", None, static=True),
             self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), extern=True),
-            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),)),
         )
         resolved = resolve(program)
         assert len(resolved.declarations) == 3
@@ -971,7 +971,7 @@ class TestFunctionLinkage:
             params=(),
             body=(
                 my_fun_decl,
-                ast.S(ast.Return(ast.FunctionCall("my_fun", []))),
+                ast.S(ast.Return(ast.FunctionCall(ast.Var("my_fun"), []))),
             ),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
@@ -979,7 +979,7 @@ class TestFunctionLinkage:
             self._fn("my_fun", None, static=True),
             caller_fn,
             self._fn("my_fun", (ast.S(ast.Return(ast.Constant(0))),), static=True),
-            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("my_fun", []))),)),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall(ast.Var("my_fun"), []))),)),
         )
         resolved = resolve(program)
         assert resolved is not None
@@ -988,7 +988,7 @@ class TestFunctionLinkage:
         """A ``static`` function defined with no prior declaration is accepted."""
         program = _make_prog(
             self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
-            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),)),
         )
         resolved = resolve(program)
         assert len(resolved.declarations) == 2
@@ -998,7 +998,7 @@ class TestFunctionLinkage:
         program = _make_prog(
             self._fn("foo", None, static=True),
             self._fn("foo", (ast.S(ast.Return(ast.Constant(0))),), static=True),
-            self._fn("main", (ast.S(ast.Return(ast.FunctionCall("foo", []))),)),
+            self._fn("main", (ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),)),
         )
         resolved = resolve(program)
         assert len(resolved.declarations) == 3

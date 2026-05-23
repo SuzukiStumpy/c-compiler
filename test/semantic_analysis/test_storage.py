@@ -9,8 +9,9 @@ import pytest
 
 import compiler.syntax.ast as ast
 from compiler.semantic_analysis import SemanticAnalyser, resolve
-from compiler.syntax.ast.constants import ConstInt
+from compiler.syntax.ast.constants import ConstDouble, ConstInt
 from compiler.syntax.ast.types import Linkage
+from compiler.types.symbols import PointerInit, StaticAttr, ULongInit
 from compiler.utils.exceptions import SemanticError
 from test.semantic_analysis.helpers import (
     _file_var,
@@ -102,7 +103,7 @@ class TestFileScopeVariableDeclarations:
         main_fn = ast.Function(
             name="main",
             params=(),
-            body=(ast.S(ast.Return(ast.FunctionCall("foo", []))),),
+            body=(ast.S(ast.Return(ast.FunctionCall(ast.Var("foo"), []))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
         with pytest.raises(SemanticError, match="redeclared as a variable"):
@@ -646,3 +647,113 @@ class TestCrossKindRedeclaration:
         )
         with pytest.raises(SemanticError, match="redeclared as a function"):
             resolve(_program(body))
+
+
+# ---------------------------------------------------------------------------
+# Static pointer initialisers
+# ---------------------------------------------------------------------------
+
+
+class TestStaticPointerInitialisers:
+    """Static variables of pointer type accept null pointer constants and addresses of static objects."""
+
+    # --- file-scope ---
+
+    def test_file_scope_pointer_null_init_stores_ulong_init(self) -> None:
+        """A file-scope ``int *`` initialised to ``0`` stores ``ULongInit(0)`` in the symbol table."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("p", ast.Constant(ConstInt(0)), ast.Pointer(ast.IntType()))
+        )
+        entry = analyser._symbol_table["p"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.init == ULongInit(0)
+
+    def test_file_scope_pointer_addr_of_static_stores_pointer_init(self) -> None:
+        """A file-scope ``int *`` initialised with ``&a`` stores ``PointerInit("a")`` in the symbol table."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("a", None, ast.IntType()))
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("p", ast.AddrOf(ast.Var("a")), ast.Pointer(ast.IntType()))
+        )
+        entry = analyser._symbol_table["p"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.init == PointerInit("a")
+
+    def test_file_scope_pointer_non_constant_init_raises(self) -> None:
+        """A file-scope pointer initialised with a non-constant, non-address expression raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="constant"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration(
+                    "p",
+                    ast.Binary(ast.Add(), ast.Constant(ConstInt(1)), ast.Constant(ConstInt(2))),
+                    ast.Pointer(ast.IntType()),
+                )
+            )
+
+    def test_file_scope_pointer_double_init_raises(self) -> None:
+        """A file-scope pointer initialised with a ``double`` constant raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="pointer"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration("p", ast.Constant(ConstDouble(0.0)), ast.Pointer(ast.IntType()))
+            )
+
+    def test_file_scope_pointer_addr_of_local_raises(self) -> None:
+        """A file-scope pointer initialised with the address of a non-static variable raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        # 'q' is not in the variable map at file scope, so &q cannot be resolved.
+        with pytest.raises(SemanticError):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration("p", ast.AddrOf(ast.Var("q")), ast.Pointer(ast.IntType()))
+            )
+
+    # --- block-scope static ---
+
+    def test_block_scope_static_pointer_null_init_stores_ulong_init(self) -> None:
+        """A block-scope ``static int *`` initialised to ``0`` stores ``ULongInit(0)`` in the symbol table."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration("p", ast.Constant(ConstInt(0)), ast.Pointer(ast.IntType()), ast.StorageClass.Static)
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.init == ULongInit(0)
+
+    def test_block_scope_static_pointer_addr_of_static_stores_pointer_init(self) -> None:
+        """A block-scope ``static int *`` initialised with ``&a`` (another static) stores ``PointerInit``."""
+        analyser = SemanticAnalyser()
+        a_result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration("a", None, ast.IntType(), ast.StorageClass.Static)
+        )
+        p_result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration("p", ast.AddrOf(ast.Var("a")), ast.Pointer(ast.IntType()), ast.StorageClass.Static)
+        )
+        entry = analyser._symbol_table[p_result.name]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.init == PointerInit(a_result.name)
+
+    def test_block_scope_static_pointer_addr_of_local_raises(self) -> None:
+        """A block-scope ``static int *`` initialised with the address of a local variable raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("a", None, ast.IntType()))
+        with pytest.raises(SemanticError, match="static storage duration"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "p", ast.AddrOf(ast.Var("a")), ast.Pointer(ast.IntType()), ast.StorageClass.Static
+                )
+            )
+
+    def test_block_scope_static_pointer_non_constant_init_raises(self) -> None:
+        """A block-scope ``static int *`` initialised with a non-constant expression raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="constant"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "p",
+                    ast.Binary(ast.Add(), ast.Constant(ConstInt(1)), ast.Constant(ConstInt(2))),
+                    ast.Pointer(ast.IntType()),
+                    ast.StorageClass.Static,
+                )
+            )

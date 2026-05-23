@@ -10,7 +10,9 @@ Grammar::
     attrs              = StaticAttr(initial_value, bool globl)
                        | FunAttr(bool defined, bool globl)
                        | LocalAttr
-    initial_value      = Initial(int)
+    initial_value      = Initial(int | float)
+                       | ULongInit(int)
+                       | PointerInit(str)
                        | Tentative
                        | NoInitializer
 
@@ -35,7 +37,7 @@ from compiler.syntax.ast.types import Type
 
 
 class InitialValue(ABC):
-    """Abstract base for the three possible initial-value states of a static variable."""
+    """Abstract base for the possible initial-value states of a static variable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,31 @@ class Initial(InitialValue):
     """
 
     value: int | float
+
+
+@dataclass(frozen=True, slots=True)
+class ULongInit(InitialValue):
+    """Initialiser for a static pointer variable set to the null pointer (64-bit zero).
+
+    Attributes:
+        value: Always zero; carried for structural uniformity with other numeric inits.
+    """
+
+    value: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PointerInit(InitialValue):
+    """Initialiser for a static pointer variable set to the address of a named static object.
+
+    Attributes:
+        name: The resolved (unique) name of the static variable whose address is used as
+            the initialiser.  For file-scope variables this is the original source name;
+            for block-scope ``static`` variables it is the unique internal identifier
+            assigned by the semantic analyser.
+    """
+
+    name: str
 
 
 @dataclass(frozen=True, slots=True)

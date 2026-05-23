@@ -65,17 +65,29 @@ from compiler.syntax.ast.operators import (
     Or,
     RightShift,
 )
-from compiler.syntax.ast.types import DoubleType, FunType, IntType, Linkage, LongType, Type, UIntType, ULongType
+from compiler.syntax.ast.types import (
+    DoubleType,
+    FunType,
+    IntType,
+    Linkage,
+    LongType,
+    Pointer,
+    Type,
+    UIntType,
+    ULongType,
+)
 from compiler.types.symbols import (
     FunAttr,
     Initial,
     InitialValue,
     LocalAttr,
     NoInitializer,
+    PointerInit,
     StaticAttr,
     SymbolTable,
     SymbolTableEntry,
     Tentative,
+    ULongInit,
 )
 from compiler.utils.exceptions import SemanticError
 
@@ -110,6 +122,103 @@ def get_common_type(type1: Type, type2: Type) -> Type:
     return type1 if size1 > size2 else type2
 
 
+def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
+    """Return the common pointer type for two expressions where at least one operand is a pointer.
+
+    Implements C's pointer-compatibility rules (C11 §6.5.15, §6.3.2.3): two pointer operands are
+    compatible when they share the same type, or when one of them is a null pointer constant (an
+    integer constant expression with value zero), in which case the other operand's type is used.
+
+    Args:
+        e1: The first operand expression, already resolved and typed by the semantic analysis pass.
+        e2: The second operand expression, already resolved and typed by the semantic analysis pass.
+
+    Returns:
+        The common ``Type`` to which both operands are compatible.
+
+    Raises:
+        SemanticError: If the two expressions have incompatible pointer types and neither is a null
+            pointer constant.
+    """
+    e1_t = e1.exp_type
+    e2_t = e2.exp_type
+    assert e1_t is not None and e2_t is not None
+    if e1_t == e2_t:
+        return e1_t
+    if _is_null_pointer_constant(e1):
+        return e2_t
+    if _is_null_pointer_constant(e2):
+        return e1_t
+    raise SemanticError("Expressions have incompatible types")
+
+
+def _convert_by_assignment(e: ast.Exp, target_type: Type) -> ast.Exp:
+    """Convert an expression to a target type using the rules for assignment compatibility (C11 §6.5.16.1).
+
+    The three legal cases are: the expression already has the target type; both the expression
+    and the target are arithmetic types (usual arithmetic conversions apply); or the expression
+    is a null pointer constant and the target is a pointer type.  All other combinations are
+    rejected as incompatible.
+
+    Args:
+        e: The source expression, already typed by the semantic analysis pass.
+        target_type: The type the expression must be converted to.
+
+    Returns:
+        ``e`` unchanged if it is already of ``target_type``, otherwise an ``ast.Cast`` node
+        wrapping ``e`` with ``exp_type`` set to ``target_type``.
+
+    Raises:
+        SemanticError: If the conversion is not permitted under the assignment-compatibility rules.
+    """
+    e_type = e.exp_type
+    assert e_type is not None
+    if e_type == target_type:
+        return e
+    if type(e_type) in _TYPE_SIZE and type(target_type) in _TYPE_SIZE:
+        return ast.Cast(target_type, e, exp_type=target_type)
+    if _is_null_pointer_constant(e) and isinstance(target_type, Pointer):
+        return ast.Cast(target_type, e, exp_type=target_type)
+    if isinstance(e_type, Pointer) or isinstance(target_type, Pointer):
+        raise SemanticError("Cannot implicitly convert between pointer and non-pointer types in assignment.")
+    raise SemanticError(f"Cannot convert expression of type '{e_type}' to '{target_type}' in assignment.")
+
+
+def _static_pointer_init(raw_init: ast.Exp, variable_map: "dict[str, VariableBinding]") -> InitialValue:
+    """Return the symbol-table ``InitialValue`` for a static pointer variable initialiser.
+
+    Must be called with the *unresolved* initialiser expression so that the original
+    source-level variable name is available for a linkage check.  Value/type compatibility
+    is enforced separately by ``_convert_by_assignment``; this function only classifies
+    the initialiser form and verifies static storage duration for address-of operands.
+
+    Args:
+        raw_init: The unresolved initialiser expression straight from the AST.
+        variable_map: The identifier resolution map at the point of the declaration, used
+            to verify that a ``&var`` operand has static storage duration.
+
+    Returns:
+        ``ULongInit(0)`` when *raw_init* is a constant (null pointer constant).
+        ``PointerInit(unique_name)`` when *raw_init* is ``&var`` for a static variable,
+        where *unique_name* is the variable's resolved identifier.
+
+    Raises:
+        SemanticError: If a ``&var`` operand is not in *variable_map* or has automatic
+            storage duration (``Linkage.NONE``).
+    """
+    if isinstance(raw_init, ast.Constant):
+        return ULongInit(0)
+    assert isinstance(raw_init, ast.AddrOf) and isinstance(raw_init.exp, ast.Var)
+    orig_name = raw_init.exp.name
+    binding = variable_map.get(orig_name)
+    if binding is None or binding.linkage == Linkage.NONE:
+        raise SemanticError(
+            f"Cannot use '&{orig_name}' as a static pointer initialiser: "
+            f"'{orig_name}' does not have static storage duration."
+        )
+    return PointerInit(binding.unique_name)
+
+
 def _truncate_case_value(val: int, switch_type: Type) -> int:
     """Truncate an integer case constant to the switch expression's type.
 
@@ -137,6 +246,26 @@ def _truncate_case_value(val: int, switch_type: Type) -> int:
             return val & 0xFFFFFFFFFFFFFFFF
         case _:
             return val
+
+
+def _is_null_pointer_constant(e: ast.Exp) -> bool:
+    """Check to see if an expression node evaluates to a constant zero value
+
+    Args:
+        e: The expression to check
+
+    Returns:
+        True if the expression is a zero constant, False otherwise
+    """
+    match e:
+        case ast.Constant(value=value):
+            match value:
+                case ast.ConstInt(0) | ast.ConstUInt(0) | ast.ConstLong(0) | ast.ConstULong(0):
+                    return True
+                case _:
+                    return False
+        case _:
+            return False
 
 
 class VariableBinding(NamedTuple):
@@ -490,19 +619,29 @@ class SemanticAnalyser:
                 linkage=linkage,
             )
             if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
-                if not isinstance(var_decl.init, ast.Constant):
+                if isinstance(var_decl.var_type, Pointer):
+                    if not (
+                        isinstance(var_decl.init, ast.Constant)
+                        or (isinstance(var_decl.init, ast.AddrOf) and isinstance(var_decl.init.exp, ast.Var))
+                    ):
+                        raise SemanticError(
+                            f"Initialiser of static pointer '{var_decl.name}' must be a null pointer constant "
+                            "or the address of a static variable."
+                        )
+                elif not isinstance(var_decl.init, ast.Constant):
                     raise SemanticError(
                         f"Initialiser of 'static' variable '{var_decl.name}' must be a constant expression."
                     )
             init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
-            if init is not None and init.exp_type is not None and type(init.exp_type) is not type(var_decl.var_type):
-                init = ast.Cast(var_decl.var_type, init, exp_type=var_decl.var_type)
+            if init is not None and init.exp_type is not None:
+                init = _convert_by_assignment(init, var_decl.var_type)
             if var_decl.storage_class == StorageClass.Static:
-                static_init: InitialValue = (
-                    Initial(var_decl.init.value.val)  # type: ignore[union-attr]
-                    if isinstance(var_decl.init, ast.Constant)
-                    else Tentative()
-                )
+                if var_decl.init is None:
+                    static_init: InitialValue = Tentative()
+                elif isinstance(var_decl.var_type, Pointer):
+                    static_init = _static_pointer_init(var_decl.init, self._variable_map)
+                else:
+                    static_init = Initial(var_decl.init.value.val)  # type: ignore[union-attr]
                 self._symbol_table[unique_name] = SymbolTableEntry(
                     t=var_decl.var_type, attrs=StaticAttr(init=static_init, globl=False)
                 )
@@ -541,8 +680,21 @@ class SemanticAnalyser:
             raise SemanticError(
                 f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
             )
-        if var_decl.init is not None and not isinstance(var_decl.init, ast.Constant):
-            raise SemanticError(f"Initialiser of file-scope variable '{var_decl.name}' must be a constant expression.")
+        if var_decl.init is not None:
+            if isinstance(var_decl.var_type, Pointer):
+                if not (
+                    isinstance(var_decl.init, ast.Constant)
+                    or (isinstance(var_decl.init, ast.AddrOf) and isinstance(var_decl.init.exp, ast.Var))
+                ):
+                    raise SemanticError(
+                        f"Initialiser of file-scope pointer '{var_decl.name}' must be a null pointer constant "
+                        "or the address of a static variable."
+                    )
+            elif not isinstance(var_decl.init, ast.Constant):
+                raise SemanticError(
+                    f"Initialiser of file-scope variable '{var_decl.name}' must be a constant expression."
+                )
+            _convert_by_assignment(self._type_check_exp(var_decl.init), var_decl.var_type)
         if var_decl.init is not None:
             if var_decl.name in self._file_scope_definitions:
                 raise SemanticError(f"Duplicate definition of file-scope variable '{var_decl.name}'.")
@@ -574,10 +726,14 @@ class SemanticAnalyser:
         globl = new_linkage == Linkage.EXTERNAL
         existing_entry = self._symbol_table.get(var_decl.name)
         if var_decl.init is not None:
-            assert isinstance(var_decl.init, ast.Constant)
+            if isinstance(var_decl.var_type, Pointer):
+                file_init: InitialValue = _static_pointer_init(var_decl.init, self._variable_map)
+            else:
+                assert isinstance(var_decl.init, ast.Constant)
+                file_init = Initial(var_decl.init.value.val)
             self._symbol_table[var_decl.name] = SymbolTableEntry(
                 t=var_decl.var_type,
-                attrs=StaticAttr(init=Initial(var_decl.init.value.val), globl=globl),
+                attrs=StaticAttr(init=file_init, globl=globl),
             )
         elif var_decl.storage_class == StorageClass.Extern:
             # A non-defining extern declaration — add a NoInitializer entry only when the name
@@ -788,7 +944,7 @@ class SemanticAnalyser:
             case ast.Var(name=name):
                 sym_entry = self._symbol_table.get(name)
                 if sym_entry is not None and isinstance(sym_entry.attrs, FunAttr):
-                    raise SemanticError(f"Function name '{name}' used as a variable.")
+                    return ast.Var(name, exp_type=Pointer(sym_entry.t))
                 var_type = self._type_table.get(name)
                 if var_type is None:
                     raise SemanticError(f"Undeclared variable {name}!")
@@ -807,54 +963,120 @@ class SemanticAnalyser:
                 typed_exp = self._type_check_exp(exp)
                 if isinstance(typed_exp.exp_type, DoubleType) and isinstance(op, ast.Complement):
                     raise SemanticError("Can't take the bitwise complement of a double")
+                if isinstance(typed_exp.exp_type, Pointer) and isinstance(op, (ast.Complement, ast.Negate)):
+                    raise SemanticError("Cannot apply bitwise complement or arithmetic negation to a pointer type.")
                 exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
                 return ast.Unary(op, typed_exp, exp_type=exp_type)
             case ast.Binary(operator=op, left=left, right=right):
                 typed_left = self._type_check_exp(left)
                 typed_right = self._type_check_exp(right)
+                left_is_ptr = isinstance(typed_left.exp_type, Pointer)
+                right_is_ptr = isinstance(typed_right.exp_type, Pointer)
+                either_is_ptr = left_is_ptr or right_is_ptr
                 if (
                     isinstance(typed_left.exp_type, DoubleType) or isinstance(typed_right.exp_type, DoubleType)
                 ) and isinstance(op, ast.Remainder):
                     raise SemanticError("Can't take the modulus of a double")
+                if either_is_ptr and isinstance(op, (ast.Multiply, ast.Divide, ast.Remainder)):
+                    raise SemanticError("Cannot apply multiplication, division, or remainder to a pointer type.")
                 if isinstance(op, (And, Or)):
                     bin_type: Type | None = IntType()
                 elif isinstance(op, (Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual)):
                     bin_type = IntType()
                     if typed_left.exp_type is not None and typed_right.exp_type is not None:
-                        common = get_common_type(typed_left.exp_type, typed_right.exp_type)
-                        if typed_left.exp_type != common:
-                            typed_left = ast.Cast(common, typed_left, exp_type=common)
-                        if typed_right.exp_type != common:
-                            typed_right = ast.Cast(common, typed_right, exp_type=common)
+                        if either_is_ptr:
+                            if isinstance(op, (Equal, NotEqual)):
+                                # Equality allows null pointer constants on either side (C11 §6.5.9).
+                                common = get_common_pointer_type(typed_left, typed_right)
+                                if typed_left.exp_type != common:
+                                    typed_left = ast.Cast(common, typed_left, exp_type=common)
+                                if typed_right.exp_type != common:
+                                    typed_right = ast.Cast(common, typed_right, exp_type=common)
+                            else:
+                                if typed_left.exp_type != typed_right.exp_type:
+                                    raise SemanticError(
+                                        "Cannot compare values of incompatible types: "
+                                        "pointer types are not implicitly convertible to or from arithmetic types."
+                                    )
+                        else:
+                            common = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                            if typed_left.exp_type != common:
+                                typed_left = ast.Cast(common, typed_left, exp_type=common)
+                            if typed_right.exp_type != common:
+                                typed_right = ast.Cast(common, typed_right, exp_type=common)
                 elif isinstance(op, (LeftShift, RightShift)):
                     if isinstance(typed_left.exp_type, DoubleType) or isinstance(typed_right.exp_type, DoubleType):
                         raise SemanticError("Can't apply shift operators to a double")
+                    if either_is_ptr:
+                        raise SemanticError("Cannot apply shift operators to a pointer type.")
                     # C §6.5.7: type of a shift is the type of the promoted left operand.
                     # The right operand is evaluated independently and not cast to a common type.
                     bin_type = typed_left.exp_type
                 else:
-                    if typed_left.exp_type is not None and typed_right.exp_type is not None:
-                        bin_type = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                    if either_is_ptr:
+                        if (left_is_ptr and isinstance(typed_left.exp_type.referenced, FunType)) or (
+                            right_is_ptr and isinstance(typed_right.exp_type.referenced, FunType)
+                        ):
+                            raise SemanticError("Cannot perform arithmetic on a function pointer type.")
+                        if isinstance(op, ast.Add):
+                            if left_is_ptr and right_is_ptr:
+                                raise SemanticError("Cannot add two pointers.")
+                            if left_is_ptr:
+                                if isinstance(typed_right.exp_type, DoubleType):
+                                    raise SemanticError(
+                                        "Cannot perform pointer arithmetic with a floating-point operand."
+                                    )
+                                bin_type = typed_left.exp_type
+                            else:
+                                if isinstance(typed_left.exp_type, DoubleType):
+                                    raise SemanticError(
+                                        "Cannot perform pointer arithmetic with a floating-point operand."
+                                    )
+                                bin_type = typed_right.exp_type
+                        elif isinstance(op, ast.Subtract):
+                            if left_is_ptr and right_is_ptr:
+                                if typed_left.exp_type != typed_right.exp_type:
+                                    raise SemanticError("Cannot subtract pointers of different types.")
+                                bin_type = LongType()
+                            elif left_is_ptr:
+                                if isinstance(typed_right.exp_type, DoubleType):
+                                    raise SemanticError(
+                                        "Cannot perform pointer arithmetic with a floating-point operand."
+                                    )
+                                bin_type = typed_left.exp_type
+                            else:
+                                raise SemanticError("Cannot subtract a pointer from a non-pointer value.")
+                        else:
+                            raise SemanticError("Cannot apply this operator to a pointer type.")
                     else:
-                        bin_type = typed_left.exp_type
-                    if bin_type is not None:
-                        if typed_left.exp_type != bin_type:
-                            typed_left = ast.Cast(bin_type, typed_left, exp_type=bin_type)
-                        if typed_right.exp_type != bin_type:
-                            typed_right = ast.Cast(bin_type, typed_right, exp_type=bin_type)
+                        if typed_left.exp_type is not None and typed_right.exp_type is not None:
+                            bin_type = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                        else:
+                            bin_type = typed_left.exp_type
+                        if bin_type is not None:
+                            if typed_left.exp_type != bin_type:
+                                typed_left = ast.Cast(bin_type, typed_left, exp_type=bin_type)
+                            if typed_right.exp_type != bin_type:
+                                typed_right = ast.Cast(bin_type, typed_right, exp_type=bin_type)
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
+                if not isinstance(typed_lv, (ast.Var, ast.Dereference)):
+                    raise SemanticError("Invalid lvalue in assignment expression.")
                 typed_rv = self._type_check_exp(rvalue)
-                if type(typed_rv.exp_type) is not type(typed_lv.exp_type):
-                    typed_rv = ast.Cast(typed_lv.exp_type, typed_rv, exp_type=typed_lv.exp_type)
-                return ast.Assignment(typed_lv, typed_rv, exp_type=typed_lv.exp_type)
+                lv_type = typed_lv.exp_type
+                if lv_type is not None:
+                    typed_rv = _convert_by_assignment(typed_rv, lv_type)
+                return ast.Assignment(typed_lv, typed_rv, exp_type=lv_type)
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 typed_cond = self._type_check_exp(cond)
                 typed_true = self._type_check_exp(exp_true)
                 typed_false = self._type_check_exp(exp_false)
                 if typed_true.exp_type is not None and typed_false.exp_type is not None:
-                    common_cond = get_common_type(typed_true.exp_type, typed_false.exp_type)
+                    if isinstance(typed_true.exp_type, Pointer) or isinstance(typed_false.exp_type, Pointer):
+                        common_cond = get_common_pointer_type(typed_true, typed_false)
+                    else:
+                        common_cond = get_common_type(typed_true.exp_type, typed_false.exp_type)
                     cond_type: Type | None = common_cond
                     if typed_true.exp_type != common_cond:
                         typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
@@ -863,26 +1085,56 @@ class SemanticAnalyser:
                 else:
                     cond_type = typed_true.exp_type
                 return ast.Conditional(typed_cond, typed_true, typed_false, exp_type=cond_type)
-            case ast.FunctionCall(name=name, args=args):
-                if name in self._variable_map and name not in self._current_block_funs:
-                    raise SemanticError(f"Variable '{name}' called as a function.")
-                if name not in self._function_map:
-                    raise SemanticError(f"Call to undeclared function '{name}'.")
-                fn_binding = self._function_map[name]
-                expected = len(fn_binding.param_types)
-                if len(args) != expected:
-                    raise SemanticError(
-                        f"Function '{name}' called with {len(args)} argument(s) but declared with {expected}."
+            case ast.FunctionCall(callee=callee, args=args):
+                if isinstance(callee, ast.Var) and callee.exp_type is None:
+                    fn_name = callee.name
+                    if fn_name not in self._function_map:
+                        raise SemanticError(f"Call to undeclared function '{fn_name}'.")
+                    fn_binding = self._function_map[fn_name]
+                    typed_callee: ast.Exp = ast.Var(
+                        fn_name,
+                        exp_type=FunType(params=fn_binding.param_types, ret=fn_binding.ret_type),
                     )
-                typed_args = []
-                for arg, param_type in zip(args, fn_binding.param_types):
-                    typed_arg = self._type_check_exp(arg)
-                    if typed_arg.exp_type != param_type:
-                        typed_arg = ast.Cast(param_type, typed_arg, exp_type=param_type)
-                    typed_args.append(typed_arg)
-                return ast.FunctionCall(name, typed_args, exp_type=fn_binding.ret_type)
+                    param_types = fn_binding.param_types
+                    fn_ret_type: Type = fn_binding.ret_type
+                else:
+                    typed_callee = self._type_check_exp(callee)
+                    callee_type = typed_callee.exp_type
+                    if isinstance(callee_type, FunType):
+                        param_types = callee_type.params
+                        fn_ret_type = callee_type.ret
+                    elif isinstance(callee_type, Pointer) and isinstance(callee_type.referenced, FunType):
+                        param_types = callee_type.referenced.params
+                        fn_ret_type = callee_type.referenced.ret
+                    else:
+                        raise SemanticError("Callee expression is not a function or function pointer.")
+                expected = len(param_types)
+                if len(args) != expected:
+                    raise SemanticError(f"Function called with {len(args)} argument(s) but declared with {expected}.")
+                typed_args = [
+                    _convert_by_assignment(self._type_check_exp(arg), param_type)
+                    for arg, param_type in zip(args, param_types)
+                ]
+                return ast.FunctionCall(typed_callee, typed_args, exp_type=fn_ret_type)
             case ast.Cast(target_type=target_type, exp=exp):
-                return ast.Cast(target_type, self._type_check_exp(exp), exp_type=target_type)
+                typed_inner = self._type_check_exp(exp)
+                if isinstance(target_type, Pointer) and isinstance(typed_inner.exp_type, DoubleType):
+                    raise SemanticError("Cannot cast a double to a pointer type.")
+                if isinstance(target_type, DoubleType) and isinstance(typed_inner.exp_type, Pointer):
+                    raise SemanticError("Cannot cast a pointer to a double.")
+                return ast.Cast(target_type, typed_inner, exp_type=target_type)
+            case ast.Dereference(exp=exp):
+                typed_exp = self._type_check_exp(exp)
+                if not isinstance(typed_exp.exp_type, Pointer):
+                    raise SemanticError("Cannot dereference a non-pointer type.")
+                return ast.Dereference(typed_exp, exp_type=typed_exp.exp_type.referenced)
+            case ast.AddrOf(exp=exp):
+                typed_exp = self._type_check_exp(exp)
+                if not isinstance(typed_exp, (ast.Var, ast.Dereference)):
+                    raise SemanticError("Operand of '&' must be an lvalue.")
+                if typed_exp.exp_type is None:
+                    raise SemanticError("Cannot take address of expression with unknown type.")
+                return ast.AddrOf(typed_exp, exp_type=Pointer(typed_exp.exp_type))
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -912,19 +1164,19 @@ class SemanticAnalyser:
                 ``_type_check_exp``.
         """
         match e:
-            case ast.Assignment(lvalue=ast.Var() as lvalue_var, rvalue=rvalue):
-                resolved_lvalue = self.resolve_exp(lvalue_var)
+            case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
+                resolved_lvalue = self.resolve_exp(lvalue)
                 resolved_rvalue = self.resolve_exp(rvalue)
                 return self._type_check_exp(ast.Assignment(resolved_lvalue, resolved_rvalue))
-            case ast.Assignment():
-                raise SemanticError("Invalid lvalue in assignment expression.")
             case ast.Var(name=name):
                 if name in self._current_block_funs:
                     raise SemanticError(f"Function name '{name}' used as a variable.")
                 if name in self._variable_map:
                     unique_name = self._variable_map[name].unique_name
                 elif name in self._function_map:
-                    raise SemanticError(f"Function name '{name}' used as a variable.")
+                    fn_binding = self._function_map[name]
+                    fun_type = FunType(params=fn_binding.param_types, ret=fn_binding.ret_type)
+                    return ast.Var(name, exp_type=Pointer(fun_type))
                 else:
                     raise SemanticError(f"Undeclared variable {name}!")
                 return self._type_check_exp(ast.Var(unique_name))
@@ -942,10 +1194,30 @@ class SemanticAnalyser:
                         self.resolve_exp(exp_false),
                     )
                 )
-            case ast.FunctionCall(name=name, args=args):
-                return self._type_check_exp(ast.FunctionCall(name, [self.resolve_exp(arg) for arg in args]))
+            case ast.FunctionCall(callee=callee, args=args):
+                if isinstance(callee, ast.Var):
+                    name = callee.name
+                    if name in self._variable_map and name not in self._current_block_funs:
+                        binding = self._variable_map[name]
+                        ptr_to_fun = isinstance(binding.var_type, Pointer) and isinstance(
+                            binding.var_type.referenced, FunType
+                        )
+                        if not ptr_to_fun:
+                            raise SemanticError(f"Variable '{name}' called as a function.")
+                        resolved_callee: ast.Exp = self.resolve_exp(callee)
+                    elif name in self._function_map or name in self._current_block_funs:
+                        resolved_callee = callee
+                    else:
+                        raise SemanticError(f"Call to undeclared function '{name}'.")
+                else:
+                    resolved_callee = self.resolve_exp(callee)
+                return self._type_check_exp(ast.FunctionCall(resolved_callee, [self.resolve_exp(arg) for arg in args]))
             case ast.Cast(target_type=target_type, exp=exp):
                 return self._type_check_exp(ast.Cast(target_type, self.resolve_exp(exp)))
+            case ast.Dereference(exp=exp):
+                return self._type_check_exp(ast.Dereference(self.resolve_exp(exp)))
+            case ast.AddrOf(exp=exp):
+                return self._type_check_exp(ast.AddrOf(self.resolve_exp(exp)))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -986,16 +1258,8 @@ class SemanticAnalyser:
                 return ast.Compound(self._resolve_block(block))
             case ast.Return(exp=exp):
                 resolved = self.resolve_exp(exp)
-                if (
-                    self._current_return_type is not None
-                    and resolved.exp_type is not None
-                    and type(resolved.exp_type) is not type(self._current_return_type)
-                ):
-                    resolved = ast.Cast(
-                        self._current_return_type,
-                        resolved,
-                        exp_type=self._current_return_type,
-                    )
+                if self._current_return_type is not None and resolved.exp_type is not None:
+                    resolved = _convert_by_assignment(resolved, self._current_return_type)
                 return ast.Return(resolved)
             case ast.Expression(exp=exp):
                 return ast.Expression(self.resolve_exp(exp))

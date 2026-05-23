@@ -95,10 +95,12 @@ from compiler.types.symbols import (
     Initial,
     LocalAttr,
     NoInitializer,
+    PointerInit,
     StaticAttr,
     SymbolTable,
     SymbolTableEntry,
     Tentative,
+    ULongInit,
 )
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -168,6 +170,14 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
                 else:
                     static_init = tac.IntInit(0)
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=static_init))
+            case StaticAttr(init=ULongInit(), globl=globl):
+                # Null pointer constant: pointer-sized (8-byte) zero.
+                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=tac.LongInit(0)))
+            case StaticAttr(init=PointerInit(name=target), globl=globl):
+                raise CodeGenerationError(
+                    f"Static pointer initialiser '&{target}' cannot yet be lowered to TAC: "
+                    "data-section pointer relocations are not yet implemented."
+                )
             case StaticAttr(init=NoInitializer()):
                 pass
             case _:
@@ -824,7 +834,7 @@ class _TacGenerator:
                     tac.Copy(src=e2_val, dst=dst),
                     label_end,
                 ]
-            case ast.FunctionCall(name=name, args=args):
+            case ast.FunctionCall(callee=callee, args=args):
                 arg_vals: list[tac.Val] = []
                 all_instrs: list[tac.Instruction] = []
                 for arg in args:
@@ -832,6 +842,8 @@ class _TacGenerator:
                     all_instrs.extend(instrs)
                     arg_vals.append(val)
                 dst = self._make_temp(exp.exp_type or ast.IntType())
-                return dst, [*all_instrs, tac.FunCall(name=name, args=tuple(arg_vals), dst=dst)]
+                if not isinstance(callee, ast.Var):
+                    raise CodeGenerationError("Indirect function calls through non-Var callees are not yet supported.")
+                return dst, [*all_instrs, tac.FunCall(name=callee.name, args=tuple(arg_vals), dst=dst)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")
