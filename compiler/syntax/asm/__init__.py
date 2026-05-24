@@ -6,9 +6,9 @@ and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
     program             = Program(top_level*)
-    assembly_type       = Longword | Quadword | Double
+    assembly_type       = Longword | Quadword | Double | ByteArray(int size, int alignment)
     top_level           = Function(identifier name, bool globl, instruction* instructions)
-                        | StaticVariable(identifier name, bool globl, int init, int alignment, static_init init)
+                        | StaticVariable(identifier name, bool globl, int init, int alignment, static_init* init_list)
                         | StaticConstant(identifier name, int alignment, static_init init)
     instruction         = Mov(assembly_type, operand src, operand dst)
                         | Movsx(operand src, operand dst)
@@ -42,6 +42,8 @@ for the supported assembly subset:
                         | Pseudo(identifier)
                         | Memory(reg, int)
                         | Data(identifier)
+                        | Indexed(reg base, reg index, int scale)
+                        | PseudoMem(identifier, int)
     cond_code           = E | NE | G | GE | L | LE | A | AE | B | BE
     reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP | BP
                         | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7
@@ -98,7 +100,18 @@ from compiler.syntax.asm.instructions import (
     Shr,
     Unary,
 )
-from compiler.syntax.asm.operands import Data, Imm, Memory, Operand, Pseudo, Register, Registers, Width
+from compiler.syntax.asm.operands import (
+    Data,
+    Imm,
+    Indexed,
+    Memory,
+    Operand,
+    Pseudo,
+    PseudoMem,
+    Register,
+    Registers,
+    Width,
+)
 from compiler.syntax.asm.operators import (
     Add,
     AddDouble,
@@ -116,7 +129,18 @@ from compiler.syntax.asm.operators import (
     Xor,
     XorDouble,
 )
-from compiler.syntax.asm.values import AssemblyType, DoubleInit, IntInit, LongInit, StaticInit
+from compiler.syntax.asm.values import (
+    AssemblyType,
+    ByteArray,
+    Double,
+    DoubleInit,
+    IntInit,
+    LongInit,
+    Longword,
+    Quadword,
+    StaticInit,
+    ZeroInit,
+)
 
 __all__ = [
     # instructions
@@ -166,8 +190,10 @@ __all__ = [
     # operands
     "Data",
     "Imm",
+    "Indexed",
     "Operand",
     "Pseudo",
+    "PseudoMem",
     "Register",
     "Registers",
     "Memory",
@@ -180,8 +206,13 @@ __all__ = [
     "TopLevel",
     # values
     "AssemblyType",
+    "ByteArray",
+    "Double",
     "DoubleInit",
     "IntInit",
     "LongInit",
+    "Longword",
+    "Quadword",
     "StaticInit",
+    "ZeroInit",
 ]

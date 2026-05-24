@@ -12,7 +12,7 @@ Consumers should use structural pattern matching (``match``/``case``) or call
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from compiler.syntax.asm.values import AssemblyType
+from compiler.syntax.asm.values import AssemblyType, Longword
 
 
 class UnaryOperator(ABC):
@@ -52,7 +52,7 @@ class Neg(UnaryOperator):
         Returns:
             ``"negl"`` for Longword, ``"negq"`` for Quadword.
         """
-        return "negl" if assembly_type == AssemblyType.Longword else "negq"
+        return "negl" if assembly_type == Longword() else "negq"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +71,7 @@ class Not(UnaryOperator):
         Returns:
             ``"notl"`` for Longword, ``"notq"`` for Quadword.
         """
-        return "notl" if assembly_type == AssemblyType.Longword else "notq"
+        return "notl" if assembly_type == Longword() else "notq"
 
 
 class BinaryOperator(ABC):
@@ -108,7 +108,7 @@ class Add(BinaryOperator):
         Returns:
             ``"addl"`` for Longword, ``"addq"`` for Quadword.
         """
-        return "addl" if assembly_type == AssemblyType.Longword else "addq"
+        return "addl" if assembly_type == Longword() else "addq"
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +124,7 @@ class Sub(BinaryOperator):
         Returns:
             ``"subl"`` for Longword, ``"subq"`` for Quadword.
         """
-        return "subl" if assembly_type == AssemblyType.Longword else "subq"
+        return "subl" if assembly_type == Longword() else "subq"
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +140,7 @@ class Mult(BinaryOperator):
         Returns:
             ``"imull"`` for Longword, ``"imulq"`` for Quadword.
         """
-        return "imull" if assembly_type == AssemblyType.Longword else "imulq"
+        return "imull" if assembly_type == Longword() else "imulq"
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +156,7 @@ class And(BinaryOperator):
         Returns:
             ``"andl"`` for Longword, ``"andq"`` for Quadword.
         """
-        return "andl" if assembly_type == AssemblyType.Longword else "andq"
+        return "andl" if assembly_type == Longword() else "andq"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +172,7 @@ class Or(BinaryOperator):
         Returns:
             ``"orl"`` for Longword, ``"orq"`` for Quadword.
         """
-        return "orl" if assembly_type == AssemblyType.Longword else "orq"
+        return "orl" if assembly_type == Longword() else "orq"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +188,7 @@ class Xor(BinaryOperator):
         Returns:
             ``"xorl"`` for Longword, ``"xorq"`` for Quadword.
         """
-        return "xorl" if assembly_type == AssemblyType.Longword else "xorq"
+        return "xorl" if assembly_type == Longword() else "xorq"
 
 
 @dataclass(frozen=True, slots=True)

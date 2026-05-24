@@ -191,3 +191,63 @@ class Data(Operand):
             A string of the form ``<name>(%rip)``, e.g. ``x(%rip)``.
         """
         return f"{self.name}(%rip)"
+
+
+@dataclass(frozen=True, slots=True)
+class Indexed(Operand):
+    """Represents an indexed offset operation of the type ``(<base> + <index> * <scale>)``.
+
+    Used for array element addressing in ``leaq`` instructions.  x86-64 restricts
+    ``scale`` to 1, 2, 4, or 8; callers must multiply the index by any other factor
+    before constructing this node and then use ``scale=1``.
+
+    Attributes:
+        base: The register holding the base address.
+        index: The register holding the (already-scaled or raw) index.
+        scale: The byte stride multiplier (must be 1, 2, 4, or 8).
+    """
+
+    base: Register
+    index: Register
+    scale: int
+
+    def emit(self) -> str:
+        """Return the indexed memory reference in AT&T syntax.
+
+        Returns:
+            A string of the form ``(<base>, <index>, <scale>)``,
+            e.g. ``(%r11, %r10, 4)``.
+        """
+        return f"({self.base.emit()}, {self.index.emit()}, {self.scale})"
+
+
+@dataclass(frozen=True, slots=True)
+class PseudoMem(Operand):
+    """Represents an aggregate object that has not yet been assigned a fixed address.
+
+    Similar to ``Pseudo`` but for aggregate (array/struct) types whose storage
+    spans more than one scalar register width.  ``offset`` selects a particular
+    byte within the aggregate — 0 designates the whole object's base address.
+
+    ``PseudoMem`` operands must be resolved to ``Memory`` operands by the
+    pseudo-replacement pass before emission.
+
+    Attributes:
+        name: Identifier of the aggregate variable.
+        offset: Byte offset from the start of the object.
+    """
+
+    name: str
+    offset: int
+
+    def emit(self) -> str:
+        """Raise; PseudoMem operands must be resolved before emission.
+
+        Raises:
+            AssertionError: Always — ``PseudoMem`` operands must be replaced
+                with ``Memory`` operands by the pseudo-replacement pass.
+
+        Returns:
+            Never returns normally.
+        """
+        raise AssertionError(f"PseudoMem operand '{self.name}+{self.offset}' was not resolved before emission")

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from compiler.syntax.asm.instructions import Instruction
 from compiler.syntax.asm.operands import Operand
-from compiler.syntax.asm.values import DoubleInit, IntInit, LongInit, StaticInit
+from compiler.syntax.asm.values import DoubleInit, IntInit, LongInit, StaticInit, ZeroInit
 
 
 class TopLevel(ABC):
@@ -85,46 +85,59 @@ class StaticVariable(TopLevel):
     """Represents the definition of a statically linked variable within the program.
 
     Attributes:
-        identifier: The name associated with the variable
-        globl: Whether the variable should be tagged with the .globl directive
-        alignment: The number of bytes to align the variable to in memory
-        init: The initial value of the variable to set
+        identifier: The name associated with the variable.
+        globl: Whether the variable should be tagged with the ``.globl`` directive.
+        alignment: The number of bytes to align the variable to in memory.
+        init: Ordered sequence of zero or more initialiser elements.  Scalars have
+            exactly one entry; arrays have one entry per element (or a single
+            ``ZeroInit`` spanning the whole region).  An empty tuple is treated as
+            fully zero-initialised.
     """
 
     identifier: str
     globl: bool
     alignment: int
-    init: StaticInit
+    init: tuple[StaticInit, ...]
 
     def emit(self) -> str:
         """Return the assembly text for the variable definition.
 
-        Produces a .globl definition if required, followed by the label and initial
-        value for the variable.
+        Chooses ``.bss`` when every initialiser element is zero-valued (``ZeroInit``
+        or a scalar integer init with value 0); otherwise uses ``.data``.  Each
+        element is emitted as the appropriate assembler directive.
+
+        Returns:
+            A multi-line assembly string containing the section, alignment, label,
+            and data directives.
         """
         lines = []
 
         if self.globl:
             lines.append(f"   .globl {self.identifier}")
 
-        is_zero_int = self.init.value == 0 and isinstance(self.init, (IntInit, LongInit))
-        lines.append("   .bss" if is_zero_int else "   .data")
+        in_bss = all(
+            isinstance(i, ZeroInit) or (isinstance(i, (IntInit, LongInit)) and i.value == 0) for i in self.init
+        )
+        lines.append("   .bss" if in_bss else "   .data")
         lines.append(f"   .balign {self.alignment}")
         lines.append(f"{self.identifier}:")
 
-        match self.init:
-            case IntInit(value=0):
-                lines.append("   .zero 4")
-            case IntInit(value=v):
-                lines.append(f"   .long {v}")
-            case LongInit(value=0):
-                lines.append("   .zero 8")
-            case LongInit(value=v):
-                lines.append(f"   .quad {v}")
-            case DoubleInit(value=0.0):
-                lines.append("   .zero 8")
-            case DoubleInit() as d:
-                lines.append(f"   .quad {d.as_bits()}")
+        for init in self.init:
+            match init:
+                case ZeroInit(bytes=n):
+                    lines.append(f"   .zero {n}")
+                case IntInit(value=0):
+                    lines.append("   .zero 4")
+                case IntInit(value=v):
+                    lines.append(f"   .long {v}")
+                case LongInit(value=0):
+                    lines.append("   .zero 8")
+                case LongInit(value=v):
+                    lines.append(f"   .quad {v}")
+                case DoubleInit(value=0.0):
+                    lines.append("   .zero 8")
+                case DoubleInit() as d:
+                    lines.append(f"   .quad {d.as_bits()}")
 
         return "\n".join(lines)
 

@@ -810,7 +810,7 @@ class TestDoubleRelationalCodeGen:
     def test_double_relational_emits_ucomisd(self) -> None:
         """Double comparisons emit a ``Cmp`` (``ucomisd``) instruction."""
         instrs = _double_fn_instrs(tac.Equal())
-        assert any(isinstance(i, asm.Cmp) and i.assembly_type == asm.AssemblyType.Double for i in instrs)
+        assert any(isinstance(i, asm.Cmp) and i.assembly_type == asm.Double() for i in instrs)
 
 
 # ---------------------------------------------------------------------------
@@ -967,7 +967,7 @@ def _program_with_statics(*static_names: str, body: tuple[tac.Instruction, ...])
         A ``tac.Program`` whose ``top_level`` begins with a ``StaticVariable`` for each
         name in ``static_names``, followed by a single ``main`` function.
     """
-    statics = tuple(tac.StaticVariable(name=n, globl=True, t=IntType(), init=tac.IntInit(0)) for n in static_names)
+    statics = tuple(tac.StaticVariable(name=n, globl=True, t=IntType(), init=(tac.IntInit(0),)) for n in static_names)
     return tac.Program(top_level=statics + (tac.Function(name="main", body=body),))
 
 
@@ -1185,7 +1185,7 @@ class TestPushMemOperandFixup:
 
     def test_push_data_operand_expanded(self) -> None:
         """A stack-passed static variable is not emitted as a direct ``Push(Data)``."""
-        static = tac.StaticVariable(name="g", globl=True, t=IntType(), init=tac.IntInit(0))
+        static = tac.StaticVariable(name="g", globl=True, t=IntType(), init=(tac.IntInit(0),))
         program = _seven_arg_call_program(static, seventh_arg=tac.Var("g"))
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Push):
@@ -1261,7 +1261,7 @@ class TestBinaryLargeImmFixup:
             op: The binary operator to test (Add, Subtract, Multiply).
         """
         for instr in self._long_binary_instructions(op):
-            if isinstance(instr, asm.Binary) and instr.assembly_type == asm.AssemblyType.Quadword:
+            if isinstance(instr, asm.Binary) and instr.assembly_type == asm.Quadword():
                 assert not (
                     isinstance(instr.src2, asm.Imm) and not (-(1 << 31) <= instr.src2.value <= (1 << 31) - 1)
                 ), "Binary kept large Imm as src2 after fixup"
@@ -1305,7 +1305,7 @@ class TestCmpBothLargeImmFixup:
             )
         )
         for instr in _fn_instructions(program):
-            if isinstance(instr, asm.Cmp) and instr.assembly_type == asm.AssemblyType.Quadword:
+            if isinstance(instr, asm.Cmp) and instr.assembly_type == asm.Quadword():
                 assert not (isinstance(instr.op1, asm.Imm) and not (-(1 << 31) <= instr.op1.value <= (1 << 31) - 1)), (
                     "large Imm survived as Cmp.op1 after fixup"
                 )

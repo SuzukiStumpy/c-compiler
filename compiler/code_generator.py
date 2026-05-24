@@ -56,7 +56,8 @@ import itertools
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.syntax.ast.constants import ConstDouble, ConstInt, ConstLong, ConstUInt, ConstULong
-from compiler.syntax.ast.types import DoubleType, LongType, Pointer, UIntType, ULongType
+from compiler.syntax.ast.types import Array as ArrayType
+from compiler.syntax.ast.types import DoubleType, IntType, LongType, Pointer, Type, UIntType, ULongType
 from compiler.types.symbols import FunAttr, StaticAttr, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -115,21 +116,21 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
     """
     match val:
         case tac.Constant(value=ConstInt() | ConstUInt()):
-            return asm.AssemblyType.Longword
+            return asm.Longword()
         case tac.Constant(value=ConstLong() | ConstULong()):
-            return asm.AssemblyType.Quadword
+            return asm.Quadword()
         case tac.Constant(value=ConstDouble()):
-            return asm.AssemblyType.Double
+            return asm.Double()
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
             match symbol_table[name].t:
                 case LongType() | ULongType() | Pointer():
-                    return asm.AssemblyType.Quadword
+                    return asm.Quadword()
                 case DoubleType():
-                    return asm.AssemblyType.Double
+                    return asm.Double()
                 case _:
-                    return asm.AssemblyType.Longword
+                    return asm.Longword()
         case _:
-            return asm.AssemblyType.Longword
+            return asm.Longword()
 
 
 def _reg_width(assembly_type: asm.AssemblyType) -> asm.Width:
@@ -141,7 +142,7 @@ def _reg_width(assembly_type: asm.AssemblyType) -> asm.Width:
     Returns:
         ``Width.DWORD`` for Longword, ``Width.QWORD`` for Quadword.
     """
-    return asm.Width.DWORD if assembly_type == asm.AssemblyType.Longword else asm.Width.QWORD
+    return asm.Width.DWORD if assembly_type == asm.Longword() else asm.Width.QWORD
 
 
 def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
@@ -161,7 +162,7 @@ def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
         case tac.Constant(value=ConstUInt() | ConstULong()):
             return True
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
-            return isinstance(symbol_table[name].t, (UIntType, ULongType))
+            return isinstance(symbol_table[name].t, (UIntType, ULongType, Pointer))
         case _:
             return False
 
@@ -215,23 +216,66 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
                 fixed_fn = _fix_instructions(resolved_fn)
                 definitions.append(_add_stack_allocation(fixed_fn, stack_size))
             case tac.StaticVariable(name=name, globl=globl, t=t, init=init):
-                alignment = 8 if isinstance(t, (LongType, ULongType, DoubleType, Pointer)) else 4
                 definitions.append(
                     asm.StaticVariable(
                         identifier=name,
                         globl=globl,
-                        alignment=alignment,
-                        init=_translate_static_init(init),
+                        alignment=_static_alignment(t),
+                        init=tuple(_translate_static_init(i) for i in init),
                     )
                 )
     return asm.Program(definitions=tuple(constants + definitions))
 
 
-def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
-    """Convert a TAC static initialiser to its assembly counterpart.
+def _type_size(t: Type) -> int:
+    """Return the size in bytes of a C type.
 
     Args:
-        init: The TAC ``StaticInit`` node (``IntInit`` or ``LongInit``).
+        t: The C type whose size is required.
+
+    Returns:
+        4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``/``double``/pointer;
+        element_size * count for arrays.
+    """
+    if isinstance(t, (IntType, UIntType)):
+        return 4
+    if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
+        return 8
+    if isinstance(t, ArrayType):
+        return t.size * _type_size(t.element)
+    return 8
+
+
+def _static_alignment(t: Type) -> int:
+    """Return the data-segment alignment in bytes for a static variable of type ``t``.
+
+    Arrays >= 16 bytes are aligned to 16 bytes so SSE instructions can address them
+    directly.  Arrays smaller than 16 bytes use the alignment of their element type.
+    The rule applies only to the outermost array; element alignment within the array
+    is not affected.
+
+    Args:
+        t: The C type of the static variable.
+
+    Returns:
+        16 for arrays whose total size is >= 16 bytes; the element-type alignment
+        for smaller arrays; 8 for ``long``, ``unsigned long``, ``double``, or any
+        pointer; 4 otherwise.
+    """
+    if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
+        return 8
+    if isinstance(t, ArrayType):
+        if _type_size(t) >= 16:
+            return 16
+        return _static_alignment(t.element)
+    return 4
+
+
+def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
+    """Convert a single TAC static initialiser element to its assembly counterpart.
+
+    Args:
+        init: One element of a ``tac.StaticVariable.init`` tuple.
 
     Returns:
         The corresponding ``asm.StaticInit`` node.
@@ -246,6 +290,8 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
             return asm.LongInit(v)
         case tac.DoubleInit(value=v):
             return asm.DoubleInit(v)
+        case tac.ZeroInit(bytes=n):
+            return asm.ZeroInit(n)
         case _:
             raise CodeGenerationError(f"unsupported static initialiser: {type(init).__name__}")
 
@@ -292,7 +338,7 @@ def _translate_function(
 
     for param in fn.params:
         at = _asm_type(tac.Var(param), symbol_table)
-        if at == asm.AssemblyType.Double:
+        if at == asm.Double():
             if xmm_reg_idx < len(_XMM_REGS):
                 src: asm.Operand = asm.Register(_XMM_REGS[xmm_reg_idx], asm.Width.QWORD)
                 xmm_reg_idx += 1
@@ -342,25 +388,25 @@ def _translate_binary(
     Raises:
         CodeGenerationError: If the operator variant is not supported.
     """
-    src1_asm = _translate_val(src1, constants)
-    src2_asm = _translate_val(src2, constants)
-    dst_asm = _translate_val(dst, constants)
+    src1_asm = _translate_val(src1, constants, symbol_table)
+    src2_asm = _translate_val(src2, constants, symbol_table)
+    dst_asm = _translate_val(dst, constants, symbol_table)
     match op:
         case (
             tac.Equal() | tac.NotEqual() | tac.LessThan() | tac.LessOrEqual() | tac.GreaterThan() | tac.GreaterOrEqual()
         ):
             cmp_at = _asm_type(src1, symbol_table)
-            if cmp_at == asm.AssemblyType.Double:
+            if cmp_at == asm.Double():
                 return _translate_double_comparison(op, src1_asm, src2_asm, dst_asm)
             unsigned = _is_unsigned(src1, symbol_table)
             return [
                 asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=cmp_at),
-                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.SetCC(_translate_relational_op(op, unsigned), dst_asm),
             ]
         case tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor():
             at = _asm_type(dst, symbol_table)
-            if at == asm.AssemblyType.Double:
+            if at == asm.Double():
                 xmm15 = asm.Register(asm.Registers.XMM15, asm.Width.QWORD)
                 return [
                     asm.Binary(
@@ -389,7 +435,7 @@ def _translate_binary(
             cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
             return [
                 asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
-                asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.Longword()),
                 asm.Shl(operand=r11, assembly_type=at),
                 asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
             ]
@@ -405,13 +451,13 @@ def _translate_binary(
             )
             return [
                 asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
-                asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.Longword()),
                 shift,
                 asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
             ]
         case tac.Divide():
             at = _asm_type(dst, symbol_table)
-            if at == asm.AssemblyType.Double:
+            if at == asm.Double():
                 xmm15 = asm.Register(asm.Registers.XMM15, asm.Width.QWORD)
                 return [
                     asm.Binary(
@@ -476,7 +522,7 @@ def _zero_operand_for(at: asm.AssemblyType, constants: list[asm.TopLevel] | None
         An ``Imm(0)`` for integer types, or a ``Data`` reference to 0.0 for
         ``Double``.
     """
-    if at == asm.AssemblyType.Double:
+    if at == asm.Double():
         zero_bits = asm.DoubleInit(0.0).as_bits()
         label = f"double_const.{zero_bits}"
         if constants is not None and not any(
@@ -509,8 +555,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
     match instr:
         case tac.Return(val=val):
             at = _asm_type(val, symbol_table)
-            val_asm = _translate_val(val, constants)
-            if at == asm.AssemblyType.Double:
+            val_asm = _translate_val(val, constants, symbol_table)
+            if at == asm.Double():
                 xmm0 = asm.Register(asm.Registers.XMM0, asm.Width.QWORD)
                 return [asm.Mov(src=val_asm, dst=xmm0, assembly_type=at), asm.Ret()]
             ax = asm.Register(asm.Registers.AX, _reg_width(at))
@@ -520,8 +566,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         case tac.JumpIfZero(condition=condition, target=target):
             at = _asm_type(condition, symbol_table)
             op1 = _zero_operand_for(at, constants)
-            cond_asm = _translate_val(condition, constants)
-            if at == asm.AssemblyType.Double:
+            cond_asm = _translate_val(condition, constants, symbol_table)
+            if at == asm.Double():
                 # ucomisd sets PF=1 for NaN; je fires on ZF=1 which is also set by NaN.
                 # Skip the je when PF=1 so NaN is never treated as zero.
                 skip_label = f"nan_jz.{_fresh_uid()}"
@@ -538,8 +584,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         case tac.JumpIfNotZero(condition=condition, target=target):
             at = _asm_type(condition, symbol_table)
             op1 = _zero_operand_for(at, constants)
-            cond_asm = _translate_val(condition, constants)
-            if at == asm.AssemblyType.Double:
+            cond_asm = _translate_val(condition, constants, symbol_table)
+            if at == asm.Double():
                 # ucomisd sets PF=1 and ZF=1 for NaN; jne checks ZF=0 so misses NaN.
                 # Jump on PF first so NaN is treated as nonzero.
                 return [
@@ -552,8 +598,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
                 asm.JmpCC(asm.CondCodes.NE, target),
             ]
         case tac.Copy(src=src, dst=dst):
-            src_asm = _translate_val(src, constants)
-            dst_asm = _translate_val(dst, constants)
+            src_asm = _translate_val(src, constants, symbol_table)
+            dst_asm = _translate_val(dst, constants, symbol_table)
             # A function name used as a value carries its address, not a dereferenceable word;
             # use Lea so the emitter produces leaq <fn>(%rip), <dst> rather than a movq.
             if (
@@ -569,29 +615,29 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
             return [asm.Label(name)]
         case tac.Unary(operator=op, src=src, dst=dst):
             at = _asm_type(dst, symbol_table)
-            src_asm = _translate_val(src, constants)
-            dst_asm = _translate_val(dst, constants)
+            src_asm = _translate_val(src, constants, symbol_table)
+            dst_asm = _translate_val(dst, constants, symbol_table)
             match op:
                 case tac.Not():
                     src_at = _asm_type(src, symbol_table)
                     zero = _zero_operand_for(src_at, constants)
-                    if src_at == asm.AssemblyType.Double:
+                    if src_at == asm.Double():
                         # ucomisd sets PF=1 and ZF=1 for NaN; sete fires on ZF=1 so would
                         # return 1 for NaN.  Jump over sete when PF=1 so !NaN stays 0.
                         nan_label = f"nan_not.{_fresh_uid()}"
                         return [
                             asm.Cmp(op1=zero, op2=src_asm, assembly_type=src_at),
-                            asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                            asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                             asm.JmpCC(asm.CondCodes.P, nan_label),
                             asm.SetCC(asm.CondCodes.E, dst_asm),
                             asm.Label(nan_label),
                         ]
                     return [
                         asm.Cmp(op1=zero, op2=src_asm, assembly_type=src_at),
-                        asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                        asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                         asm.SetCC(asm.CondCodes.E, dst_asm),
                     ]
-                case tac.Negate() if at == asm.AssemblyType.Double:
+                case tac.Negate() if at == asm.Double():
                     # IEEE 754 negation flips only the sign bit; use xorpd with -0.0 (sign bit set).
                     sign_mask_bits = asm.DoubleInit(-0.0).as_bits()
                     sign_mask_label = f"double_const.{sign_mask_bits}"
@@ -620,22 +666,51 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         case tac.Binary(operator=op, src1=src1, src2=src2, dst=dst):
             return _translate_binary(op, src1, src2, dst, symbol_table, constants)
         case tac.FunCall(fun_val=fun_val, args=args, dst=dst):
-            return _translate_funcall(fun_val, list(args), _translate_val(dst), symbol_table, constants)
+            dst_asm = _translate_val(dst, None, symbol_table)
+            return _translate_funcall(fun_val, list(args), dst_asm, symbol_table, constants)
         case tac.SignExtend(src=src, dst=dst):
-            return [asm.Movsx(src=_translate_val(src), dst=_translate_val(dst))]
+            return [
+                asm.Movsx(
+                    src=_translate_val(src, None, symbol_table),
+                    dst=_translate_val(dst, None, symbol_table),
+                )
+            ]
         case tac.ZeroExtend(src=src, dst=dst):
-            return [asm.MoveZeroExtend(src=_translate_val(src), dst=_translate_val(dst))]
+            return [
+                asm.MoveZeroExtend(
+                    src=_translate_val(src, None, symbol_table),
+                    dst=_translate_val(dst, None, symbol_table),
+                )
+            ]
         case tac.Truncate(src=src, dst=dst):
             # Copying only the lower 32 bits via movl achieves truncation from long → int.
-            return [asm.Mov(src=_translate_val(src), dst=_translate_val(dst), assembly_type=asm.AssemblyType.Longword)]
+            return [
+                asm.Mov(
+                    src=_translate_val(src, None, symbol_table),
+                    dst=_translate_val(dst, None, symbol_table),
+                    assembly_type=asm.Longword(),
+                )
+            ]
         case tac.DoubleToInt(src=src, dst=dst):
             # assembly_type controls the destination integer width (l = int, q = long).
             at = _asm_type(dst, symbol_table)
-            return [asm.Cvttsd2si(src=_translate_val(src, constants), dst=_translate_val(dst), assembly_type=at)]
+            return [
+                asm.Cvttsd2si(
+                    src=_translate_val(src, constants, symbol_table),
+                    dst=_translate_val(dst, None, symbol_table),
+                    assembly_type=at,
+                )
+            ]
         case tac.IntToDouble(src=src, dst=dst):
             # assembly_type controls the source integer width (l = int, q = long).
             at = _asm_type(src, symbol_table)
-            return [asm.Cvtsi2sd(src=_translate_val(src, constants), dst=_translate_val(dst), assembly_type=at)]
+            return [
+                asm.Cvtsi2sd(
+                    src=_translate_val(src, constants, symbol_table),
+                    dst=_translate_val(dst, None, symbol_table),
+                    assembly_type=at,
+                )
+            ]
         case tac.UIntToDouble(src=src, dst=dst):
             return _translate_uint_to_double(src, dst, symbol_table)
         case tac.DoubleToUInt(src=src, dst=dst):
@@ -643,24 +718,54 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         case tac.Load(src_ptr=src_ptr, dst=dst):
             at = _asm_type(dst, symbol_table)
             ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            dst_asm = _translate_val(dst, constants, symbol_table)
             return [
-                asm.Mov(src=_translate_val(src_ptr, constants), dst=ax, assembly_type=asm.AssemblyType.Quadword),
-                asm.Mov(src=asm.Memory(reg=ax, offset=0), dst=_translate_val(dst, constants), assembly_type=at),
+                asm.Mov(src=_translate_val(src_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()),
+                asm.Mov(src=asm.Memory(reg=ax, offset=0), dst=dst_asm, assembly_type=at),
             ]
         case tac.Store(src=src, dst_ptr=dst_ptr):
             at = _asm_type(src, symbol_table)
             ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            src_asm = _translate_val(src, constants, symbol_table)
             return [
-                asm.Mov(src=_translate_val(dst_ptr, constants), dst=ax, assembly_type=asm.AssemblyType.Quadword),
-                asm.Mov(src=_translate_val(src, constants), dst=asm.Memory(reg=ax, offset=0), assembly_type=at),
+                asm.Mov(src=_translate_val(dst_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()),
+                asm.Mov(src=src_asm, dst=asm.Memory(reg=ax, offset=0), assembly_type=at),
             ]
         case tac.GetAddress(src=src, dst=dst):
-            src_asm = _translate_val(src, constants)
+            src_asm = _translate_val(src, constants, symbol_table)
             if isinstance(src_asm, (asm.Imm, asm.Register)):
                 raise CodeGenerationError(
                     f"GetAddress requires an addressable memory operand, got {type(src_asm).__name__}"
                 )
-            return [asm.Lea(src=src_asm, dst=_translate_val(dst, constants))]
+            return [asm.Lea(src=src_asm, dst=_translate_val(dst, constants, symbol_table))]
+        case tac.CopyToOffset(src=src, dst=dst_name, offset=offset):
+            at = _asm_type(src, symbol_table)
+            src_asm = _translate_val(src, constants, symbol_table)
+            return [asm.Mov(src=src_asm, dst=asm.PseudoMem(dst_name, offset), assembly_type=at)]
+        case tac.AddPtr(ptr=ptr, index=index, scale=scale, dst=dst):
+            r10 = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+            r11 = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+            ptr_asm = _translate_val(ptr, constants, symbol_table)
+            index_asm = _translate_val(index, constants, symbol_table)
+            dst_asm = _translate_val(dst, constants, symbol_table)
+            instrs: list[asm.Instruction] = [
+                asm.Mov(src=ptr_asm, dst=r11, assembly_type=asm.Quadword()),
+                asm.Mov(src=index_asm, dst=r10, assembly_type=asm.Quadword()),
+            ]
+            if scale in {1, 2, 4, 8}:
+                instrs.append(asm.Lea(src=asm.Indexed(r11, r10, scale), dst=dst_asm))
+            else:
+                instrs.append(
+                    asm.Binary(
+                        operator=asm.Mult(),
+                        src1=r10,
+                        src2=asm.Imm(scale),
+                        dst=r10,
+                        assembly_type=asm.Quadword(),
+                    )
+                )
+                instrs.append(asm.Lea(src=asm.Indexed(r11, r10, 1), dst=dst_asm))
+            return instrs
         case _:
             raise CodeGenerationError(f"unsupported TAC instruction: {type(instr).__name__}")
 
@@ -697,13 +802,13 @@ def _translate_uint_to_double(
     rcxq = asm.Register(asm.Registers.CX, asm.Width.QWORD)
     xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
 
-    if src_at == asm.AssemblyType.Longword:
+    if src_at == asm.Longword():
         # Zero-extend 32-bit to 64-bit (movl clears the upper 32 bits on x86-64),
         # then convert the non-negative 64-bit value with cvtsi2sdq.
         return [
-            asm.Mov(src=src_asm, dst=r10d, assembly_type=asm.AssemblyType.Longword),
-            asm.Cvtsi2sd(src=r10q, dst=xmm14, assembly_type=asm.AssemblyType.Quadword),
-            asm.Mov(src=xmm14, dst=dst_asm, assembly_type=asm.AssemblyType.Double),
+            asm.Mov(src=src_asm, dst=r10d, assembly_type=asm.Longword()),
+            asm.Cvtsi2sd(src=r10q, dst=xmm14, assembly_type=asm.Quadword()),
+            asm.Mov(src=xmm14, dst=dst_asm, assembly_type=asm.Double()),
         ]
 
     # 64-bit unsigned long: branch on whether the high bit is set.
@@ -712,26 +817,26 @@ def _translate_uint_to_double(
     done_label = f"uint_to_dbl_done.{uid}"
 
     return [
-        asm.Mov(src=src_asm, dst=r11q, assembly_type=asm.AssemblyType.Quadword),
+        asm.Mov(src=src_asm, dst=r11q, assembly_type=asm.Quadword()),
         # jge (SF == OF after cmpq $0) ↔ bit 63 clear ↔ value < 2^63
-        asm.Cmp(op1=asm.Imm(0), op2=r11q, assembly_type=asm.AssemblyType.Quadword),
+        asm.Cmp(op1=asm.Imm(0), op2=r11q, assembly_type=asm.Quadword()),
         asm.JmpCC(asm.CondCodes.GE, simple_label),
         # Complex path: src >= 2^63 — halve, convert, double back.
-        asm.Mov(src=r11q, dst=r10q, assembly_type=asm.AssemblyType.Quadword),
-        asm.Mov(src=asm.Imm(1), dst=rcxq, assembly_type=asm.AssemblyType.Quadword),
-        asm.Shr(operand=r10q, assembly_type=asm.AssemblyType.Quadword),
+        asm.Mov(src=r11q, dst=r10q, assembly_type=asm.Quadword()),
+        asm.Mov(src=asm.Imm(1), dst=rcxq, assembly_type=asm.Quadword()),
+        asm.Shr(operand=r10q, assembly_type=asm.Quadword()),
         # r11 &= 1  — preserve the LSB to avoid double-rounding
-        asm.Binary(operator=asm.And(), src1=r11q, src2=asm.Imm(1), dst=r11q, assembly_type=asm.AssemblyType.Quadword),
+        asm.Binary(operator=asm.And(), src1=r11q, src2=asm.Imm(1), dst=r11q, assembly_type=asm.Quadword()),
         # r10 |= r11  — (src >> 1) | (src & 1)
-        asm.Binary(operator=asm.Or(), src1=r10q, src2=r11q, dst=r10q, assembly_type=asm.AssemblyType.Quadword),
-        asm.Cvtsi2sd(src=r10q, dst=xmm14, assembly_type=asm.AssemblyType.Quadword),
-        asm.Binary(operator=asm.AddDouble(), src1=xmm14, src2=xmm14, dst=xmm14, assembly_type=asm.AssemblyType.Double),
-        asm.Mov(src=xmm14, dst=dst_asm, assembly_type=asm.AssemblyType.Double),
+        asm.Binary(operator=asm.Or(), src1=r10q, src2=r11q, dst=r10q, assembly_type=asm.Quadword()),
+        asm.Cvtsi2sd(src=r10q, dst=xmm14, assembly_type=asm.Quadword()),
+        asm.Binary(operator=asm.AddDouble(), src1=xmm14, src2=xmm14, dst=xmm14, assembly_type=asm.Double()),
+        asm.Mov(src=xmm14, dst=dst_asm, assembly_type=asm.Double()),
         asm.Jmp(done_label),
         # Simple path: 0 <= src < 2^63, value fits in signed int64.
         asm.Label(simple_label),
-        asm.Cvtsi2sd(src=r11q, dst=xmm14, assembly_type=asm.AssemblyType.Quadword),
-        asm.Mov(src=xmm14, dst=dst_asm, assembly_type=asm.AssemblyType.Double),
+        asm.Cvtsi2sd(src=r11q, dst=xmm14, assembly_type=asm.Quadword()),
+        asm.Mov(src=xmm14, dst=dst_asm, assembly_type=asm.Double()),
         asm.Label(done_label),
     ]
 
@@ -769,12 +874,12 @@ def _translate_double_to_uint(
     r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
     r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
 
-    if dst_at == asm.AssemblyType.Longword:
+    if dst_at == asm.Longword():
         # All unsigned int values (0..2^32-1) fit in a signed int64, so convert via
         # cvttsd2siq then truncate the lower 32 bits with movl.
         return [
-            asm.Cvttsd2si(src=src_asm, dst=r10q, assembly_type=asm.AssemblyType.Quadword),
-            asm.Mov(src=r10d, dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+            asm.Cvttsd2si(src=src_asm, dst=r10q, assembly_type=asm.Quadword()),
+            asm.Mov(src=r10d, dst=dst_asm, assembly_type=asm.Longword()),
         ]
 
     # 64-bit unsigned long destination.
@@ -799,25 +904,23 @@ def _translate_double_to_uint(
 
     return [
         # Load src into xmm14; ucomisd requires op2 to be an XMM register.
-        asm.Mov(src=src_asm, dst=xmm14, assembly_type=asm.AssemblyType.Double),
+        asm.Mov(src=src_asm, dst=xmm14, assembly_type=asm.Double()),
         # ucomisd threshold(%rip), xmm14 — AE if xmm14 >= threshold (= 2^63)
-        asm.Cmp(op1=threshold_op, op2=xmm14, assembly_type=asm.AssemblyType.Double),
+        asm.Cmp(op1=threshold_op, op2=xmm14, assembly_type=asm.Double()),
         asm.JmpCC(asm.CondCodes.AE, large_label),
         # Simple path: src < 2^63, fits in signed int64.
-        asm.Cvttsd2si(src=xmm14, dst=dst_asm, assembly_type=asm.AssemblyType.Quadword),
+        asm.Cvttsd2si(src=xmm14, dst=dst_asm, assembly_type=asm.Quadword()),
         asm.Jmp(done_label),
         # Large path: src in [2^63, 2^64).
         asm.Label(large_label),
         # xmm14 = src - 2^63  (now in [0, 2^63), fits in signed int64)
-        asm.Binary(
-            operator=asm.SubDouble(), src1=xmm14, src2=threshold_op, dst=xmm14, assembly_type=asm.AssemblyType.Double
-        ),
-        asm.Cvttsd2si(src=xmm14, dst=r10q, assembly_type=asm.AssemblyType.Quadword),
+        asm.Binary(operator=asm.SubDouble(), src1=xmm14, src2=threshold_op, dst=xmm14, assembly_type=asm.Double()),
+        asm.Cvttsd2si(src=xmm14, dst=r10q, assembly_type=asm.Quadword()),
         # Add 2^63 back as an unsigned 64-bit operation.
         # INT64_MIN == -2^63 in two's complement == +2^63 when treated as unsigned.
-        asm.Mov(src=asm.Imm(-(1 << 63)), dst=r11q, assembly_type=asm.AssemblyType.Quadword),
-        asm.Binary(operator=asm.Add(), src1=r10q, src2=r11q, dst=r10q, assembly_type=asm.AssemblyType.Quadword),
-        asm.Mov(src=r10q, dst=dst_asm, assembly_type=asm.AssemblyType.Quadword),
+        asm.Mov(src=asm.Imm(-(1 << 63)), dst=r11q, assembly_type=asm.Quadword()),
+        asm.Binary(operator=asm.Add(), src1=r10q, src2=r11q, dst=r10q, assembly_type=asm.Quadword()),
+        asm.Mov(src=r10q, dst=dst_asm, assembly_type=asm.Quadword()),
         asm.Label(done_label),
     ]
 
@@ -870,7 +973,7 @@ def _translate_funcall(
 
     for arg in args:
         at = _asm_type(arg, symbol_table)
-        if at == asm.AssemblyType.Double:
+        if at == asm.Double():
             if xmm_reg_idx < len(_XMM_REGS):
                 dbl_reg_args.append((arg, xmm_reg_idx))
                 xmm_reg_idx += 1
@@ -911,7 +1014,7 @@ def _translate_funcall(
             asm.Mov(
                 src=_translate_val(arg, constants),
                 dst=asm.Register(_XMM_REGS[i], asm.Width.QWORD),
-                assembly_type=asm.AssemblyType.Double,
+                assembly_type=asm.Double(),
             )
         )
 
@@ -919,9 +1022,7 @@ def _translate_funcall(
         instrs.append(asm.Call(name))
     else:
         r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-        instrs.append(
-            asm.Mov(src=_translate_val(fun_val, constants), dst=r10q, assembly_type=asm.AssemblyType.Quadword)
-        )
+        instrs.append(asm.Mov(src=_translate_val(fun_val, constants), dst=r10q, assembly_type=asm.Quadword()))
         instrs.append(asm.IndirectCall(target=r10q))
 
     # Reclaim stack space used for stack-passed args and any alignment padding.
@@ -931,7 +1032,7 @@ def _translate_funcall(
 
     # Return value: doubles in %xmm0, integers in %eax/%rax.
     at = _asm_type(tac.Var(dst.name) if isinstance(dst, asm.Pseudo) else tac.Constant(ConstInt(0)), symbol_table)
-    if at == asm.AssemblyType.Double:
+    if at == asm.Double():
         instrs.append(asm.Mov(src=asm.Register(asm.Registers.XMM0, asm.Width.QWORD), dst=dst, assembly_type=at))
     else:
         instrs.append(asm.Mov(src=asm.Register(asm.Registers.AX, _reg_width(at)), dst=dst, assembly_type=at))
@@ -939,18 +1040,25 @@ def _translate_funcall(
     return instrs
 
 
-def _translate_val(val: tac.Val, constants: list[asm.TopLevel] | None = None) -> asm.Operand:
+def _translate_val(
+    val: tac.Val,
+    constants: list[asm.TopLevel] | None = None,
+    symbol_table: SymbolTable | None = None,
+) -> asm.Operand:
     """Translate a TAC value to an assembly operand.
 
     Integer and long constants become ``Imm`` values.  Double constants are
     allocated as read-only ``StaticConstant`` entries in ``.rodata`` and
-    referenced via a ``Data`` (RIP-relative) operand.  Variables become
-    ``Pseudo`` operands.
+    referenced via a ``Data`` (RIP-relative) operand.  Scalar variables become
+    ``Pseudo`` operands; array-typed variables become ``PseudoMem`` at offset 0
+    so that the aggregate's full memory region is designated.
 
     Args:
         val: The TAC value to translate.
         constants: Accumulator for ``StaticConstant`` entries; required when
             ``val`` may be a ``ConstDouble``.
+        symbol_table: The program-wide symbol table; used to detect array-typed
+            variables.  When ``None`` all variables are treated as scalars.
 
     Returns:
         An ``asm.Operand`` equivalent to the TAC value.
@@ -972,6 +1080,8 @@ def _translate_val(val: tac.Val, constants: list[asm.TopLevel] | None = None) ->
         case tac.Constant(value=v):
             return asm.Imm(value=v.val)
         case tac.Var(value=name):
+            if symbol_table is not None and name in symbol_table and isinstance(symbol_table[name].t, ArrayType):
+                return asm.PseudoMem(name, 0)
             return asm.Pseudo(name=name)
         case _:
             raise CodeGenerationError(f"unsupported TAC value: {type(val).__name__}")
@@ -1122,13 +1232,13 @@ def _translate_double_comparison(
     """
     uid = _fresh_uid()
     nan_label = f"nan_cmp.{uid}"
-    cmp = asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=asm.AssemblyType.Double)
+    cmp = asm.Cmp(op1=src2_asm, op2=src1_asm, assembly_type=asm.Double())
     match op:
         case tac.Equal():
             # sete returns 1 for NaN (ZF=1); jump over it so dst stays 0.
             return [
                 cmp,
-                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.JmpCC(asm.CondCodes.P, nan_label),
                 asm.SetCC(asm.CondCodes.E, dst_asm),
                 asm.Label(nan_label),
@@ -1137,7 +1247,7 @@ def _translate_double_comparison(
             # setne returns 0 for NaN (ZF=1); pre-load 1 and jump over setne so dst stays 1.
             return [
                 cmp,
-                asm.Mov(src=asm.Imm(1), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(1), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.JmpCC(asm.CondCodes.P, nan_label),
                 asm.SetCC(asm.CondCodes.NE, dst_asm),
                 asm.Label(nan_label),
@@ -1146,7 +1256,7 @@ def _translate_double_comparison(
             # setb returns 1 for NaN (CF=1); jump over it so dst stays 0.
             return [
                 cmp,
-                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.JmpCC(asm.CondCodes.P, nan_label),
                 asm.SetCC(asm.CondCodes.B, dst_asm),
                 asm.Label(nan_label),
@@ -1155,7 +1265,7 @@ def _translate_double_comparison(
             # setbe returns 1 for NaN (CF=1 or ZF=1); jump over it so dst stays 0.
             return [
                 cmp,
-                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.JmpCC(asm.CondCodes.P, nan_label),
                 asm.SetCC(asm.CondCodes.BE, dst_asm),
                 asm.Label(nan_label),
@@ -1164,14 +1274,14 @@ def _translate_double_comparison(
             # seta (CF=0 AND ZF=0) naturally returns 0 for NaN (CF=1); no extra jump needed.
             return [
                 cmp,
-                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.SetCC(asm.CondCodes.A, dst_asm),
             ]
         case tac.GreaterOrEqual():
             # setae (CF=0) naturally returns 0 for NaN (CF=1); no extra jump needed.
             return [
                 cmp,
-                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.AssemblyType.Longword),
+                asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
                 asm.SetCC(asm.CondCodes.AE, dst_asm),
             ]
         case _:
@@ -1214,7 +1324,25 @@ def _replace_pseudos(  # noqa: C901 - ignore complexity warning
     next_offset: list[int] = [0]
 
     def resolve(operand: asm.Operand) -> asm.Operand:
-        """Map a single operand: pass through non-Pseudo, map Pseudo to Data or Stack."""
+        """Map Pseudo/PseudoMem to concrete operands; pass through everything else."""
+        if isinstance(operand, asm.PseudoMem):
+            name, elem_offset = operand.name, operand.offset
+            if name in static_names:
+                return asm.Data(name=name)
+            if name not in pseudo_offsets:
+                if symbol_table is not None and name in symbol_table:
+                    t = symbol_table[name].t
+                    size = _type_size(t)
+                    alignment = _static_alignment(t)
+                else:
+                    size, alignment = 8, 8
+                next_offset[0] -= size
+                next_offset[0] = (next_offset[0] // alignment) * alignment
+                pseudo_offsets[name] = next_offset[0]
+            return asm.Memory(
+                reg=asm.Register(asm.Registers.BP, asm.Width.QWORD),
+                offset=pseudo_offsets[name] + elem_offset,
+            )
         if not isinstance(operand, asm.Pseudo):
             return operand
         if operand.name in static_names:
@@ -1300,15 +1428,15 @@ def _fix_movsx(
     r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
     r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
     if isinstance(src, asm.Imm):
-        fixed.append(asm.Mov(src=src, dst=r10d, assembly_type=asm.AssemblyType.Longword))
+        fixed.append(asm.Mov(src=src, dst=r10d, assembly_type=asm.Longword()))
         if is_mem(dst):  # type: ignore[operator]
             fixed.append(asm.Movsx(src=r10d, dst=r11q))
-            fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+            fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.Quadword()))
         else:
             fixed.append(asm.Movsx(src=r10d, dst=dst))
     elif is_mem(dst):  # type: ignore[operator]
         fixed.append(asm.Movsx(src=src, dst=r11q))
-        fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+        fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.Quadword()))
     else:
         fixed.append(asm.Movsx(src=src, dst=dst))
 
@@ -1372,26 +1500,24 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
     fixed: list[asm.Instruction] = []
     for instr in fn.instructions:
         match instr:
-            case asm.Mov(assembly_type=asm.AssemblyType.Quadword, src=asm.Imm(value=v), dst=dst) if _is_mem(
+            case asm.Mov(assembly_type=asm.Quadword(), src=asm.Imm(value=v), dst=dst) if _is_mem(
                 dst
             ) and not _fits_in_int32(v):
                 # movq cannot encode a 64-bit immediate to a memory operand.
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
-            case asm.Mov(assembly_type=asm.AssemblyType.Longword, src=asm.Imm(value=v), dst=dst) if not _fits_in_int32(
-                v
-            ):
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=asm.Quadword()))
+            case asm.Mov(assembly_type=asm.Longword(), src=asm.Imm(value=v), dst=dst) if not _fits_in_int32(v):
                 # movl immediate must fit in 32 bits; mask to the lower 32 bits (as signed int32).
                 truncated = v & 0xFFFFFFFF
                 if truncated >= (1 << 31):
                     truncated -= 1 << 32
-                fixed.append(asm.Mov(src=asm.Imm(truncated), dst=dst, assembly_type=asm.AssemblyType.Longword))
-            case asm.Mov(assembly_type=asm.AssemblyType.Double, src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
+                fixed.append(asm.Mov(src=asm.Imm(truncated), dst=dst, assembly_type=asm.Longword()))
+            case asm.Mov(assembly_type=asm.Double(), src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
                 # movsd cannot route through a GP register; use %xmm14 as the scratch.
                 xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=src, dst=xmm14, assembly_type=asm.AssemblyType.Double))
-                fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.AssemblyType.Double))
+                fixed.append(asm.Mov(src=src, dst=xmm14, assembly_type=asm.Double()))
+                fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
             case asm.Mov(assembly_type=at, src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
                 r10 = asm.Register(asm.Registers.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=src, dst=r10, assembly_type=at))
@@ -1410,43 +1536,39 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 r11d = asm.Register(asm.Registers.R11, asm.Width.DWORD)
                 r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
                 fixed.append(asm.MoveZeroExtend(src=src, dst=r11d))
-                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
-            case asm.Binary(
-                assembly_type=asm.AssemblyType.Quadword, operator=op, src1=src1, src2=asm.Imm(value=v), dst=dst
-            ) if not _fits_in_int32(v):
+                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.Quadword()))
+            case asm.Binary(assembly_type=asm.Quadword(), operator=op, src1=src1, src2=asm.Imm(value=v), dst=dst) if (
+                not _fits_in_int32(v)
+            ):
                 # addq/subq/imulq cannot encode a 64-bit immediate; route src2 through %r10.
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(
-                    asm.Binary(operator=op, src1=src1, src2=r10q, dst=dst, assembly_type=asm.AssemblyType.Quadword)
-                )
-            case asm.Cmp(assembly_type=asm.AssemblyType.Quadword, op1=asm.Imm(value=v), op2=asm.Imm() as op2_imm) if (
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Binary(operator=op, src1=src1, src2=r10q, dst=dst, assembly_type=asm.Quadword()))
+            case asm.Cmp(assembly_type=asm.Quadword(), op1=asm.Imm(value=v), op2=asm.Imm() as op2_imm) if (
                 not _fits_in_int32(v)
             ):
                 # Both operands are immediates and op1 is large: the generic op2-is-Imm case would fire
                 # first and leave Cmp(Imm(large), reg) unprocessed. Handle both upfront.
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
                 r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(asm.Mov(src=op2_imm, dst=r11q, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(asm.Cmp(op1=r10q, op2=r11q, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Mov(src=op2_imm, dst=r11q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Cmp(op1=r10q, op2=r11q, assembly_type=asm.Quadword()))
             case asm.Cmp(assembly_type=at, op1=op1, op2=asm.Imm() as op2):
                 r11 = asm.Register(asm.Registers.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=op2, dst=r11, assembly_type=at))
                 fixed.append(asm.Cmp(op1=op1, op2=r11, assembly_type=at))
-            case asm.Cmp(assembly_type=asm.AssemblyType.Quadword, op1=asm.Imm(value=v), op2=op2) if not _fits_in_int32(
-                v
-            ):
+            case asm.Cmp(assembly_type=asm.Quadword(), op1=asm.Imm(value=v), op2=op2) if not _fits_in_int32(v):
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(asm.Cmp(op1=r10q, op2=op2, assembly_type=asm.AssemblyType.Quadword))
-            case asm.Cmp(assembly_type=asm.AssemblyType.Double, op1=op1, op2=op2) if _is_mem(op2):
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Cmp(op1=r10q, op2=op2, assembly_type=asm.Quadword()))
+            case asm.Cmp(assembly_type=asm.Double(), op1=op1, op2=op2) if _is_mem(op2):
                 # ucomisd requires op2 (the XMM "destination" in Intel terms) to be a
                 # hardware register. Route op2 through %xmm15 when it is a memory slot.
                 xmm15 = asm.Register(asm.Registers.XMM15, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=op2, dst=xmm15, assembly_type=asm.AssemblyType.Double))
-                fixed.append(asm.Cmp(op1=op1, op2=xmm15, assembly_type=asm.AssemblyType.Double))
-            case asm.Cmp(assembly_type=at, op1=op1, op2=op2) if _is_mem(op1) and at != asm.AssemblyType.Double:
+                fixed.append(asm.Mov(src=op2, dst=xmm15, assembly_type=asm.Double()))
+                fixed.append(asm.Cmp(op1=op1, op2=xmm15, assembly_type=asm.Double()))
+            case asm.Cmp(assembly_type=at, op1=op1, op2=op2) if _is_mem(op1) and at != asm.Double():
                 # For integer cmpl/cmpq both operands cannot be memory; route op1 through
                 # %r10/%r10d.  (ucomisd CAN accept op1 as m64, so doubles are excluded.)
                 r10 = asm.Register(asm.Registers.R10, _reg_width(at))
@@ -1467,15 +1589,15 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 if _is_mem(dst):
                     xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
                     fixed.append(asm.Cvtsi2sd(src=r10, dst=xmm14, assembly_type=at))
-                    fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.AssemblyType.Double))
+                    fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
                 else:
                     fixed.append(asm.Cvtsi2sd(src=r10, dst=dst, assembly_type=at))
             case asm.Cvtsi2sd(assembly_type=at, src=src, dst=dst) if _is_mem(dst):
                 # cvtsi2sd dst must be an XMM register; route through %xmm14 then movsd to memory.
                 xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
                 fixed.append(asm.Cvtsi2sd(src=src, dst=xmm14, assembly_type=at))
-                fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.AssemblyType.Double))
-            case asm.Push(assembly_type=asm.AssemblyType.Longword, operand=asm.Imm(value=v)) if not _fits_in_int32(v):
+                fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
+            case asm.Push(assembly_type=asm.Longword(), operand=asm.Imm(value=v)) if not _fits_in_int32(v):
                 # pushq with a sign-extended 32-bit immediate cannot represent an unsigned int
                 # value with bit 31 set. Reinterpret as signed int32 for the movl (GAS accepts any
                 # 32-bit immediate there), load into %r10d — movl zero-extends so %r10 holds the
@@ -1485,27 +1607,25 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                     truncated -= 1 << 32
                 r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=asm.Imm(truncated), dst=r10d, assembly_type=asm.AssemblyType.Longword))
-                fixed.append(asm.Push(operand=r10q, assembly_type=asm.AssemblyType.Quadword))
-            case asm.Push(assembly_type=asm.AssemblyType.Quadword, operand=asm.Imm(value=v)) if not _fits_in_int32(v):
+                fixed.append(asm.Mov(src=asm.Imm(truncated), dst=r10d, assembly_type=asm.Longword()))
+                fixed.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
+            case asm.Push(assembly_type=asm.Quadword(), operand=asm.Imm(value=v)) if not _fits_in_int32(v):
                 # pushq only accepts 8-bit or 32-bit sign-extended immediates; a 64-bit long
                 # constant that doesn't fit in 32 bits must be routed through %r10.
                 r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(asm.Push(operand=r10q, assembly_type=asm.AssemblyType.Quadword))
-            case asm.Push(assembly_type=asm.AssemblyType.Double, operand=asm.Register() as xmm_reg):
+                fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
+            case asm.Push(assembly_type=asm.Double(), operand=asm.Register() as xmm_reg):
                 # pushq %xmmN is not encodable; write explicitly through the stack pointer.
                 rsp = asm.Register(asm.Registers.SP, asm.Width.QWORD)
                 fixed.append(asm.AllocateStack(8))
-                fixed.append(
-                    asm.Mov(src=xmm_reg, dst=asm.Memory(reg=rsp, offset=0), assembly_type=asm.AssemblyType.Double)
-                )
-            case asm.Push(assembly_type=asm.AssemblyType.Double, operand=operand) if _is_mem(operand):
+                fixed.append(asm.Mov(src=xmm_reg, dst=asm.Memory(reg=rsp, offset=0), assembly_type=asm.Double()))
+            case asm.Push(assembly_type=asm.Double(), operand=operand) if _is_mem(operand):
                 # movsd cannot move to a GP register, but the double's bits can be
                 # loaded as a raw quadword with movq and then pushed normally.
                 axq = asm.Register(asm.Registers.AX, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=operand, dst=axq, assembly_type=asm.AssemblyType.Quadword))
-                fixed.append(asm.Push(operand=axq, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Mov(src=operand, dst=axq, assembly_type=asm.Quadword()))
+                fixed.append(asm.Push(operand=axq, assembly_type=asm.Quadword()))
             case asm.Push(assembly_type=at, operand=operand) if _is_mem(operand):
                 # pushq cannot address a memory slot directly.
                 # Load via movl (zero-extends) for ints, movq for longs, then push the 64-bit register.
@@ -1516,7 +1636,7 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 # leaq destination must be a register; route through %r11 then store.
                 r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
                 fixed.append(asm.Lea(src=src, dst=r11q))
-                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.AssemblyType.Quadword))
+                fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.Quadword()))
             case _:
                 fixed.append(instr)
     return asm.Function(name=fn.name, globl=fn.globl, params=fn.params, instructions=tuple(fixed))
