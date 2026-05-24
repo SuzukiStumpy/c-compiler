@@ -47,6 +47,7 @@ Raises:
         an initialiser.
 """
 
+import math
 from itertools import count
 from typing import NamedTuple
 
@@ -66,6 +67,7 @@ from compiler.syntax.ast.operators import (
     RightShift,
 )
 from compiler.syntax.ast.types import (
+    Array,
     DoubleType,
     FunType,
     IntType,
@@ -77,17 +79,22 @@ from compiler.syntax.ast.types import (
     ULongType,
 )
 from compiler.types.symbols import (
+    DoubleInit,
     FunAttr,
     Initial,
     InitialValue,
+    IntInit,
     LocalAttr,
+    LongInit,
     NoInitializer,
     PointerInit,
     StaticAttr,
+    StaticInit,
     SymbolTable,
     SymbolTableEntry,
     Tentative,
     ULongInit,
+    ZeroInit,
 )
 from compiler.utils.exceptions import SemanticError
 
@@ -266,6 +273,177 @@ def _is_null_pointer_constant(e: ast.Exp) -> bool:
                     return False
         case _:
             return False
+
+
+def _zero_initializer(t: Type) -> ast.Initializer:
+    """Create a zero-valued, fully type-annotated ``Initializer`` for the given type.
+
+    Used to pad aggregate initialisers that are shorter than their declared size
+    (C11 §6.7.9p21: elements not explicitly initialised receive zero-initialisation).
+
+    Args:
+        t: The C type for which a zero initializer is needed.
+
+    Returns:
+        A ``SingleInit`` wrapping a zero-valued ``Constant`` (or ``Cast`` for pointers)
+        for scalar types, or a ``CompoundInit`` recursively filled with zero initialisers
+        for ``Array`` types.
+
+    Raises:
+        SemanticError: If ``t`` is a ``FunType`` or otherwise uninitializable type.
+    """
+    match t:
+        case IntType():
+            return ast.SingleInit(ast.Constant(ast.ConstInt(0), exp_type=IntType()))
+        case LongType():
+            return ast.SingleInit(ast.Constant(ast.ConstLong(0), exp_type=LongType()))
+        case UIntType():
+            return ast.SingleInit(ast.Constant(ast.ConstUInt(0), exp_type=UIntType()))
+        case ULongType():
+            return ast.SingleInit(ast.Constant(ast.ConstULong(0), exp_type=ULongType()))
+        case DoubleType():
+            return ast.SingleInit(ast.Constant(ast.ConstDouble(0.0), exp_type=DoubleType()))
+        case Pointer():
+            null = ast.Constant(ast.ConstULong(0), exp_type=ULongType())
+            return ast.SingleInit(ast.Cast(t, null, exp_type=t))
+        case Array(element=elem_t, size=size):
+            return ast.CompoundInit([_zero_initializer(elem_t) for _ in range(size)])
+        case _:
+            raise SemanticError(f"Cannot create a zero initializer for type '{t}'.")
+
+
+def _is_constant_init(init: ast.Initializer) -> bool:
+    """Return ``True`` if every scalar leaf in ``init`` is an ``ast.Constant`` node.
+
+    Used to validate that static-storage array initialisers contain only
+    compile-time constant expressions before calling ``_typecheck_init``.
+
+    Args:
+        init: The initialiser to inspect — either a ``SingleInit`` or a
+            ``CompoundInit``.
+
+    Returns:
+        ``True`` when every ``SingleInit`` expression is an ``ast.Constant``;
+        ``False`` as soon as any scalar expression is not a bare constant.
+    """
+    match init:
+        case ast.SingleInit(exp=ast.Constant()):
+            return True
+        case ast.SingleInit():
+            return False
+        case ast.CompoundInit(initializers=sub_inits):
+            return all(_is_constant_init(i) for i in sub_inits)
+        case _:
+            return False
+
+
+def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
+    """Return the ``StaticInit`` element for a scalar value of the given C type.
+
+    Zero-valued scalars are encoded as ``ZeroInit``; non-zero values become the
+    typed init variant that matches the byte width of ``t``.
+
+    Args:
+        t: The C type determining the byte width and variant — ``IntType``,
+            ``UIntType``, ``LongType``, ``ULongType``, or ``DoubleType``.
+            ``None`` or an unrecognised type defaults to a 4-byte ``IntInit``
+            / ``ZeroInit``.
+        v: The numeric value (``int`` or ``float``) from the constant expression.
+
+    Returns:
+        A ``ZeroInit(n)``, ``IntInit``, ``LongInit``, or ``DoubleInit`` node.
+    """
+    match t:
+        case DoubleType():
+            fv = float(v)
+            return ZeroInit(8) if fv == 0.0 and math.copysign(1.0, fv) > 0 else DoubleInit(fv)
+        case LongType() | ULongType():
+            return ZeroInit(8) if int(v) == 0 else LongInit(int(v))
+        case _:
+            return ZeroInit(4) if int(v) == 0 else IntInit(int(v))
+
+
+def _exp_to_static_init(e: ast.Exp) -> StaticInit:
+    """Convert a type-annotated constant expression to its ``StaticInit`` equivalent.
+
+    Handles the expression forms that appear as leaves after ``_typecheck_init``
+    has processed a static-storage initialiser:
+
+    * ``Constant`` nodes with any numeric ``Const`` variant.
+    * ``Cast(Pointer, Constant)`` — the null-pointer form produced by
+      ``_zero_initializer`` for pointer-typed array elements.
+    * ``Cast(scalar_type, Constant)`` — widening casts inserted by
+      ``_convert_by_assignment`` when an integer literal is used to initialise
+      a wider type (e.g. ``long arr[2] = {1, 2}``).
+
+    Zero-valued scalars are encoded as ``ZeroInit``; adjacent ``ZeroInit`` nodes
+    are coalesced by ``_flatten_static_init``.
+
+    Args:
+        e: A fully type-annotated scalar expression produced by ``_typecheck_init``.
+
+    Returns:
+        The corresponding ``StaticInit`` element.
+
+    Raises:
+        SemanticError: If ``e`` is not a recognised constant form.
+    """
+    match e:
+        case ast.Cast(target_type=Pointer()):
+            return ZeroInit(8)
+        case ast.Cast(target_type=target, exp=ast.Constant(value=const)):
+            return _make_static_init(target, const.val)
+        case ast.Constant(value=const):
+            return _make_static_init(e.exp_type, const.val)
+        case _:
+            raise SemanticError(f"Cannot convert expression to a static initialiser element: {type(e).__name__}")
+
+
+def _flatten_static_init(init: ast.Initializer) -> list[StaticInit]:
+    """Flatten a fully type-checked ``Initializer`` tree into a list of ``StaticInit`` elements.
+
+    Recursively traverses ``CompoundInit`` nodes and converts each leaf
+    ``SingleInit`` to its ``StaticInit`` equivalent.  Adjacent ``ZeroInit``
+    nodes are coalesced into a single ``ZeroInit`` with the combined byte count
+    so that sparse array regions are represented compactly.
+
+    Args:
+        init: A fully type-checked (and zero-padded) ``Initializer`` node, as
+            returned by ``_typecheck_init``.
+
+    Returns:
+        A flat list of ``StaticInit`` elements with consecutive zero regions merged.
+
+    Raises:
+        SemanticError: If any leaf expression cannot be converted to a static
+            initialiser element.
+    """
+    result: list[StaticInit] = []
+    _flatten_helper(init, result)
+    return result
+
+
+def _flatten_helper(init: ast.Initializer, result: list[StaticInit]) -> None:
+    """Recursive worker for ``_flatten_static_init``.
+
+    Traverses the ``Initializer`` tree depth-first and appends ``StaticInit``
+    elements to ``result``, merging any ``ZeroInit`` that is adjacent to a
+    trailing ``ZeroInit`` already in the list.
+
+    Args:
+        init: The current ``Initializer`` node being processed.
+        result: Accumulator list modified in place.
+    """
+    match init:
+        case ast.SingleInit(exp=e):
+            elem = _exp_to_static_init(e)
+            if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
+                result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
+            else:
+                result.append(elem)
+        case ast.CompoundInit(initializers=sub_inits):
+            for sub_init in sub_inits:
+                _flatten_helper(sub_init, result)
 
 
 class VariableBinding(NamedTuple):
@@ -530,7 +708,7 @@ class SemanticAnalyser:
                 case ast.S(statement=statement):
                     self._collect_labels_in_statement(statement)
 
-    def resolve_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
+    def resolve_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:  # noqa: C901
         """Resolve a block-scope variable declaration against the current symbol table.
 
         ``extern`` declarations keep their original source name and are recorded
@@ -618,30 +796,41 @@ class SemanticAnalyser:
                 var_type=var_decl.var_type,
                 linkage=linkage,
             )
+            raw_init_exp: ast.Exp | None = var_decl.init.exp if isinstance(var_decl.init, ast.SingleInit) else None
             if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
                 if isinstance(var_decl.var_type, Pointer):
                     if not (
-                        isinstance(var_decl.init, ast.Constant)
-                        or (isinstance(var_decl.init, ast.AddrOf) and isinstance(var_decl.init.exp, ast.Var))
+                        isinstance(raw_init_exp, ast.Constant)
+                        or (isinstance(raw_init_exp, ast.AddrOf) and isinstance(raw_init_exp.exp, ast.Var))
                     ):
                         raise SemanticError(
                             f"Initialiser of static pointer '{var_decl.name}' must be a null pointer constant "
                             "or the address of a static variable."
                         )
-                elif not isinstance(var_decl.init, ast.Constant):
+                elif isinstance(var_decl.var_type, Array):
+                    if not _is_constant_init(var_decl.init):
+                        raise SemanticError(
+                            f"Initialiser of static array '{var_decl.name}' must consist of constant expressions."
+                        )
+                elif not isinstance(raw_init_exp, ast.Constant):
                     raise SemanticError(
                         f"Initialiser of 'static' variable '{var_decl.name}' must be a constant expression."
                     )
-            init = self.resolve_exp(var_decl.init) if var_decl.init is not None else None
-            if init is not None and init.exp_type is not None:
-                init = _convert_by_assignment(init, var_decl.var_type)
+            init: ast.Initializer | None = (
+                self._typecheck_init(var_decl.var_type, var_decl.init) if var_decl.init is not None else None
+            )
             if var_decl.storage_class == StorageClass.Static:
                 if var_decl.init is None:
                     static_init: InitialValue = Tentative()
                 elif isinstance(var_decl.var_type, Pointer):
-                    static_init = _static_pointer_init(var_decl.init, self._variable_map)
+                    assert raw_init_exp is not None
+                    static_init = _static_pointer_init(raw_init_exp, self._variable_map)
+                elif isinstance(var_decl.var_type, Array):
+                    assert isinstance(init, ast.CompoundInit)
+                    static_init = Initial(tuple(_flatten_static_init(init)))
                 else:
-                    static_init = Initial(var_decl.init.value.val)  # type: ignore[union-attr]
+                    assert isinstance(init, ast.SingleInit)
+                    static_init = Initial((_exp_to_static_init(init.exp),))
                 self._symbol_table[unique_name] = SymbolTableEntry(
                     t=var_decl.var_type, attrs=StaticAttr(init=static_init, globl=False)
                 )
@@ -649,7 +838,7 @@ class SemanticAnalyser:
                 self._symbol_table[unique_name] = SymbolTableEntry(t=var_decl.var_type, attrs=LocalAttr())
             return ast.VariableDeclaration(unique_name, init, var_decl.var_type, var_decl.storage_class)
 
-    def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:
+    def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:  # noqa: C901
         """Record a file-scope variable declaration in the identifier table.
 
         File-scope variables are *not* renamed — they keep their original source
@@ -680,21 +869,28 @@ class SemanticAnalyser:
             raise SemanticError(
                 f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
             )
+        file_raw_exp: ast.Exp | None = var_decl.init.exp if isinstance(var_decl.init, ast.SingleInit) else None
         if var_decl.init is not None:
             if isinstance(var_decl.var_type, Pointer):
                 if not (
-                    isinstance(var_decl.init, ast.Constant)
-                    or (isinstance(var_decl.init, ast.AddrOf) and isinstance(var_decl.init.exp, ast.Var))
+                    isinstance(file_raw_exp, ast.Constant)
+                    or (isinstance(file_raw_exp, ast.AddrOf) and isinstance(file_raw_exp.exp, ast.Var))
                 ):
                     raise SemanticError(
                         f"Initialiser of file-scope pointer '{var_decl.name}' must be a null pointer constant "
                         "or the address of a static variable."
                     )
-            elif not isinstance(var_decl.init, ast.Constant):
+            elif isinstance(var_decl.var_type, Array):
+                if not _is_constant_init(var_decl.init):
+                    raise SemanticError(
+                        f"Initialiser of file-scope array '{var_decl.name}' must consist of constant expressions."
+                    )
+            elif not isinstance(file_raw_exp, ast.Constant):
                 raise SemanticError(
                     f"Initialiser of file-scope variable '{var_decl.name}' must be a constant expression."
                 )
-            _convert_by_assignment(self._type_check_exp(var_decl.init), var_decl.var_type)
+            if file_raw_exp is not None:
+                _convert_by_assignment(self._type_check_exp(file_raw_exp), var_decl.var_type)
         if var_decl.init is not None:
             if var_decl.name in self._file_scope_definitions:
                 raise SemanticError(f"Duplicate definition of file-scope variable '{var_decl.name}'.")
@@ -727,10 +923,16 @@ class SemanticAnalyser:
         existing_entry = self._symbol_table.get(var_decl.name)
         if var_decl.init is not None:
             if isinstance(var_decl.var_type, Pointer):
-                file_init: InitialValue = _static_pointer_init(var_decl.init, self._variable_map)
+                assert file_raw_exp is not None
+                file_init: InitialValue = _static_pointer_init(file_raw_exp, self._variable_map)
+            elif isinstance(var_decl.var_type, Array):
+                file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
+                assert isinstance(file_typed_init, ast.CompoundInit)
+                file_init = Initial(tuple(_flatten_static_init(file_typed_init)))
             else:
-                assert isinstance(var_decl.init, ast.Constant)
-                file_init = Initial(var_decl.init.value.val)
+                file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
+                assert isinstance(file_typed_init, ast.SingleInit)
+                file_init = Initial((_exp_to_static_init(file_typed_init.exp),))
             self._symbol_table[var_decl.name] = SymbolTableEntry(
                 t=var_decl.var_type,
                 attrs=StaticAttr(init=file_init, globl=globl),
@@ -776,7 +978,7 @@ class SemanticAnalyser:
                 raise SemanticError(f"Duplicate parameter name '{param.name}' in declaration of '{fun.name}'.")
             seen.add(param.name)
 
-    def _register_fun_declaration(self, fun: ast.Function) -> None:
+    def _register_fun_declaration(self, fun: ast.Function) -> ast.Function:
         """Register a function declaration or definition in the program-wide function map.
 
         Records the function name in ``_function_map``.  A function may be
@@ -787,14 +989,45 @@ class SemanticAnalyser:
             fun: The ``Function`` node whose name is to be registered.
 
         Raises:
-            SemanticError: If ``fun`` is a definition and a definition for the
-                same name has already been registered; if the parameter types of
-                this declaration conflict with a prior declaration of the same
-                name; if ``fun.name`` was already declared as a variable in the
-                current block scope; or if ``fun.name`` was previously declared
-                as an ``extern`` variable at any scope level (conflicting entity
-                kind on the same external name).
+        Returns:
+            The (possibly adjusted) ``Function`` node, with any ``Array``-typed
+            parameters replaced by their equivalent ``Pointer`` types.
+
+        Raises:
+            SemanticError: If the function's declared return type is an ``Array``
+                (functions may not return arrays in C); if ``fun`` is a definition
+                and a definition for the same name has already been registered;
+                if the parameter types of this declaration conflict with a prior
+                declaration of the same name; if ``fun.name`` was already declared
+                as a variable in the current block scope; or if ``fun.name`` was
+                previously declared as an ``extern`` variable at any scope level
+                (conflicting entity kind on the same external name).
         """
+        if isinstance(fun.fun_type, FunType) and isinstance(fun.fun_type.ret, Array):
+            raise SemanticError(f"Function '{fun.name}' cannot return an array type.")
+        adjusted_params: list[ast.Parameter] = []
+        any_adjusted = False
+        for param in fun.params:
+            if isinstance(param.param_type, Array):
+                adjusted_params.append(ast.Parameter(param_type=Pointer(param.param_type.element), name=param.name))
+                any_adjusted = True
+            else:
+                adjusted_params.append(param)
+        if any_adjusted:
+            adjusted_param_types = tuple(p.param_type for p in adjusted_params)
+            new_fun_type: Type = (
+                FunType(params=adjusted_param_types, ret=fun.fun_type.ret)
+                if isinstance(fun.fun_type, FunType)
+                else fun.fun_type
+            )
+            fun = ast.Function(
+                name=fun.name,
+                params=tuple(adjusted_params),
+                body=fun.body,
+                fun_type=new_fun_type,
+                globl=fun.globl,
+                storage_class=fun.storage_class,
+            )
         var_binding = self._variable_map.get(fun.name)
         if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
             raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
@@ -848,6 +1081,7 @@ class SemanticAnalyser:
             attrs=FunAttr(defined=prior_defined or fun.body is not None, globl=fun_globl),
         )
         self._current_block_funs.add(fun.name)
+        return fun
 
     def _enter_scope(self) -> tuple[dict[str, VariableBinding], set[str]]:
         """Open a new nested scope and return snapshots of the current block state.
@@ -910,7 +1144,11 @@ class SemanticAnalyser:
           always produce ``IntType``; arithmetic and bitwise operators produce
           ``LongType`` when either operand is ``LongType``, otherwise the type
           of the left operand.
-        * ``Assignment`` — the type of the lvalue operand.
+        * ``Assignment`` — the type of the lvalue operand.  The lvalue must be a
+          ``Var``, ``Dereference``, or ``Subscript``; any other form raises ``SemanticError``.
+          The lvalue type must not be ``Array``; array objects are not modifiable lvalues in C.
+          Sub-expressions of the lvalue are type-checked without array decay so that an array
+          ``Var`` retains its ``Array`` type and can be rejected with a specific error.
         * ``Conditional`` — ``LongType`` if either branch is ``LongType``;
           otherwise the type of the true branch.
         * ``FunctionCall`` — the declared return type of the callee, looked up
@@ -918,6 +1156,10 @@ class SemanticAnalyser:
           function, that the name does not refer to a local variable, and that
           the argument count matches the declared arity.
         * ``Cast`` — the explicit target type.
+        * ``Subscript`` — the referenced type of whichever operand is a pointer.  Exactly one
+          operand must be a ``Pointer`` and the other must be an integer type (``IntType``,
+          ``LongType``, ``UIntType``, or ``ULongType``); the integer operand is cast to
+          ``LongType`` when it is not already that type.
 
         Child expressions that are not yet typed are recursively type-checked
         before the parent's type is determined, so this method may be called on
@@ -936,7 +1178,9 @@ class SemanticAnalyser:
                 ``Var`` name is absent from ``_type_table`` (undeclared); if a
                 ``FunctionCall`` names a local variable (variable called as a
                 function); if a ``FunctionCall`` names an undeclared function;
-                or if the argument count does not match the declared arity.
+                if the argument count does not match the declared arity;
+                if an ``Assignment`` lvalue is not a ``Var``, ``Dereference``, or
+                ``Subscript``; or if an ``Assignment`` lvalue has an array type.
         """
         if e.exp_type is not None:
             return e
@@ -960,7 +1204,7 @@ class SemanticAnalyser:
             case ast.Constant():
                 return ast.Constant(e.value, exp_type=IntType())
             case ast.Unary(operator=op, exp=exp):
-                typed_exp = self._type_check_exp(exp)
+                typed_exp = self._typecheck_and_convert(exp)
                 if isinstance(typed_exp.exp_type, DoubleType) and isinstance(op, ast.Complement):
                     raise SemanticError("Can't take the bitwise complement of a double")
                 if isinstance(typed_exp.exp_type, Pointer) and isinstance(op, (ast.Complement, ast.Negate)):
@@ -968,8 +1212,8 @@ class SemanticAnalyser:
                 exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
                 return ast.Unary(op, typed_exp, exp_type=exp_type)
             case ast.Binary(operator=op, left=left, right=right):
-                typed_left = self._type_check_exp(left)
-                typed_right = self._type_check_exp(right)
+                typed_left = self._typecheck_and_convert(left)
+                typed_right = self._typecheck_and_convert(right)
                 left_is_ptr = isinstance(typed_left.exp_type, Pointer)
                 right_is_ptr = isinstance(typed_right.exp_type, Pointer)
                 either_is_ptr = left_is_ptr or right_is_ptr
@@ -1026,12 +1270,16 @@ class SemanticAnalyser:
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
+                                if not isinstance(typed_right.exp_type, LongType):
+                                    typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                                 bin_type = typed_left.exp_type
                             else:
                                 if isinstance(typed_left.exp_type, DoubleType):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
+                                if not isinstance(typed_left.exp_type, LongType):
+                                    typed_left = ast.Cast(LongType(), typed_left, exp_type=LongType())
                                 bin_type = typed_right.exp_type
                         elif isinstance(op, ast.Subtract):
                             if left_is_ptr and right_is_ptr:
@@ -1043,6 +1291,8 @@ class SemanticAnalyser:
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
+                                if not isinstance(typed_right.exp_type, LongType):
+                                    typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                                 bin_type = typed_left.exp_type
                             else:
                                 raise SemanticError("Cannot subtract a pointer from a non-pointer value.")
@@ -1061,17 +1311,19 @@ class SemanticAnalyser:
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
-                if not isinstance(typed_lv, (ast.Var, ast.Dereference)):
+                if not isinstance(typed_lv, (ast.Var, ast.Dereference, ast.Subscript)):
                     raise SemanticError("Invalid lvalue in assignment expression.")
-                typed_rv = self._type_check_exp(rvalue)
+                if isinstance(typed_lv.exp_type, Array):
+                    raise SemanticError("Cannot assign to an expression of array type.")
+                typed_rv = self._typecheck_and_convert(rvalue)
                 lv_type = typed_lv.exp_type
                 if lv_type is not None:
                     typed_rv = _convert_by_assignment(typed_rv, lv_type)
                 return ast.Assignment(typed_lv, typed_rv, exp_type=lv_type)
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
-                typed_cond = self._type_check_exp(cond)
-                typed_true = self._type_check_exp(exp_true)
-                typed_false = self._type_check_exp(exp_false)
+                typed_cond = self._typecheck_and_convert(cond)
+                typed_true = self._typecheck_and_convert(exp_true)
+                typed_false = self._typecheck_and_convert(exp_false)
                 if typed_true.exp_type is not None and typed_false.exp_type is not None:
                     if isinstance(typed_true.exp_type, Pointer) or isinstance(typed_false.exp_type, Pointer):
                         common_cond = get_common_pointer_type(typed_true, typed_false)
@@ -1098,7 +1350,7 @@ class SemanticAnalyser:
                     param_types = fn_binding.param_types
                     fn_ret_type: Type = fn_binding.ret_type
                 else:
-                    typed_callee = self._type_check_exp(callee)
+                    typed_callee = self._typecheck_and_convert(callee)
                     callee_type = typed_callee.exp_type
                     if isinstance(callee_type, FunType):
                         param_types = callee_type.params
@@ -1112,31 +1364,121 @@ class SemanticAnalyser:
                 if len(args) != expected:
                     raise SemanticError(f"Function called with {len(args)} argument(s) but declared with {expected}.")
                 typed_args = [
-                    _convert_by_assignment(self._type_check_exp(arg), param_type)
+                    _convert_by_assignment(self._typecheck_and_convert(arg), param_type)
                     for arg, param_type in zip(args, param_types)
                 ]
                 return ast.FunctionCall(typed_callee, typed_args, exp_type=fn_ret_type)
             case ast.Cast(target_type=target_type, exp=exp):
-                typed_inner = self._type_check_exp(exp)
+                if isinstance(target_type, Array):
+                    raise SemanticError("Cannot cast an expression to an array type.")
+                typed_inner = self._typecheck_and_convert(exp)
                 if isinstance(target_type, Pointer) and isinstance(typed_inner.exp_type, DoubleType):
                     raise SemanticError("Cannot cast a double to a pointer type.")
                 if isinstance(target_type, DoubleType) and isinstance(typed_inner.exp_type, Pointer):
                     raise SemanticError("Cannot cast a pointer to a double.")
                 return ast.Cast(target_type, typed_inner, exp_type=target_type)
             case ast.Dereference(exp=exp):
-                typed_exp = self._type_check_exp(exp)
+                typed_exp = self._typecheck_and_convert(exp)
                 if not isinstance(typed_exp.exp_type, Pointer):
                     raise SemanticError("Cannot dereference a non-pointer type.")
                 return ast.Dereference(typed_exp, exp_type=typed_exp.exp_type.referenced)
             case ast.AddrOf(exp=exp):
                 typed_exp = self._type_check_exp(exp)
-                if not isinstance(typed_exp, (ast.Var, ast.Dereference)):
+                if not isinstance(typed_exp, (ast.Var, ast.Dereference, ast.Subscript)):
                     raise SemanticError("Operand of '&' must be an lvalue.")
                 if typed_exp.exp_type is None:
                     raise SemanticError("Cannot take address of expression with unknown type.")
                 return ast.AddrOf(typed_exp, exp_type=Pointer(typed_exp.exp_type))
+            case ast.Subscript(exp1=exp1, exp2=exp2):
+                typed_e1 = self._typecheck_and_convert(exp1)
+                typed_e2 = self._typecheck_and_convert(exp2)
+                t1 = typed_e1.exp_type
+                t2 = typed_e2.exp_type
+                _int_types = (IntType, LongType, UIntType, ULongType)
+                if isinstance(t1, Pointer) and isinstance(t2, _int_types):
+                    if not isinstance(t2, LongType):
+                        typed_e2 = ast.Cast(LongType(), typed_e2, exp_type=LongType())
+                    subscript_type: Type = t1.referenced
+                elif isinstance(t1, _int_types) and isinstance(t2, Pointer):
+                    if not isinstance(t1, LongType):
+                        typed_e1 = ast.Cast(LongType(), typed_e1, exp_type=LongType())
+                    subscript_type = t2.referenced
+                else:
+                    raise SemanticError("Subscript must have integer and pointer operands.")
+                return ast.Subscript(typed_e1, typed_e2, exp_type=subscript_type)
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
+
+    def _typecheck_and_convert(self, e: ast.Exp) -> ast.Exp:
+        """Type-check an expression and convert any array result to a pointer (array decay).
+
+        Wraps ``_type_check_exp`` with the C implicit array-to-pointer decay rule (C11 §6.3.2.1p3):
+        if the typed result has an ``Array`` type, it is wrapped in an ``AddrOf`` node whose
+        type is ``Pointer(element_type)``.  All other types are returned unchanged.
+
+        This method should be used in place of ``_type_check_exp`` everywhere except when
+        type-checking the operand of an ``AddrOf`` expression, where array decay must be
+        suppressed so that ``&arr`` receives the correct type ``Pointer(Array(...))``.
+
+        Args:
+            e: An expression node, already name-resolved, to type-check and convert.
+
+        Returns:
+            The typed expression, with an ``AddrOf`` wrapper added when the expression has
+            an array type; otherwise the expression returned by ``_type_check_exp`` unchanged.
+
+        Raises:
+            SemanticError: If ``_type_check_exp`` raises for any reason.
+        """
+        typed_e = self._type_check_exp(e)
+        match typed_e.exp_type:
+            case Array(element=elem_t):
+                return ast.AddrOf(typed_e, exp_type=Pointer(elem_t))
+            case _:
+                return typed_e
+
+    def _typecheck_init(self, target_type: Type, init: ast.Initializer) -> ast.Initializer:
+        """Type-check a variable initializer against its declared type, applying assignment conversion.
+
+        Handles both scalar (``SingleInit``) and aggregate (``CompoundInit``) initialisers.
+        For scalar initialisers the wrapped expression is fully resolved, array-decay-converted,
+        and then converted via assignment-compatibility rules to the target type.  For array
+        initialisers each element is recursively checked against the array's element type; if
+        the initializer list is shorter than the declared size, trailing elements are
+        zero-initialised (C11 §6.7.9p21).
+
+        Args:
+            target_type: The declared C type of the variable or array element being initialised.
+            init: The initialiser node to type-check — either a ``SingleInit`` or ``CompoundInit``.
+
+        Returns:
+            A new ``Initializer`` with all sub-expressions fully resolved, type-annotated, and
+            converted to the target type.  ``CompoundInit`` nodes are padded to the array's
+            declared size with zero initialisers.
+
+        Raises:
+            SemanticError: If a ``CompoundInit`` is used with a non-array target type; if the
+                initializer list is longer than the declared array size; or if any sub-expression
+                fails type-checking or assignment conversion.
+        """
+        match target_type, init:
+            case _, ast.SingleInit(exp=e):
+                typechecked_exp = self._typecheck_and_convert(self.resolve_exp(e))
+                cast_exp = _convert_by_assignment(typechecked_exp, target_type)
+                return ast.SingleInit(cast_exp)
+            case Array(element=elem_t, size=size), ast.CompoundInit(initializers=init_list):
+                if len(init_list) > size:
+                    raise SemanticError(
+                        f"Too many values in initializer: expected at most {size}, got {len(init_list)}."
+                    )
+                typechecked_list: list[ast.Initializer] = [
+                    self._typecheck_init(elem_t, elem_init) for elem_init in init_list
+                ]
+                while len(typechecked_list) < size:
+                    typechecked_list.append(_zero_initializer(elem_t))
+                return ast.CompoundInit(typechecked_list)
+            case _:
+                raise SemanticError("Cannot initialize a scalar object with a compound initializer.")
 
     def resolve_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
         """Resolve all variable references within an expression and annotate it with its C type.
@@ -1218,6 +1560,8 @@ class SemanticAnalyser:
                 return self._type_check_exp(ast.Dereference(self.resolve_exp(exp)))
             case ast.AddrOf(exp=exp):
                 return self._type_check_exp(ast.AddrOf(self.resolve_exp(exp)))
+            case ast.Subscript(exp1=exp1, exp2=exp2):
+                return self._type_check_exp(ast.Subscript(self.resolve_exp(exp1), self.resolve_exp(exp2)))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -1257,12 +1601,12 @@ class SemanticAnalyser:
             case ast.Compound(body=block):
                 return ast.Compound(self._resolve_block(block))
             case ast.Return(exp=exp):
-                resolved = self.resolve_exp(exp)
+                resolved = self._typecheck_and_convert(self.resolve_exp(exp))
                 if self._current_return_type is not None and resolved.exp_type is not None:
                     resolved = _convert_by_assignment(resolved, self._current_return_type)
                 return ast.Return(resolved)
             case ast.Expression(exp=exp):
-                return ast.Expression(self.resolve_exp(exp))
+                return ast.Expression(self._typecheck_and_convert(self.resolve_exp(exp)))
             case ast.Null():
                 return statement
             case ast.Break():
@@ -1274,10 +1618,12 @@ class SemanticAnalyser:
                     raise SemanticError("'continue' statement not within a loop.")
                 return ast.Continue(self._loop_stack[-1])
             case ast.If(condition=cond, then=then_stmt, else_=None):
-                return ast.If(self.resolve_exp(cond), self._resolve_statement(then_stmt), None)
+                return ast.If(
+                    self._typecheck_and_convert(self.resolve_exp(cond)), self._resolve_statement(then_stmt), None
+                )
             case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
                 return ast.If(
-                    self.resolve_exp(cond),
+                    self._typecheck_and_convert(self.resolve_exp(cond)),
                     self._resolve_statement(then_stmt),
                     self._resolve_statement(else_stmt),
                 )
@@ -1285,7 +1631,9 @@ class SemanticAnalyser:
                 label = self._make_loop_label("while")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
-                result = ast.While(self.resolve_exp(condition), self._resolve_statement(body), label)
+                result = ast.While(
+                    self._typecheck_and_convert(self.resolve_exp(condition)), self._resolve_statement(body), label
+                )
                 self._loop_stack.pop()
                 self._break_stack.pop()
                 return result
@@ -1293,7 +1641,9 @@ class SemanticAnalyser:
                 label = self._make_loop_label("do")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
-                result = ast.DoWhile(self._resolve_statement(body), self.resolve_exp(condition), label)
+                result = ast.DoWhile(
+                    self._resolve_statement(body), self._typecheck_and_convert(self.resolve_exp(condition)), label
+                )
                 self._loop_stack.pop()
                 self._break_stack.pop()
                 return result
@@ -1317,7 +1667,7 @@ class SemanticAnalyser:
                 self._switch_stack.append(label)
                 self._case_values_stack.append(set())
                 self._default_seen_stack.append(False)
-                resolved_control = self.resolve_exp(control)
+                resolved_control = self._typecheck_and_convert(self.resolve_exp(control))
                 if isinstance(resolved_control.exp_type, DoubleType):
                     raise SemanticError("Switch controlling expression must be an integer, not a double")
                 self._switch_type_stack.append(resolved_control.exp_type or IntType())
@@ -1406,7 +1756,7 @@ class SemanticAnalyser:
                 undeclared variable or an invalid lvalue.
         """
         if exp is not None:
-            return self.resolve_exp(exp)
+            return self._typecheck_and_convert(self.resolve_exp(exp))
         return None
 
     def _resolve_block_item(self, item: ast.BlockItem) -> ast.BlockItem:
@@ -1440,8 +1790,8 @@ class SemanticAnalyser:
                         f"Block-scope function declaration '{fun.name}' may not have 'static' storage class."
                     )
                 self._validate_params_unique(fun)
-                self._register_fun_declaration(fun)
-                return item
+                adjusted_fun = self._register_fun_declaration(fun)
+                return ast.D(ast.FunDecl(adjusted_fun))
             case ast.S(statement=statement):
                 return ast.S(self._resolve_statement(statement))
             case _:
@@ -1546,7 +1896,7 @@ class SemanticAnalyser:
             match decl:
                 case ast.FunDecl(function_declaration=fn):
                     file_scope_state = dict(self._variable_map)
-                    self._register_fun_declaration(fn)
+                    fn = self._register_fun_declaration(fn)
                     resolved.append(ast.FunDecl(self._resolve_function(fn)))
                     self._variable_map = file_scope_state
                     self._current_block_funs = set()

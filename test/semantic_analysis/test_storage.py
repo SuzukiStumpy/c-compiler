@@ -11,7 +11,7 @@ import compiler.syntax.ast as ast
 from compiler.semantic_analysis import SemanticAnalyser, resolve
 from compiler.syntax.ast.constants import ConstDouble, ConstInt
 from compiler.syntax.ast.types import Linkage
-from compiler.types.symbols import PointerInit, StaticAttr, ULongInit
+from compiler.types.symbols import DoubleInit, Initial, IntInit, PointerInit, StaticAttr, ULongInit, ZeroInit
 from compiler.utils.exceptions import SemanticError
 from test.semantic_analysis.helpers import (
     _file_var,
@@ -150,7 +150,7 @@ class TestFileScopeVariableDeclarations:
         result = analyser._resolve_file_scope_variable_declaration(
             ast.VariableDeclaration("x", ast.Constant(ConstInt(7)), ast.IntType())
         )
-        assert result.init == ast.Constant(ConstInt(7))
+        assert result.init == ast.SingleInit(ast.Constant(ConstInt(7)))
 
     def test_file_scope_extern_then_static_raises(self) -> None:
         """A ``static`` file-scope declaration conflicts with a prior ``extern`` declaration of the same name.
@@ -261,7 +261,7 @@ class TestFileScopeVariableDeclarations:
         result = analyser._resolve_file_scope_variable_declaration(
             ast.VariableDeclaration("foo", ast.Constant(ConstInt(4)), ast.IntType())
         )
-        assert result.init == ast.Constant(ConstInt(4))
+        assert result.init == ast.SingleInit(ast.Constant(ConstInt(4)))
 
     def test_definition_then_tentative_is_valid(self) -> None:
         """A definition followed by a tentative definition (no initialiser) is accepted."""
@@ -448,7 +448,7 @@ class TestBlockScopeStorageClass:
         result = analyser.resolve_variable_declaration(
             ast.VariableDeclaration("x", ast.Constant(ConstInt(42)), ast.IntType(), ast.StorageClass.Static)
         )
-        assert result.init == ast.Constant(ConstInt(42))
+        assert result.init == ast.SingleInit(ast.Constant(ConstInt(42)))
 
     def test_block_scope_extern_after_static_local_raises(self) -> None:
         """A block-scope ``extern`` after a ``static`` local of the same name raises ``SemanticError``.
@@ -757,3 +757,282 @@ class TestStaticPointerInitialisers:
                     ast.StorageClass.Static,
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# Static array initializers
+# ---------------------------------------------------------------------------
+
+
+class TestStaticArrayInitialisers:
+    """Static arrays (block-scope ``static`` and file-scope) store flat ``Initial`` tuples."""
+
+    # --- block-scope static ---
+
+    def test_block_scope_static_array_full_init_stores_flat_initial(self) -> None:
+        """``static int arr[3] = {1, 2, 3}`` stores ``Initial((IntInit(1), IntInit(2), IntInit(3),))``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit(
+                    [
+                        ast.SingleInit(ast.Constant(ConstInt(1))),
+                        ast.SingleInit(ast.Constant(ConstInt(2))),
+                        ast.SingleInit(ast.Constant(ConstInt(3))),
+                    ]
+                ),
+                ast.Array(ast.IntType(), 3),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (IntInit(1), IntInit(2), IntInit(3))
+
+    def test_block_scope_static_array_partial_init_zero_pads(self) -> None:
+        """``static int arr[3] = {1}`` stores ``Initial((IntInit(1), ZeroInit(8),))`` (trailing 2 ints = 8 bytes)."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit([ast.SingleInit(ast.Constant(ConstInt(1)))]),
+                ast.Array(ast.IntType(), 3),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (IntInit(1), ZeroInit(8))
+
+    def test_block_scope_static_array_zero_init_coalesces(self) -> None:
+        """``static int arr[3] = {0, 0, 0}`` stores a single coalesced ``ZeroInit(12)``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit(
+                    [
+                        ast.SingleInit(ast.Constant(ConstInt(0))),
+                        ast.SingleInit(ast.Constant(ConstInt(0))),
+                        ast.SingleInit(ast.Constant(ConstInt(0))),
+                    ]
+                ),
+                ast.Array(ast.IntType(), 3),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (ZeroInit(12),)
+
+    def test_block_scope_static_array_empty_init_zeros_all(self) -> None:
+        """``static int arr[4] = {}`` stores a single ``ZeroInit(16)``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit([]),
+                ast.Array(ast.IntType(), 4),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (ZeroInit(16),)
+
+    def test_block_scope_static_2d_array_sparse_init(self) -> None:
+        """``static int arr[3][2] = {{100}, {200, 300}}`` stores the correct flat initial list.
+
+        The expected layout (row-major, int = 4 bytes):
+        - arr[0][0] = 100 → IntInit(100)
+        - arr[0][1] = 0   → ZeroInit(4)
+        - arr[1][0] = 200 → IntInit(200)
+        - arr[1][1] = 300 → IntInit(300)
+        - arr[2][0..1]= 0 → ZeroInit(8)
+        """
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit(
+                    [
+                        ast.CompoundInit([ast.SingleInit(ast.Constant(ConstInt(100)))]),
+                        ast.CompoundInit(
+                            [
+                                ast.SingleInit(ast.Constant(ConstInt(200))),
+                                ast.SingleInit(ast.Constant(ConstInt(300))),
+                            ]
+                        ),
+                    ]
+                ),
+                ast.Array(ast.Array(ast.IntType(), 2), 3),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (IntInit(100), ZeroInit(4), IntInit(200), IntInit(300), ZeroInit(8))
+
+    def test_block_scope_static_array_non_constant_init_raises(self) -> None:
+        """``static int arr[2] = {1, a}`` where ``a`` is a variable raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(ast.VariableDeclaration("a", ast.Constant(ConstInt(1)), ast.IntType()))
+        with pytest.raises(SemanticError, match="constant"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.CompoundInit(
+                        [
+                            ast.SingleInit(ast.Constant(ConstInt(1))),
+                            ast.SingleInit(ast.Var("a")),
+                        ]
+                    ),
+                    ast.Array(ast.IntType(), 2),
+                    ast.StorageClass.Static,
+                )
+            )
+
+    def test_block_scope_static_array_too_many_elements_raises(self) -> None:
+        """``static int arr[2] = {1, 2, 3}`` raises ``SemanticError`` (too many initialisers)."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="Too many"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.CompoundInit(
+                        [
+                            ast.SingleInit(ast.Constant(ConstInt(1))),
+                            ast.SingleInit(ast.Constant(ConstInt(2))),
+                            ast.SingleInit(ast.Constant(ConstInt(3))),
+                        ]
+                    ),
+                    ast.Array(ast.IntType(), 2),
+                    ast.StorageClass.Static,
+                )
+            )
+
+    def test_block_scope_static_array_symbol_table_has_static_attr(self) -> None:
+        """The symbol table entry for a static array has ``globl=False``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit([ast.SingleInit(ast.Constant(ConstInt(7)))]),
+                ast.Array(ast.IntType(), 1),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.globl is False
+
+    # --- file-scope ---
+
+    def test_file_scope_array_full_init_stores_flat_initial(self) -> None:
+        """``int arr[2] = {10, 20};`` at file scope stores ``Initial((IntInit(10), IntInit(20),))``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit(
+                    [
+                        ast.SingleInit(ast.Constant(ConstInt(10))),
+                        ast.SingleInit(ast.Constant(ConstInt(20))),
+                    ]
+                ),
+                ast.Array(ast.IntType(), 2),
+            )
+        )
+        entry = analyser._symbol_table["arr"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (IntInit(10), IntInit(20))
+
+    def test_file_scope_array_partial_init_zero_pads(self) -> None:
+        """``int arr[3] = {5};`` at file scope stores ``Initial((IntInit(5), ZeroInit(8),))``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.CompoundInit([ast.SingleInit(ast.Constant(ConstInt(5)))]),
+                ast.Array(ast.IntType(), 3),
+            )
+        )
+        entry = analyser._symbol_table["arr"]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (IntInit(5), ZeroInit(8))
+
+    def test_file_scope_array_non_constant_init_raises(self) -> None:
+        """A file-scope array with a non-constant element raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(ast.VariableDeclaration("a", None, ast.IntType()))
+        with pytest.raises(SemanticError, match="constant"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.CompoundInit([ast.SingleInit(ast.Var("a"))]),
+                    ast.Array(ast.IntType(), 2),
+                )
+            )
+
+    def test_file_scope_array_too_many_elements_raises(self) -> None:
+        """A file-scope array with more elements than its declared size raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="Too many"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.CompoundInit(
+                        [
+                            ast.SingleInit(ast.Constant(ConstInt(1))),
+                            ast.SingleInit(ast.Constant(ConstInt(2))),
+                            ast.SingleInit(ast.Constant(ConstInt(3))),
+                        ]
+                    ),
+                    ast.Array(ast.IntType(), 2),
+                )
+            )
+
+
+# ---------------------------------------------------------------------------
+# ZeroInit vs DoubleInit for double scalar statics
+# ---------------------------------------------------------------------------
+
+
+class TestStaticDoubleZeroInit:
+    """``static double`` scalars use ``ZeroInit`` for ``+0.0`` but ``DoubleInit`` for ``-0.0``."""
+
+    def test_positive_zero_double_stores_zero_init(self) -> None:
+        """``static double x = 0.0;`` stores ``ZeroInit(8)``, not ``DoubleInit(0.0)``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("x", ast.SingleInit(ast.Constant(ConstDouble(0.0))), ast.DoubleType())
+        )
+        entry = analyser._symbol_table["x"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (ZeroInit(8),)
+
+    def test_negative_zero_double_stores_double_init(self) -> None:
+        """``static double x = -0.0;`` stores ``DoubleInit(-0.0)``, not ``ZeroInit(8)``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("x", ast.SingleInit(ast.Constant(ConstDouble(-0.0))), ast.DoubleType())
+        )
+        entry = analyser._symbol_table["x"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (DoubleInit(-0.0),)
+
+    def test_nonzero_double_stores_double_init(self) -> None:
+        """``static double x = 1.5;`` stores ``DoubleInit(1.5)``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("x", ast.SingleInit(ast.Constant(ConstDouble(1.5))), ast.DoubleType())
+        )
+        entry = analyser._symbol_table["x"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (DoubleInit(1.5),)

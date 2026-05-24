@@ -38,12 +38,12 @@ class TestResolveDeclaration:
         assert result.init is None
 
     def test_declaration_with_constant_init_passes_through(self) -> None:
-        """A constant initialiser is returned unchanged."""
+        """A constant initialiser is returned wrapped in ``SingleInit``."""
         analyser = SemanticAnalyser()
         result = analyser.resolve_variable_declaration(
             ast.VariableDeclaration(name="x", init=ast.Constant(value=5), var_type=ast.IntType())
         )
-        assert result.init == ast.Constant(value=5)
+        assert result.init == ast.SingleInit(ast.Constant(value=5))
 
     def test_declaration_with_var_init_renames_init_var(self) -> None:
         """An initialiser that references an already-declared variable is renamed."""
@@ -54,7 +54,7 @@ class TestResolveDeclaration:
         result = analyser.resolve_variable_declaration(
             ast.VariableDeclaration(name="x", init=ast.Var(name="y"), var_type=ast.IntType())
         )
-        assert result.init == ast.Var(name=".Vy.0")
+        assert result.init == ast.SingleInit(ast.Var(name=".Vy.0"))
 
     def test_two_declarations_receive_distinct_suffixes(self) -> None:
         """Successive declarations in the same analyser get incrementing suffixes."""
@@ -82,7 +82,7 @@ class TestResolveDeclaration:
             ast.VariableDeclaration(name="x", init=ast.Var(name="x"), var_type=ast.IntType())
         )
         assert result.name == ".Vx.0"
-        assert result.init == ast.Var(name=".Vx.0")
+        assert result.init == ast.SingleInit(ast.Var(name=".Vx.0"))
 
     def test_short_circuit_init_referencing_own_variable_is_accepted(self) -> None:
         """``int a = 0 && a;`` is accepted: ``a`` is in scope and the right side is never evaluated."""
@@ -593,7 +593,7 @@ class TestResolveCompound:
         # The inner x must be distinct from the outer x.
         assert inner_decl.name != outer_name
         # Its initialiser references itself (the new inner binding), not the outer x.
-        assert inner_decl.init == ast.Var(name=inner_decl.name)
+        assert inner_decl.init == ast.SingleInit(ast.Var(name=inner_decl.name))
 
     def test_undeclared_variable_inside_compound_block_raises(self) -> None:
         """A reference to a variable that was never declared, inside a compound block, raises ``SemanticError``."""
@@ -626,7 +626,7 @@ class TestResolveCompound:
         compound = if_stmt.then
         assert isinstance(compound, ast.Compound)
         inner_decl = compound.body[0].declaration.variable_declaration
-        assert inner_decl.init == ast.Var(name=outer_name)
+        assert inner_decl.init == ast.SingleInit(ast.Var(name=outer_name))
         assert compound.body[1] == ast.S(statement=ast.Return(exp=ast.Var(name=inner_decl.name)))
 
     def test_compound_as_else_branch_of_if_resolves(self) -> None:

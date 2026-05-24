@@ -8,7 +8,7 @@ correctly reflect static-duration variables (file-scope and block-scope
 import compiler.syntax.ast as ast
 from compiler.semantic_analysis import resolve_with_symbols
 from compiler.syntax.ast.constants import ConstInt
-from compiler.types.symbols import FunAttr, Initial, NoInitializer, StaticAttr, Tentative
+from compiler.types.symbols import FunAttr, Initial, IntInit, NoInitializer, StaticAttr, Tentative
 from test.semantic_analysis.helpers import _file_var, _get_fn, _prog_with_decls, _program
 
 
@@ -21,23 +21,23 @@ class TestSymbolTablePopulation:
     # ------------------------------------------------------------------
 
     def test_file_scope_variable_with_init_produces_initial_entry(self) -> None:
-        """A file-scope ``int x = 5;`` produces ``StaticAttr(Initial(5), globl=True)``."""
+        """A file-scope ``int x = 5;`` produces ``StaticAttr(Initial((IntInit(5),)), globl=True)``."""
         _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(ConstInt(5)))))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
-        assert entry.attrs.init.value == 5
+        assert entry.attrs.init.initializers == (IntInit(5),)
         assert entry.attrs.globl is True
 
     def test_file_scope_static_variable_with_init_produces_internal_entry(self) -> None:
-        """A ``static int x = 3;`` at file scope produces ``StaticAttr(Initial(3), globl=False)``."""
+        """A ``static int x = 3;`` at file scope produces ``StaticAttr(Initial((IntInit(3),)), globl=False)``."""
         _, symbols = resolve_with_symbols(
             _prog_with_decls(_file_var("x", ast.Constant(ConstInt(3)), sc=ast.StorageClass.Static))
         )
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
-        assert entry.attrs.init.value == 3
+        assert entry.attrs.init.initializers == (IntInit(3),)
         assert entry.attrs.globl is False
 
     def test_file_scope_tentative_variable_produces_tentative_entry(self) -> None:
@@ -62,7 +62,7 @@ class TestSymbolTablePopulation:
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
-        assert entry.attrs.init.value == 7
+        assert entry.attrs.init.initializers == (IntInit(7),)
 
     def test_definition_then_tentative_preserves_initial_value(self) -> None:
         """An initial definition followed by a tentative definition keeps ``Initial``."""
@@ -70,7 +70,7 @@ class TestSymbolTablePopulation:
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
-        assert entry.attrs.init.value == 9
+        assert entry.attrs.init.initializers == (IntInit(9),)
 
     def test_extern_then_tentative_yields_tentative(self) -> None:
         """A non-defining ``extern`` followed by a tentative definition upgrades to ``Tentative``."""
@@ -84,7 +84,7 @@ class TestSymbolTablePopulation:
     # ------------------------------------------------------------------
 
     def test_block_scope_static_with_init_produces_initial_entry(self) -> None:
-        """A block-scope ``static int x = 5;`` produces ``StaticAttr(Initial(5), globl=False)``
+        """A block-scope ``static int x = 5;`` produces ``StaticAttr(Initial((IntInit(5),)), globl=False)``
         keyed by the unique renamed identifier."""
         body = (
             ast.D(
@@ -104,7 +104,7 @@ class TestSymbolTablePopulation:
         name, entry = next(iter(static_entries.items()))
         assert name.startswith(".Vx.")
         assert isinstance(entry.attrs.init, Initial)
-        assert entry.attrs.init.value == 5
+        assert entry.attrs.init.initializers == (IntInit(5),)
         assert entry.attrs.globl is False
 
     def test_block_scope_static_without_init_produces_tentative_entry(self) -> None:
@@ -136,7 +136,7 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_definition_takes_precedence_over_block_extern(self) -> None:
         """When a file-scope definition ``int g = 4;`` exists and a block-scope ``extern int g;``
-        also appears, the symbol table retains ``Initial(4)`` rather than ``NoInitializer``."""
+        also appears, the symbol table retains ``Initial((IntInit(4),))`` rather than ``NoInitializer``."""
         body = (
             ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.IntType(), ast.StorageClass.Extern))),
             ast.S(ast.Return(ast.Constant(ConstInt(0)))),
@@ -151,7 +151,7 @@ class TestSymbolTablePopulation:
         entry = symbols["g"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
-        assert entry.attrs.init.value == 4
+        assert entry.attrs.init.initializers == (IntInit(4),)
 
     # ------------------------------------------------------------------
     # Functions

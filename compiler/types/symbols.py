@@ -10,11 +10,15 @@ Grammar::
     attrs              = StaticAttr(initial_value, bool globl)
                        | FunAttr(bool defined, bool globl)
                        | LocalAttr
-    initial_value      = Initial(int | float)
+    initial_value      = Initial(tuple[StaticInit, ...])
                        | ULongInit(int)
                        | PointerInit(str)
                        | Tentative
                        | NoInitializer
+    static_init        = IntInit(int)
+                       | LongInit(int)
+                       | DoubleInit(float)
+                       | ZeroInit(int bytes)
 
 ``StaticAttr`` is attached to every variable with static storage duration:
 file-scope variables (external or internal linkage) and block-scope ``static``
@@ -22,7 +26,11 @@ or ``extern`` variables.
 
 ``FunAttr`` is attached to every function declaration or definition.
 
-``Initial(i)``      — the variable was given a constant initialiser ``i``.
+``Initial(inits)``  — the variable was given a constant initialiser; ``inits`` is
+                      a flat ordered tuple of ``StaticInit`` elements.  For scalar
+                      objects this is a single-element tuple; for arrays it is a
+                      flat sequence with consecutive zero regions coalesced into
+                      ``ZeroInit`` nodes.
 ``Tentative``       — the variable is a tentative definition (no initialiser);
                       it will be zero-initialised at link time.
 ``NoInitializer``   — the name appears only in a non-defining declaration (e.g.
@@ -36,6 +44,66 @@ from dataclasses import dataclass
 from compiler.syntax.ast.types import Type
 
 
+class StaticInit(ABC):
+    """Abstract base for scalar initial-value elements within an ``Initial`` tuple.
+
+    Concrete variants carry a single scalar value or a zero-fill region.  They
+    appear as elements in ``Initial.initializers`` and are distinct from
+    ``tac.StaticInit``, which lives at the TAC level.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class IntInit(StaticInit):
+    """4-byte integer initialiser element (C ``int`` / ``unsigned int``).
+
+    Attributes:
+        value: The integer value to store.  Never zero — use ``ZeroInit(4)``
+            for a zero-valued 4-byte element.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class LongInit(StaticInit):
+    """8-byte integer initialiser element (C ``long`` / ``unsigned long``).
+
+    Attributes:
+        value: The integer value to store.  Never zero — use ``ZeroInit(8)``
+            for a zero-valued 8-byte element.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleInit(StaticInit):
+    """8-byte floating-point initialiser element (C ``double``).
+
+    Attributes:
+        value: The double value to store.  Never zero — use ``ZeroInit(8)``
+            for a zero-valued 8-byte element.
+    """
+
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroInit(StaticInit):
+    """Zero-fill initialiser element spanning ``bytes`` bytes.
+
+    Used for explicitly zero-initialised scalars and for zero-padding regions
+    within aggregate initialisers.  Adjacent ``ZeroInit`` nodes are coalesced
+    by the semantic analyser so a single ``ZeroInit`` spans the whole region.
+
+    Attributes:
+        bytes: The number of consecutive zero bytes to emit.
+    """
+
+    bytes: int
+
+
 class InitialValue(ABC):
     """Abstract base for the possible initial-value states of a static variable."""
 
@@ -44,12 +112,15 @@ class InitialValue(ABC):
 class Initial(InitialValue):
     """The variable was defined with a constant initialiser.
 
+    Holds an ordered flat tuple of ``StaticInit`` elements.  For scalar objects
+    this is a single-element tuple; for arrays it is a flat sequence of element
+    values with consecutive zero regions coalesced into ``ZeroInit`` nodes.
+
     Attributes:
-        value: The numeric value supplied as the initialiser.  ``int`` for all
-            integer types; ``float`` for ``double``.
+        initializers: Ordered tuple of scalar initialiser elements.
     """
 
-    value: int | float
+    initializers: tuple[StaticInit, ...]
 
 
 @dataclass(frozen=True, slots=True)

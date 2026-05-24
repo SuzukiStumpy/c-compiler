@@ -101,6 +101,9 @@ from itertools import count
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.types.symbols import (
+    DoubleInit as SymDoubleInit,
+)
+from compiler.types.symbols import (
     Initial,
     LocalAttr,
     NoInitializer,
@@ -110,6 +113,15 @@ from compiler.types.symbols import (
     SymbolTableEntry,
     Tentative,
     ULongInit,
+)
+from compiler.types.symbols import (
+    IntInit as SymIntInit,
+)
+from compiler.types.symbols import (
+    LongInit as SymLongInit,
+)
+from compiler.types.symbols import (
+    ZeroInit as SymZeroInit,
 )
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -163,14 +175,28 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
         is_long = isinstance(entry.t, ast.LongType | ast.ULongType)
         is_double = isinstance(entry.t, ast.DoubleType)
         match entry.attrs:
-            case StaticAttr(init=Initial(value=i), globl=globl):
-                if is_double:
-                    static_init: tac.StaticInit = tac.DoubleInit(float(i))
-                elif is_long:
-                    static_init = tac.LongInit(int(i))
-                else:
-                    static_init = tac.IntInit(int(i))
+            case StaticAttr(init=Initial(initializers=inits), globl=globl) if len(inits) == 1:
+                elem = inits[0]
+                match elem:
+                    case SymIntInit(value=v):
+                        static_init: tac.StaticInit = tac.IntInit(v)
+                    case SymLongInit(value=v):
+                        static_init = tac.LongInit(v)
+                    case SymDoubleInit(value=v):
+                        static_init = tac.DoubleInit(v)
+                    case SymZeroInit():
+                        if is_double:
+                            static_init = tac.DoubleInit(0.0)
+                        elif is_long:
+                            static_init = tac.LongInit(0)
+                        else:
+                            static_init = tac.IntInit(0)
+                    case _:
+                        continue
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=static_init))
+            case StaticAttr(init=Initial()):
+                # Multi-element Initial (array): not yet emitted to data segment.
+                pass
             case StaticAttr(init=Tentative(), globl=globl):
                 if is_double:
                     static_init = tac.DoubleInit(0.0)
@@ -282,8 +308,10 @@ def _type_size(t: ast.Type) -> int:
     """
     if isinstance(t, (ast.IntType, ast.UIntType)):
         return 4
-    if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer)):
+    if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer, ast.DoubleType)):
         return 8
+    if isinstance(t, ast.Array):
+        return t.size * _type_size(t.element)
     raise CodeGenerationError(f"unsupported type in size calculation: {type(t).__name__}")
 
 
@@ -427,12 +455,129 @@ class _TacGenerator:
                     return []  # emitted as StaticVariable via symbol table; no inline instructions
                 if init is None:
                     return []
-                val, instrs = self.translate_exp(init)
-                return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
+                match init:
+                    case ast.SingleInit(exp=e):
+                        val, instrs = self.translate_exp(e)
+                        return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
+                    case ast.CompoundInit():
+                        return self._translate_compound_init(name, init)
+                    case _:
+                        raise CodeGenerationError(f"unsupported initializer variant: {type(init).__name__}")
             case ast.D(declaration=ast.FunDecl()):
                 return []
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
+
+    def _init_byte_size(self, init: ast.Initializer) -> int:
+        """Return the total byte size covered by an initializer.
+
+        Args:
+            init: A ``SingleInit`` or ``CompoundInit`` node whose size is needed.
+
+        Returns:
+            For ``SingleInit``: the size of the wrapped expression's type.
+            For ``CompoundInit``: the sum of sizes of all sub-initializers.
+
+        Raises:
+            CodeGenerationError: If ``init`` is an unrecognised ``Initializer`` variant or contains
+                an expression with no type annotation.
+        """
+        match init:
+            case ast.SingleInit(exp=e):
+                return _type_size(e.exp_type or ast.IntType())
+            case ast.CompoundInit(initializers=sub_inits):
+                return sum(self._init_byte_size(sub) for sub in sub_inits)
+            case _:
+                raise CodeGenerationError(f"unsupported initializer type: {type(init).__name__}")
+
+    def _emit_stores_for_init(
+        self,
+        base_ptr: tac.Val,
+        byte_offset: int,
+        init: ast.Initializer,
+        instructions: list[tac.Instruction],
+    ) -> None:
+        """Recursively emit ``Store`` instructions for an initializer at a byte offset from ``base_ptr``.
+
+        Args:
+            base_ptr: A pointer-typed ``tac.Val`` pointing to the start of the aggregate variable.
+            byte_offset: The byte offset from ``base_ptr`` at which this initializer's value should
+                be written.
+            init: The initializer to emit — either a ``SingleInit`` (scalar) or ``CompoundInit``
+                (nested aggregate).
+            instructions: The instruction list to which new instructions are appended in-place.
+        """
+        match init:
+            case ast.SingleInit(exp=e):
+                val, elem_instrs = self.translate_exp(e)
+                instructions.extend(elem_instrs)
+                if byte_offset == 0:
+                    elem_ptr: tac.Val = base_ptr
+                else:
+                    elem_ptr = self._make_temp(ast.Pointer(ast.IntType()))
+                    instructions.append(
+                        tac.Binary(tac.Add(), base_ptr, tac.Constant(ast.ConstLong(byte_offset)), elem_ptr)
+                    )
+                instructions.append(tac.Store(src=val, dst_ptr=elem_ptr))
+            case ast.CompoundInit(initializers=sub_inits):
+                if not sub_inits:
+                    return
+                elem_size = self._init_byte_size(sub_inits[0])
+                for i, sub_init in enumerate(sub_inits):
+                    self._emit_stores_for_init(base_ptr, byte_offset + i * elem_size, sub_init, instructions)
+
+    def _translate_compound_init(self, name: str, init: ast.CompoundInit) -> list[tac.Instruction]:
+        """Translate a ``CompoundInit`` for a local array variable into element-wise ``Store`` instructions.
+
+        Gets the address of the array variable, then calls ``_emit_stores_for_init`` to emit
+        one ``Store`` per scalar element, using pointer arithmetic to compute each element address.
+
+        Args:
+            name: The unique resolved name of the array variable (e.g. ``".Varr.0"``).
+            init: The ``CompoundInit`` node carrying the element initializers.
+
+        Returns:
+            A list of ``tac.Instruction`` nodes that initialise every element of the array.
+        """
+        instructions: list[tac.Instruction] = []
+        base_ptr = self._make_temp(ast.Pointer(ast.IntType()))
+        instructions.append(tac.GetAddress(src=tac.Var(value=name), dst=base_ptr))
+        self._emit_stores_for_init(base_ptr, 0, init, instructions)
+        return instructions
+
+    def _subscript_ptr(
+        self, ptr_exp: ast.Exp, ptr_val: tac.Val, idx_val: tac.Val
+    ) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Compute the pointer to a subscript element and return it with the required instructions.
+
+        Multiplies the (already ``LongType``) index by the element size and adds it to the base
+        pointer, producing the address of the referenced element.
+
+        Args:
+            ptr_exp: The already-typed pointer-subexpression of the ``Subscript`` node; used to
+                determine the element type from its ``exp_type``.
+            ptr_val: The ``tac.Val`` holding the base pointer at runtime.
+            idx_val: The ``tac.Val`` holding the index (must be ``LongType``).
+
+        Returns:
+            A ``(elem_ptr_val, instructions)`` pair.  ``instructions`` must be emitted before
+            ``elem_ptr_val`` is used.
+
+        Raises:
+            CodeGenerationError: If ``ptr_exp.exp_type`` is not a ``Pointer``.
+        """
+        ptr_type = ptr_exp.exp_type
+        if not isinstance(ptr_type, ast.Pointer):
+            raise CodeGenerationError("Subscript base must be a pointer type.")
+        elem_type = ptr_type.referenced
+        elem_size = _type_size(elem_type)
+        byte_offset = self._make_temp(ast.LongType())
+        elem_ptr = self._make_temp(ast.Pointer(elem_type))
+        instrs: list[tac.Instruction] = [
+            tac.Binary(tac.Multiply(), idx_val, tac.Constant(ast.ConstLong(elem_size)), byte_offset),
+            tac.Binary(tac.Add(), ptr_val, byte_offset, elem_ptr),
+        ]
+        return elem_ptr, instrs
 
     def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:  # noqa: C901 - suppress function too complicated
         """Translate a single AST statement into a sequence of TAC instructions.
@@ -616,8 +761,14 @@ class _TacGenerator:
             ):
                 if decl_init is None:
                     return []
-                val, instrs = self.translate_exp(decl_init)
-                return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
+                match decl_init:
+                    case ast.SingleInit(exp=e):
+                        val, instrs = self.translate_exp(e)
+                        return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
+                    case ast.CompoundInit():
+                        return self._translate_compound_init(name, decl_init)
+                    case _:
+                        raise CodeGenerationError(f"unsupported initializer variant: {type(decl_init).__name__}")
             case _:
                 raise CodeGenerationError(f"unsupported for-init type: {type(init).__name__}")
 
@@ -830,6 +981,18 @@ class _TacGenerator:
                 rval, rval_instrs = self.translate_exp(rvalue)
                 ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
                 return rval, [*rval_instrs, *ptr_instrs, tac.Store(src=rval, dst_ptr=ptr_val)]
+            case ast.Assignment(lvalue=ast.Subscript(exp1=ptr_exp, exp2=idx_exp), rvalue=rvalue):
+                rval, rval_instrs = self.translate_exp(rvalue)
+                ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
+                idx_val, idx_instrs = self.translate_exp(idx_exp)
+                elem_ptr = self._subscript_ptr(ptr_exp, ptr_val, idx_val)
+                return rval, [
+                    *rval_instrs,
+                    *ptr_instrs,
+                    *idx_instrs,
+                    *elem_ptr[1],
+                    tac.Store(src=rval, dst_ptr=elem_ptr[0]),
+                ]
             case ast.Assignment(lvalue=ast.Var(name=name), rvalue=rvalue):
                 val, instrs = self.translate_exp(rvalue)
                 dst = tac.Var(value=name)
@@ -877,5 +1040,11 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(inner)
                 dst = self._make_temp(exp.exp_type or ast.IntType())
                 return dst, [*ptr_instrs, tac.Load(src_ptr=ptr_val, dst=dst)]
+            case ast.Subscript(exp1=ptr_exp, exp2=idx_exp):
+                ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
+                idx_val, idx_instrs = self.translate_exp(idx_exp)
+                elem_ptr, offset_instrs = self._subscript_ptr(ptr_exp, ptr_val, idx_val)
+                result = self._make_temp(exp.exp_type or ast.IntType())
+                return result, [*ptr_instrs, *idx_instrs, *offset_instrs, tac.Load(src_ptr=elem_ptr, dst=result)]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")
