@@ -92,3 +92,23 @@ class DoubleInit(StaticInit):
     """
 
     value: float
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroInit(StaticInit):
+    """Zero-fill initialiser spanning ``bytes`` consecutive bytes in the data segment.
+
+    Used for tentative definitions and for explicitly zero-initialised scalars and arrays.
+    Distinct from ``DoubleInit(0.0)`` which preserves the double type for positive zero;
+    ``ZeroInit`` must not be used where negative zero (``-0.0``) is required.
+
+    Attributes:
+        bytes: The number of consecutive zero bytes to emit.
+    """
+
+    bytes: int
+
+    @property
+    def value(self) -> int:
+        """Return zero — the numeric value of any ``ZeroInit`` initialiser."""
+        return 0

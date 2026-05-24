@@ -6,7 +6,7 @@ mirrors the ASDL grammar for the supported assembly subset:
 
     program             = Program(top_level*)
     top_level           = Function(identifier, bool global, identifier* params, instruction* body)
-                        | StaticVariable(identifier, bool global, type t,static_init init)
+                        | StaticVariable(identifier, bool global, type t,static_init* init)
     instruction         = Return(val)
                         | SignExtend(val src, val dst)
                         | Truncate(val src, val dst)
@@ -26,7 +26,10 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | GetAddress(val src, val dst)
                         | Load(val src_ptr, val dst)
                         | Store(val src, val dst_ptr)
+                        | AddPtr(val ptr, val index, int scale, val dst)
+                        | CopyToOffset(val src, identifier dst, int offset)
     val                 = Constant(const) | Var(identifier)
+    static_init         = IntInit(int) | LongInit(int) | DoubleInit(float) | ZeroInit(int bytes)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
@@ -52,8 +55,10 @@ nodes are immutable - once constructed a tac AST node cannot be modified.
 
 from compiler.syntax.tac.declarations import Function, Program, StaticVariable, TopLevel
 from compiler.syntax.tac.instructions import (
+    AddPtr,
     Binary,
     Copy,
+    CopyToOffset,
     DoubleToInt,
     DoubleToUInt,
     FunCall,
@@ -96,9 +101,11 @@ from compiler.syntax.tac.operators import (
     Subtract,
     UnaryOperator,
 )
-from compiler.syntax.tac.values import Constant, DoubleInit, IntInit, LongInit, StaticInit, Val, Var
+from compiler.syntax.tac.values import Constant, DoubleInit, IntInit, LongInit, StaticInit, Val, Var, ZeroInit
 
 __all__ = [
+    "AddPtr",
+    "CopyToOffset",
     "DoubleToInt",
     "DoubleToUInt",
     "IntToDouble",
@@ -151,4 +158,5 @@ __all__ = [
     "IntInit",
     "LongInit",
     "DoubleInit",
+    "ZeroInit",
 ]

@@ -48,14 +48,15 @@ class StaticVariable(TopLevel):
         name: The symbol representing the variable.
         globl: Whether the variable is declared with the ``.globl`` directive in the assembly.
         t: The C type of the variable, carried through from the main AST.
-        init: The initial value of the variable. Defaults to ``IntInit(0)`` or ``LongInit(0)``
-            when the source declaration carries no explicit initialiser.
+        init: The ordered sequence of zero or more initialisers for the variable. Scalars have
+            exactly one entry; arrays have one entry per element; zero-initialised variables
+            have an empty tuple.
     """
 
     name: str
     globl: bool
     t: Type
-    init: StaticInit
+    init: tuple[StaticInit, ...]
 
 
 @dataclass(frozen=True, slots=True)

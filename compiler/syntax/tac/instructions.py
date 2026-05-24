@@ -272,3 +272,43 @@ class Store(Instruction):
 
     src: Val
     dst_ptr: Val
+
+
+@dataclass(frozen=True, slots=True)
+class AddPtr(Instruction):
+    """Compute a pointer offset: ``dst = ptr + index * scale``.
+
+    Used for pointer arithmetic and array element addressing.
+
+    Attributes:
+        ptr: The base pointer value.
+        index: The signed integer index (number of elements to advance).
+        scale: The size in bytes of one pointed-to element (e.g. 1 for ``char``,
+            4 for ``int``, 8 for ``long``/``double``/pointer).
+        dst: The destination that receives the resulting pointer value.
+    """
+
+    ptr: Val
+    index: Val
+    scale: int
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class CopyToOffset(Instruction):
+    """Copy a scalar value into an aggregate variable at a byte offset.
+
+    Writes ``src`` into the memory of the aggregate named by ``dst``,
+    starting ``offset`` bytes from the aggregate's base address.  Used
+    to initialise individual elements of an array or struct.
+
+    Attributes:
+        src: The scalar value to copy.
+        dst: The name of the aggregate destination variable (a string
+            identifier, not a ``Val``).
+        offset: Byte offset from the start of ``dst`` at which to write.
+    """
+
+    src: Val
+    dst: str
+    offset: int

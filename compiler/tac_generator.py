@@ -9,7 +9,18 @@ The translation follows this mapping:
 
     ast.Program(decls)                    → tac.Program(top_level=[...])
     ast.FunDecl(fn) [with body]           → tac.Function(name, globl, params, instructions)
-    ast.VarDecl(v)  [file-scope/static]   → tac.StaticVariable(name, globl, init)
+    ast.VarDecl(v)  [file-scope/static]   → tac.StaticVariable(name, globl, init=(StaticInit, ...))
+    ast.Binary(Add, ptr, int)  [ptr result] → <emit(ptr)> + <emit(int)>
+                                               + [AddPtr(ptr_val, int_val, sizeof(*ptr))]
+    ast.Binary(Sub, ptr, int)  [ptr result] → <emit(ptr)> + <emit(int)>
+                                               + [Unary(Negate, int_val, neg_tmp)]
+                                               + [AddPtr(ptr_val, neg_tmp, sizeof(*ptr))]
+    ast.Binary(Sub, ptr, ptr)  [long result]→ <emit(p1)> + <emit(p2)>
+                                               + [Binary(Subtract, p1, p2, diff_tmp)]
+                                               + [Binary(Divide, diff_tmp, sizeof(*ptr), result)]
+    ast.CompoundInit({e0,e1,...})         → [CopyToOffset(v0, name, 0),
+                                             CopyToOffset(v1, name, sizeof(e0)),
+                                             CopyToOffset(v2, name, sizeof(e0)+sizeof(e1)), ...]
     ast.Return(exp)                       → <emit(exp)> + [tac.Return(result_val)]
     ast.Constant(v)                       → tac.Constant(v)   (no extra instructions)
     ast.Unary(op, inner)                  → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
@@ -33,6 +44,7 @@ The translation follows this mapping:
                                                false_lbl, Copy(0, tmp), end_lbl]
                                             returns tmp as the result val
     ast.AddrOf(Dereference(inner))        → <emit(inner)>   (&* cancels out)
+    ast.AddrOf(Subscript(ptr, idx))       → <ptr+idx AddPtr, no Load>  (&arr[i] ≡ arr+i)
     ast.AddrOf(Var(name))                 → [GetAddress(Var(name), tmp)]
                                             returns tmp (pointer-typed)
     ast.Dereference(inner)                → <emit(inner)>
@@ -172,7 +184,6 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
     """
     result: list[tac.StaticVariable] = []
     for name, entry in symbol_table.items():
-        is_long = isinstance(entry.t, ast.LongType | ast.ULongType)
         is_double = isinstance(entry.t, ast.DoubleType)
         match entry.attrs:
             case StaticAttr(init=Initial(initializers=inits), globl=globl) if len(inits) == 1:
@@ -184,30 +195,21 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
                         static_init = tac.LongInit(v)
                     case SymDoubleInit(value=v):
                         static_init = tac.DoubleInit(v)
-                    case SymZeroInit():
-                        if is_double:
-                            static_init = tac.DoubleInit(0.0)
-                        elif is_long:
-                            static_init = tac.LongInit(0)
-                        else:
-                            static_init = tac.IntInit(0)
+                    case SymZeroInit(bytes=n):
+                        # Doubles: preserve DoubleInit so -0.0 vs +0.0 is not collapsed.
+                        static_init = tac.DoubleInit(0.0) if is_double else tac.ZeroInit(n)
                     case _:
                         continue
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=static_init))
+                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(static_init,)))
             case StaticAttr(init=Initial()):
                 # Multi-element Initial (array): not yet emitted to data segment.
                 pass
             case StaticAttr(init=Tentative(), globl=globl):
-                if is_double:
-                    static_init = tac.DoubleInit(0.0)
-                elif is_long:
-                    static_init = tac.LongInit(0)
-                else:
-                    static_init = tac.IntInit(0)
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=static_init))
+                n_bytes = _type_size(entry.t)
+                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.ZeroInit(n_bytes),)))
             case StaticAttr(init=ULongInit(), globl=globl):
                 # Null pointer constant: pointer-sized (8-byte) zero.
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=tac.LongInit(0)))
+                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.LongInit(0),)))
             case StaticAttr(init=PointerInit(name=target), globl=globl):
                 raise CodeGenerationError(
                     f"Static pointer initialiser '&{target}' cannot yet be lowered to TAC: "
@@ -490,47 +492,43 @@ class _TacGenerator:
             case _:
                 raise CodeGenerationError(f"unsupported initializer type: {type(init).__name__}")
 
-    def _emit_stores_for_init(
+    def _emit_copy_to_offset(
         self,
-        base_ptr: tac.Val,
+        var_name: str,
         byte_offset: int,
         init: ast.Initializer,
         instructions: list[tac.Instruction],
     ) -> None:
-        """Recursively emit ``Store`` instructions for an initializer at a byte offset from ``base_ptr``.
+        """Recursively emit ``CopyToOffset`` instructions for an initializer at a byte offset.
+
+        Each scalar leaf emits one ``CopyToOffset`` with a compile-time offset; nested
+        ``CompoundInit`` nodes are expanded recursively with a running offset derived from
+        element sizes via ``_init_byte_size``.
 
         Args:
-            base_ptr: A pointer-typed ``tac.Val`` pointing to the start of the aggregate variable.
-            byte_offset: The byte offset from ``base_ptr`` at which this initializer's value should
-                be written.
-            init: The initializer to emit — either a ``SingleInit`` (scalar) or ``CompoundInit``
-                (nested aggregate).
+            var_name: The resolved name of the aggregate variable (e.g. ``".Varr.0"``).
+            byte_offset: Byte offset from the variable's base at which to write ``init``'s value.
+            init: The initializer to emit — either a ``SingleInit`` (scalar leaf) or
+                ``CompoundInit`` (nested aggregate).
             instructions: The instruction list to which new instructions are appended in-place.
         """
         match init:
             case ast.SingleInit(exp=e):
                 val, elem_instrs = self.translate_exp(e)
                 instructions.extend(elem_instrs)
-                if byte_offset == 0:
-                    elem_ptr: tac.Val = base_ptr
-                else:
-                    elem_ptr = self._make_temp(ast.Pointer(ast.IntType()))
-                    instructions.append(
-                        tac.Binary(tac.Add(), base_ptr, tac.Constant(ast.ConstLong(byte_offset)), elem_ptr)
-                    )
-                instructions.append(tac.Store(src=val, dst_ptr=elem_ptr))
+                instructions.append(tac.CopyToOffset(src=val, dst=var_name, offset=byte_offset))
             case ast.CompoundInit(initializers=sub_inits):
-                if not sub_inits:
-                    return
-                elem_size = self._init_byte_size(sub_inits[0])
-                for i, sub_init in enumerate(sub_inits):
-                    self._emit_stores_for_init(base_ptr, byte_offset + i * elem_size, sub_init, instructions)
+                offset = byte_offset
+                for sub_init in sub_inits:
+                    self._emit_copy_to_offset(var_name, offset, sub_init, instructions)
+                    offset += self._init_byte_size(sub_init)
 
     def _translate_compound_init(self, name: str, init: ast.CompoundInit) -> list[tac.Instruction]:
-        """Translate a ``CompoundInit`` for a local array variable into element-wise ``Store`` instructions.
+        """Translate a ``CompoundInit`` for a local array variable into ``CopyToOffset`` instructions.
 
-        Gets the address of the array variable, then calls ``_emit_stores_for_init`` to emit
-        one ``Store`` per scalar element, using pointer arithmetic to compute each element address.
+        Emits one ``CopyToOffset`` per scalar element.  The byte offset for each element is
+        computed at compile time from ``_init_byte_size``, so no runtime pointer arithmetic
+        or ``GetAddress`` is needed.
 
         Args:
             name: The unique resolved name of the array variable (e.g. ``".Varr.0"``).
@@ -540,44 +538,8 @@ class _TacGenerator:
             A list of ``tac.Instruction`` nodes that initialise every element of the array.
         """
         instructions: list[tac.Instruction] = []
-        base_ptr = self._make_temp(ast.Pointer(ast.IntType()))
-        instructions.append(tac.GetAddress(src=tac.Var(value=name), dst=base_ptr))
-        self._emit_stores_for_init(base_ptr, 0, init, instructions)
+        self._emit_copy_to_offset(name, 0, init, instructions)
         return instructions
-
-    def _subscript_ptr(
-        self, ptr_exp: ast.Exp, ptr_val: tac.Val, idx_val: tac.Val
-    ) -> tuple[tac.Val, list[tac.Instruction]]:
-        """Compute the pointer to a subscript element and return it with the required instructions.
-
-        Multiplies the (already ``LongType``) index by the element size and adds it to the base
-        pointer, producing the address of the referenced element.
-
-        Args:
-            ptr_exp: The already-typed pointer-subexpression of the ``Subscript`` node; used to
-                determine the element type from its ``exp_type``.
-            ptr_val: The ``tac.Val`` holding the base pointer at runtime.
-            idx_val: The ``tac.Val`` holding the index (must be ``LongType``).
-
-        Returns:
-            A ``(elem_ptr_val, instructions)`` pair.  ``instructions`` must be emitted before
-            ``elem_ptr_val`` is used.
-
-        Raises:
-            CodeGenerationError: If ``ptr_exp.exp_type`` is not a ``Pointer``.
-        """
-        ptr_type = ptr_exp.exp_type
-        if not isinstance(ptr_type, ast.Pointer):
-            raise CodeGenerationError("Subscript base must be a pointer type.")
-        elem_type = ptr_type.referenced
-        elem_size = _type_size(elem_type)
-        byte_offset = self._make_temp(ast.LongType())
-        elem_ptr = self._make_temp(ast.Pointer(elem_type))
-        instrs: list[tac.Instruction] = [
-            tac.Binary(tac.Multiply(), idx_val, tac.Constant(ast.ConstLong(elem_size)), byte_offset),
-            tac.Binary(tac.Add(), ptr_val, byte_offset, elem_ptr),
-        ]
-        return elem_ptr, instrs
 
     def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:  # noqa: C901 - suppress function too complicated
         """Translate a single AST statement into a sequence of TAC instructions.
@@ -969,6 +931,54 @@ class _TacGenerator:
                     tac.Copy(src=tac.Constant(ast.ConstInt(1)), dst=dst),
                     label_end,
                 ]
+            case ast.Binary(operator=ast.Add(), left=left, right=right) if isinstance(exp.exp_type, ast.Pointer):
+                # Pointer addition: ptr + int OR int + ptr.  Pointer is always the AddPtr base.
+                if isinstance(left.exp_type, ast.Pointer):
+                    ptr_node, int_node = left, right
+                else:
+                    ptr_node, int_node = right, left
+                ptr_val, ptr_instrs = self.translate_exp(ptr_node)
+                int_val, int_instrs = self.translate_exp(int_node)
+                assert isinstance(ptr_node.exp_type, ast.Pointer)
+                scale = _type_size(ptr_node.exp_type.referenced)
+                dst = self._make_temp(exp.exp_type)
+                return dst, [
+                    *ptr_instrs,
+                    *int_instrs,
+                    tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=dst),
+                ]
+            case ast.Binary(operator=ast.Subtract(), left=left, right=right) if isinstance(exp.exp_type, ast.Pointer):
+                # Pointer subtraction: ptr - int.  Negate the index then use AddPtr.
+                ptr_val, ptr_instrs = self.translate_exp(left)
+                int_val, int_instrs = self.translate_exp(right)
+                assert isinstance(left.exp_type, ast.Pointer)
+                scale = _type_size(left.exp_type.referenced)
+                neg_tmp = self._make_temp(right.exp_type or ast.LongType())
+                dst = self._make_temp(exp.exp_type)
+                return dst, [
+                    *ptr_instrs,
+                    *int_instrs,
+                    tac.Unary(operator=tac.Negate(), src=int_val, dst=neg_tmp),
+                    tac.AddPtr(ptr=ptr_val, index=neg_tmp, scale=scale, dst=dst),
+                ]
+            case ast.Binary(operator=ast.Subtract(), left=left, right=right) if isinstance(
+                left.exp_type, ast.Pointer
+            ) and isinstance(right.exp_type, ast.Pointer):
+                # Pointer-to-pointer subtraction: (p1 - p2) / sizeof(*p1).
+                if left.exp_type != right.exp_type:
+                    raise CodeGenerationError(f"Pointer subtraction type mismatch: {left.exp_type} vs {right.exp_type}")
+                assert isinstance(left.exp_type, ast.Pointer)
+                scale = _type_size(left.exp_type.referenced)
+                p1_val, p1_instrs = self.translate_exp(left)
+                p2_val, p2_instrs = self.translate_exp(right)
+                diff_tmp = self._make_temp(ast.LongType())
+                dst = self._make_temp(exp.exp_type or ast.LongType())
+                return dst, [
+                    *p1_instrs,
+                    *p2_instrs,
+                    tac.Binary(operator=tac.Subtract(), src1=p1_val, src2=p2_val, dst=diff_tmp),
+                    tac.Binary(operator=tac.Divide(), src1=diff_tmp, src2=tac.Constant(ast.ConstLong(scale)), dst=dst),
+                ]
             case ast.Binary(operator=op, left=left, right=right):
                 src1, left_instrs = self.translate_exp(left)
                 src2, right_instrs = self.translate_exp(right)
@@ -981,17 +991,23 @@ class _TacGenerator:
                 rval, rval_instrs = self.translate_exp(rvalue)
                 ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
                 return rval, [*rval_instrs, *ptr_instrs, tac.Store(src=rval, dst_ptr=ptr_val)]
-            case ast.Assignment(lvalue=ast.Subscript(exp1=ptr_exp, exp2=idx_exp), rvalue=rvalue):
+            case ast.Assignment(lvalue=ast.Subscript(exp1=exp1, exp2=exp2), rvalue=rvalue):
                 rval, rval_instrs = self.translate_exp(rvalue)
-                ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
-                idx_val, idx_instrs = self.translate_exp(idx_exp)
-                elem_ptr = self._subscript_ptr(ptr_exp, ptr_val, idx_val)
+                if isinstance(exp1.exp_type, ast.Pointer):
+                    ptr_node, int_node = exp1, exp2
+                else:
+                    ptr_node, int_node = exp2, exp1
+                ptr_val, ptr_instrs = self.translate_exp(ptr_node)
+                int_val, int_instrs = self.translate_exp(int_node)
+                assert isinstance(ptr_node.exp_type, ast.Pointer)
+                scale = _type_size(ptr_node.exp_type.referenced)
+                elem_ptr = self._make_temp(ptr_node.exp_type)
                 return rval, [
                     *rval_instrs,
                     *ptr_instrs,
-                    *idx_instrs,
-                    *elem_ptr[1],
-                    tac.Store(src=rval, dst_ptr=elem_ptr[0]),
+                    *int_instrs,
+                    tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=elem_ptr),
+                    tac.Store(src=rval, dst_ptr=elem_ptr),
                 ]
             case ast.Assignment(lvalue=ast.Var(name=name), rvalue=rvalue):
                 val, instrs = self.translate_exp(rvalue)
@@ -1031,6 +1047,18 @@ class _TacGenerator:
                     *arg_instrs,
                     tac.FunCall(fun_val=callee_val, args=tuple(arg_vals), dst=dst),
                 ]
+            case ast.AddrOf(exp=ast.Subscript(exp1=exp1, exp2=exp2)):
+                # &arr[i] ≡ &*(arr+i) ≡ arr+i — AddPtr only, no Load.
+                if isinstance(exp1.exp_type, ast.Pointer):
+                    ptr_node, int_node = exp1, exp2
+                else:
+                    ptr_node, int_node = exp2, exp1
+                ptr_val, ptr_instrs = self.translate_exp(ptr_node)
+                int_val, int_instrs = self.translate_exp(int_node)
+                assert isinstance(ptr_node.exp_type, ast.Pointer)
+                scale = _type_size(ptr_node.exp_type.referenced)
+                dst = self._make_temp(exp.exp_type or ptr_node.exp_type)
+                return dst, [*ptr_instrs, *int_instrs, tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=dst)]
             case ast.AddrOf(exp=ast.Dereference(exp=inner)):
                 return self.translate_exp(inner)
             case ast.AddrOf(exp=ast.Var(name=name)):
@@ -1040,11 +1068,22 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(inner)
                 dst = self._make_temp(exp.exp_type or ast.IntType())
                 return dst, [*ptr_instrs, tac.Load(src_ptr=ptr_val, dst=dst)]
-            case ast.Subscript(exp1=ptr_exp, exp2=idx_exp):
-                ptr_val, ptr_instrs = self.translate_exp(ptr_exp)
-                idx_val, idx_instrs = self.translate_exp(idx_exp)
-                elem_ptr, offset_instrs = self._subscript_ptr(ptr_exp, ptr_val, idx_val)
+            case ast.Subscript(exp1=exp1, exp2=exp2):
+                if isinstance(exp1.exp_type, ast.Pointer):
+                    ptr_node, int_node = exp1, exp2
+                else:
+                    ptr_node, int_node = exp2, exp1
+                ptr_val, ptr_instrs = self.translate_exp(ptr_node)
+                int_val, int_instrs = self.translate_exp(int_node)
+                assert isinstance(ptr_node.exp_type, ast.Pointer)
+                scale = _type_size(ptr_node.exp_type.referenced)
+                elem_ptr = self._make_temp(ptr_node.exp_type)
                 result = self._make_temp(exp.exp_type or ast.IntType())
-                return result, [*ptr_instrs, *idx_instrs, *offset_instrs, tac.Load(src_ptr=elem_ptr, dst=result)]
+                return result, [
+                    *ptr_instrs,
+                    *int_instrs,
+                    tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=elem_ptr),
+                    tac.Load(src_ptr=elem_ptr, dst=result),
+                ]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

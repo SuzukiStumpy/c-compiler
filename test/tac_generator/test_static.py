@@ -3,7 +3,17 @@
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.tac_generator import _convert_symbols_to_tacky, generate
-from compiler.types.symbols import FunAttr, Initial, IntInit, NoInitializer, StaticAttr, SymbolTableEntry, Tentative
+from compiler.types.symbols import (
+    FunAttr,
+    Initial,
+    IntInit,
+    LongInit,
+    NoInitializer,
+    StaticAttr,
+    SymbolTableEntry,
+    Tentative,
+    ZeroInit,
+)
 from test.tac_generator.helpers import _instrs_for_body
 
 # ---------------------------------------------------------------------------
@@ -15,16 +25,16 @@ class TestConvertSymbolsToTacky:
     """``_convert_symbols_to_tacky`` emits ``StaticVariable`` nodes from symbol-table entries."""
 
     def test_initial_entry_produces_static_variable_with_value(self) -> None:
-        """An ``Initial((IntInit(7),))`` entry produces ``StaticVariable(name, globl, IntInit(7))``."""
+        """An ``Initial((IntInit(7),))`` entry produces ``StaticVariable(name, globl, (IntInit(7),))``."""
         symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial((IntInit(7),)), globl=True))}
         result = _convert_symbols_to_tacky(symbols)
-        assert result == [tac.StaticVariable(name="x", globl=True, t=ast.IntType(), init=tac.IntInit(7))]
+        assert result == [tac.StaticVariable(name="x", globl=True, t=ast.IntType(), init=(tac.IntInit(7),))]
 
     def test_tentative_entry_produces_static_variable_with_zero(self) -> None:
-        """A ``Tentative`` entry produces ``StaticVariable`` with ``init=IntInit(0)``."""
+        """A ``Tentative`` entry produces ``StaticVariable`` with ``init=(ZeroInit(4),)`` for an int."""
         symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False))}
         result = _convert_symbols_to_tacky(symbols)
-        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.IntType(), init=tac.IntInit(0))]
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.IntType(), init=(tac.ZeroInit(4),))]
 
     def test_no_initializer_entry_is_skipped(self) -> None:
         """A ``NoInitializer`` entry (non-defining ``extern`` declaration) produces nothing."""
@@ -83,6 +93,60 @@ class TestConvertSymbolsToTacky:
         result = _convert_symbols_to_tacky(symbols)
         assert len(result) == 1
         assert result[0].name == "g"
+
+    def test_tentative_int_emits_zero_init_4(self) -> None:
+        """A tentative ``int`` emits ``ZeroInit(4)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.ZeroInit(4),)
+
+    def test_tentative_long_emits_zero_init_8(self) -> None:
+        """A tentative ``long`` emits ``ZeroInit(8)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.LongType(), attrs=StaticAttr(init=Tentative(), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.ZeroInit(8),)
+
+    def test_tentative_int_array_emits_zero_init_for_total_bytes(self) -> None:
+        """A tentative ``int[3]`` emits a single ``ZeroInit(12)`` covering all 12 bytes."""
+        t = ast.Array(element=ast.IntType(), size=3)
+        symbols = {"arr": SymbolTableEntry(t=t, attrs=StaticAttr(init=Tentative(), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.ZeroInit(12),)
+
+    def test_tentative_long_array_emits_zero_init_for_total_bytes(self) -> None:
+        """A tentative ``long[3]`` emits ``ZeroInit(24)`` covering all 24 bytes."""
+        t = ast.Array(element=ast.LongType(), size=3)
+        symbols = {"arr": SymbolTableEntry(t=t, attrs=StaticAttr(init=Tentative(), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.ZeroInit(24),)
+
+    def test_zero_init_in_initial_emits_tac_zero_init(self) -> None:
+        """``Initial((ZeroInit(4),))`` (zero scalar) produces ``tac.ZeroInit(4)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Initial((ZeroInit(4),)), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.ZeroInit(4),)
+
+    def test_zero_init_in_initial_long_emits_tac_zero_init_8(self) -> None:
+        """``Initial((ZeroInit(8),))`` (zero long) produces ``tac.ZeroInit(8)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.LongType(), attrs=StaticAttr(init=Initial((ZeroInit(8),)), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.ZeroInit(8),)
+
+    def test_zero_init_double_emits_double_init_not_zero_init(self) -> None:
+        """``Initial((ZeroInit(8),))`` for a ``double`` produces ``tac.DoubleInit(0.0)``, not ``ZeroInit``."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.DoubleType(), attrs=StaticAttr(init=Initial((ZeroInit(8),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.DoubleInit(0.0),)
+
+    def test_initial_with_nonzero_long_emits_long_init(self) -> None:
+        """``Initial((LongInit(42),))`` produces ``tac.LongInit(42)`` (not ``ZeroInit``)."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.LongType(), attrs=StaticAttr(init=Initial((LongInit(42),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.LongInit(42),)
 
 
 # ---------------------------------------------------------------------------
@@ -167,15 +231,15 @@ class TestTacGeneratorIntegrationWithSymbolTable:
         result = generate(self._minimal_prog(), symbols)
         static_vars = [t for t in result.top_level if isinstance(t, tac.StaticVariable)]
         assert len(static_vars) == 1
-        assert static_vars[0] == tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=tac.IntInit(42))
+        assert static_vars[0] == tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=(tac.IntInit(42),))
 
     def test_tentative_symbol_produces_zero_initialized_static_variable(self) -> None:
-        """A ``Tentative`` entry produces a ``StaticVariable`` with ``init=IntInit(0)``."""
+        """A ``Tentative`` entry produces a ``StaticVariable`` with ``init=(ZeroInit(4),)`` for an int."""
         symbols = {"t": SymbolTableEntry(t=ast.IntType(), attrs=StaticAttr(init=Tentative(), globl=False))}
         result = generate(self._minimal_prog(), symbols)
         static_vars = [t for t in result.top_level if isinstance(t, tac.StaticVariable)]
         assert len(static_vars) == 1
-        assert static_vars[0].init == tac.IntInit(0)
+        assert static_vars[0].init == (tac.ZeroInit(4),)
 
     def test_no_initializer_symbol_produces_no_static_variable(self) -> None:
         """A ``NoInitializer`` entry (non-defining ``extern``) produces no ``StaticVariable``."""
@@ -215,7 +279,7 @@ class TestTacProgramFunctionsProperty:
         """``StaticVariable`` entries are excluded from ``.functions``."""
         program = tac.Program(
             top_level=(
-                tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=tac.IntInit(0)),
+                tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=(tac.IntInit(0),)),
                 tac.Function(name="main"),
             )
         )
@@ -225,7 +289,7 @@ class TestTacProgramFunctionsProperty:
     def test_functions_empty_when_only_static_variables(self) -> None:
         """If ``top_level`` contains only ``StaticVariable`` nodes, ``.functions`` is empty."""
         program = tac.Program(
-            top_level=(tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=tac.IntInit(0)),)
+            top_level=(tac.StaticVariable(name="g", globl=True, t=ast.IntType(), init=(tac.IntInit(0),)),)
         )
         assert program.functions == ()
 
