@@ -186,24 +186,25 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
     for name, entry in symbol_table.items():
         is_double = isinstance(entry.t, ast.DoubleType)
         match entry.attrs:
-            case StaticAttr(init=Initial(initializers=inits), globl=globl) if len(inits) == 1:
-                elem = inits[0]
-                match elem:
-                    case SymIntInit(value=v):
-                        static_init: tac.StaticInit = tac.IntInit(v)
-                    case SymLongInit(value=v):
-                        static_init = tac.LongInit(v)
-                    case SymDoubleInit(value=v):
-                        static_init = tac.DoubleInit(v)
-                    case SymZeroInit(bytes=n):
-                        # Doubles: preserve DoubleInit so -0.0 vs +0.0 is not collapsed.
-                        static_init = tac.DoubleInit(0.0) if is_double else tac.ZeroInit(n)
-                    case _:
-                        continue
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(static_init,)))
-            case StaticAttr(init=Initial()):
-                # Multi-element Initial (array): not yet emitted to data segment.
-                pass
+            case StaticAttr(init=Initial(initializers=inits), globl=globl):
+                static_inits: list[tac.StaticInit] = []
+                skip = False
+                for elem in inits:
+                    match elem:
+                        case SymIntInit(value=v):
+                            static_inits.append(tac.IntInit(v))
+                        case SymLongInit(value=v):
+                            static_inits.append(tac.LongInit(v))
+                        case SymDoubleInit(value=v):
+                            static_inits.append(tac.DoubleInit(v))
+                        case SymZeroInit(bytes=n):
+                            # Doubles: preserve DoubleInit so -0.0 vs +0.0 is not collapsed.
+                            static_inits.append(tac.DoubleInit(0.0) if is_double else tac.ZeroInit(n))
+                        case _:
+                            skip = True
+                            break
+                if not skip:
+                    result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=tuple(static_inits)))
             case StaticAttr(init=Tentative(), globl=globl):
                 n_bytes = _type_size(entry.t)
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.ZeroInit(n_bytes),)))
