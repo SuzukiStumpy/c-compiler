@@ -351,3 +351,64 @@ class TestCastTypeRestrictions:
         """Casting a pointer to ``int`` is a valid explicit cast."""
         body = _ptr_var("p") + _return_exp(ast.Cast(ast.IntType(), ast.Var("p")))
         resolve(_program(body))
+
+
+def _char_ptr_var(name: str) -> tuple[ast.BlockItem, ...]:
+    """Declare a local ``char *`` variable named *name* with no initialiser.
+
+    Args:
+        name: The source-level variable name.
+
+    Returns:
+        A single-element block-item tuple containing the declaration.
+    """
+    return (_vd(name, var_type=ast.Pointer(ast.Char())),)
+
+
+def _char_var(name: str) -> tuple[ast.BlockItem, ...]:
+    """Declare a local ``char`` variable named *name* with no initialiser.
+
+    Args:
+        name: The source-level variable name.
+
+    Returns:
+        A single-element block-item tuple containing the declaration.
+    """
+    return (_vd(name, var_type=ast.Char()),)
+
+
+class TestCharTypeChecking:
+    """Type-checking rules involving ``char``, ``signed char``, and ``unsigned char`` operands."""
+
+    def test_subscript_with_char_index_succeeds(self) -> None:
+        """``ptr[c]`` where ``c`` has type ``char`` is a valid subscript expression."""
+        body = _char_ptr_var("ptr") + _char_var("c") + _return_exp(ast.Subscript(ast.Var("ptr"), ast.Var("c")))
+        resolve(_program(body))
+
+    def test_subscript_with_schar_index_succeeds(self) -> None:
+        """``ptr[c]`` where ``c`` has type ``signed char`` is a valid subscript expression."""
+        body = (
+            _char_ptr_var("ptr")
+            + (_vd("c", var_type=ast.SChar()),)
+            + _return_exp(ast.Subscript(ast.Var("ptr"), ast.Var("c")))
+        )
+        resolve(_program(body))
+
+    def test_subscript_with_uchar_index_succeeds(self) -> None:
+        """``ptr[c]`` where ``c`` has type ``unsigned char`` is a valid subscript expression."""
+        body = (
+            _char_ptr_var("ptr")
+            + (_vd("c", var_type=ast.UChar()),)
+            + _return_exp(ast.Subscript(ast.Var("ptr"), ast.Var("c")))
+        )
+        resolve(_program(body))
+
+    def test_return_char_from_int_function_succeeds(self) -> None:
+        """Returning a ``char`` variable from an ``int``-returning function is valid (implicit conversion)."""
+        body = _char_var("c") + _return_exp(ast.Var("c"))
+        resolve(_program(body))
+
+    def test_assign_char_to_int_succeeds(self) -> None:
+        """Assigning a ``char`` value to an ``int`` variable is a valid implicit conversion."""
+        body = _char_var("c") + (_vd("x"),) + (ast.S(ast.Expression(ast.Assignment(ast.Var("x"), ast.Var("c")))),)
+        resolve(_program(body + _return_exp(_int_const())))

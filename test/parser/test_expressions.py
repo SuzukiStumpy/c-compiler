@@ -3,7 +3,18 @@
 import pytest
 
 from compiler.parser import parse
-from compiler.syntax.ast import AddrOf, Cast, Constant, ConstInt, ConstLong, Dereference, IntType, LongType, Unary
+from compiler.syntax.ast import (
+    AddrOf,
+    Cast,
+    Constant,
+    ConstInt,
+    ConstLong,
+    Dereference,
+    IntType,
+    LongType,
+    String,
+    Unary,
+)
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Var
 from compiler.syntax.ast.operators import (
     Add,
@@ -67,9 +78,11 @@ from test.parser.helpers import (
     _RSHIFT,
     _SEMICOLON,
     _VOID,
+    _charconst,
     _ident,
     _number,
     _parsed_exp,
+    _string_tok,
 )
 
 # ---------------------------------------------------------------------------
@@ -646,3 +659,48 @@ class TestDereferenceAndAddrOf:
         assert _parsed_exp(_ident("q"), _ASSIGNMENT, _AMPERSAND, _ident("x")) == Assignment(
             lvalue=Var("q"), rvalue=AddrOf(Var("x"))
         )
+
+
+# ---------------------------------------------------------------------------
+# Character constants and string literals
+# ---------------------------------------------------------------------------
+
+
+class TestCharConstantAndStringLiterals:
+    """Parser correctly converts ``CONSTCHAR`` tokens and adjacent ``STRING`` tokens to AST nodes."""
+
+    def test_char_constant_ascii_letter_parses_to_constint(self) -> None:
+        """``'a'`` → ``Constant(ConstInt(97))``."""
+        assert _parsed_exp(_charconst("'a'")) == Constant(ConstInt(97))
+
+    def test_char_constant_newline_escape_parses_to_value_10(self) -> None:
+        """``'\\n'`` → ``Constant(ConstInt(10))``."""
+        assert _parsed_exp(_charconst("'\\n'")) == Constant(ConstInt(10))
+
+    def test_char_constant_backslash_escape_parses_to_value_92(self) -> None:
+        """``'\\\\'`` (backslash escape) → ``Constant(ConstInt(92))``."""
+        assert _parsed_exp(_charconst("'\\\\'")) == Constant(ConstInt(92))
+
+    def test_char_constant_tab_escape_parses_to_value_9(self) -> None:
+        """``'\\t'`` → ``Constant(ConstInt(9))``."""
+        assert _parsed_exp(_charconst("'\\t'")) == Constant(ConstInt(9))
+
+    def test_char_constant_single_quote_escape_parses_to_value_39(self) -> None:
+        """``'\\''`` → ``Constant(ConstInt(39))``."""
+        assert _parsed_exp(_charconst("'\\''")) == Constant(ConstInt(39))
+
+    def test_string_literal_parses_to_string_node(self) -> None:
+        """``"hello"`` → ``String(b"hello")``."""
+        assert _parsed_exp(_string_tok('"hello"')) == String(b"hello")
+
+    def test_empty_string_literal_parses_to_empty_bytes(self) -> None:
+        """``""`` → ``String(b"")``."""
+        assert _parsed_exp(_string_tok('""')) == String(b"")
+
+    def test_string_with_newline_escape_is_unescaped(self) -> None:
+        """``"hi\\n"`` → ``String(b"hi\\n")`` (NUL not included)."""
+        assert _parsed_exp(_string_tok('"hi\\n"')) == String(b"hi\n")
+
+    def test_adjacent_string_literals_are_concatenated(self) -> None:
+        """``"foo" "bar"`` → ``String(b"foobar")``."""
+        assert _parsed_exp(_string_tok('"foo"'), _string_tok('"bar"')) == String(b"foobar")

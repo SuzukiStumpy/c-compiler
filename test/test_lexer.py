@@ -535,3 +535,103 @@ def test_ulong_followed_by_dot_raises_lexer_error(preprocess_c_file: Preprocesso
     # "42ul.0" is a malformed preprocessing-number, not ULONG + FPDOUBLE
     with pytest.raises(LexerError):
         lexer(preprocess_c_file("invalid/bad_ulong.c"))
+
+
+# ---------------------------------------------------------------------------
+# char keyword (CHAR)
+# ---------------------------------------------------------------------------
+
+
+def test_char_keyword_produces_char_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.CHAR for t in tokens)
+
+
+def test_char_keyword_token_value_is_char(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert all(t.value == "char" for t in tokens if t.type == TokenType.CHAR)
+
+
+def test_identifier_with_char_prefix_is_not_char_keyword(preprocess_c_file: Preprocessor) -> None:
+    # "charset" starts with "char" but must not be classified as CHAR
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    char_keyword_values = {t.value for t in tokens if t.type == TokenType.CHAR}
+    assert "charset" not in char_keyword_values
+
+
+# ---------------------------------------------------------------------------
+# Character constants (CONSTCHAR)
+# ---------------------------------------------------------------------------
+
+
+def test_char_constant_produces_constchar_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.CONSTCHAR for t in tokens)
+
+
+def test_char_constant_ascii_letter_token_value(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.CONSTCHAR and t.value == "'a'" for t in tokens)
+
+
+def test_char_constant_newline_escape_token_value(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.CONSTCHAR and t.value == "'\\n'" for t in tokens)
+
+
+def test_char_constant_backslash_escape_token_value(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.CONSTCHAR and t.value == "'\\\\'" for t in tokens)
+
+
+def test_char_constant_single_quote_escape_token_value(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.CONSTCHAR and t.value == "'\\''" for t in tokens)
+
+
+def test_constchar_is_distinct_from_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    constchar_values = {t.value for t in tokens if t.type == TokenType.CONSTCHAR}
+    number_values = {t.value for t in tokens if t.type == TokenType.NUMBER}
+    assert constchar_values.isdisjoint(number_values)
+
+
+def test_char_constant_is_a_single_constchar_token(preprocess_c_file: Preprocessor) -> None:
+    # "'a'" must produce exactly one CONSTCHAR token; it must not be split into three tokens
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    constchar_a = [t for t in tokens if t.type == TokenType.CONSTCHAR and t.value == "'a'"]
+    assert len(constchar_a) == 1
+
+
+# ---------------------------------------------------------------------------
+# String literals (STRING)
+# ---------------------------------------------------------------------------
+
+
+def test_string_literal_produces_string_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.STRING for t in tokens)
+
+
+def test_non_empty_string_literal_token_value(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.STRING and t.value == '"hello world"' for t in tokens)
+
+
+def test_empty_string_literal_token_value(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    assert any(t.type == TokenType.STRING and t.value == '""' for t in tokens)
+
+
+def test_string_token_is_distinct_from_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    string_values = {t.value for t in tokens if t.type == TokenType.STRING}
+    ident_values = {t.value for t in tokens if t.type == TokenType.IDENTIFIER}
+    assert string_values.isdisjoint(ident_values)
+
+
+def test_string_literal_is_a_single_string_token(preprocess_c_file: Preprocessor) -> None:
+    # '"hello world"' must be a single STRING token, not split at the space
+    tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
+    hello_world = [t for t in tokens if t.type == TokenType.STRING and t.value == '"hello world"']
+    assert len(hello_world) == 1

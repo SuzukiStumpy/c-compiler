@@ -8,7 +8,16 @@ correctly reflect static-duration variables (file-scope and block-scope
 import compiler.syntax.ast as ast
 from compiler.semantic_analysis import resolve_with_symbols
 from compiler.syntax.ast.constants import ConstInt
-from compiler.types.symbols import FunAttr, Initial, IntInit, NoInitializer, StaticAttr, Tentative
+from compiler.types.symbols import (
+    ConstantAttr,
+    FunAttr,
+    Initial,
+    IntInit,
+    NoInitializer,
+    StaticAttr,
+    StringInit,
+    Tentative,
+)
 from test.semantic_analysis.helpers import _file_var, _get_fn, _prog_with_decls, _program
 
 
@@ -291,3 +300,72 @@ class TestSymbolTablePopulation:
         resolved, _ = resolve_with_symbols(program)
         helper_fn = _get_fn(resolved, index=0)
         assert helper_fn.globl is False
+
+
+# ---------------------------------------------------------------------------
+# String-literal constant-attr entries
+# ---------------------------------------------------------------------------
+
+
+class TestStringLiteralConstantAttr:
+    """When a ``char *`` variable is initialised with a string literal, the analyser creates a
+    hidden ``ConstantAttr(StringInit(...))`` symbol-table entry for the string object itself."""
+
+    def _char_ptr_with_string(self, string_bytes: bytes) -> tuple[ast.Program, dict]:
+        """Build and resolve a program that declares ``char *s = <literal>;`` at file scope.
+
+        Args:
+            string_bytes: The raw byte content of the string literal.
+
+        Returns:
+            A ``(resolved_program, symbol_table)`` pair.
+        """
+        decl = _file_var("s", ast.SingleInit(ast.String(string_bytes)), var_type=ast.Pointer(ast.Char()))
+        program = _prog_with_decls(decl)
+        resolved, symbols = resolve_with_symbols(program)
+        return resolved, symbols
+
+    def test_file_scope_char_ptr_string_creates_constant_attr_entry(self) -> None:
+        """``char *s = "hello";`` at file scope produces a hidden ``ConstantAttr`` symbol entry."""
+        _, symbols = self._char_ptr_with_string(b"hello")
+        hidden = [name for name, entry in symbols.items() if isinstance(entry.attrs, ConstantAttr)]
+        assert len(hidden) == 1
+
+    def test_file_scope_char_ptr_string_hidden_name_starts_with_lstr(self) -> None:
+        """The hidden string object name starts with ``.Lstr.`` (assembler-local label)."""
+        _, symbols = self._char_ptr_with_string(b"hello")
+        hidden = [name for name, entry in symbols.items() if isinstance(entry.attrs, ConstantAttr)]
+        assert hidden[0].startswith(".Lstr.")
+
+    def test_file_scope_char_ptr_string_constant_attr_holds_string_init(self) -> None:
+        """The hidden entry's ``ConstantAttr`` wraps a ``StringInit`` with correct bytes and NUL flag."""
+        _, symbols = self._char_ptr_with_string(b"hello")
+        hidden_entry = next(entry for entry in symbols.values() if isinstance(entry.attrs, ConstantAttr))
+        assert hidden_entry.attrs.init == StringInit(b"hello", True)
+
+    def test_file_scope_char_ptr_string_pointer_var_has_static_attr(self) -> None:
+        """The ``char *s`` variable itself gets a ``StaticAttr``, not a ``ConstantAttr``."""
+        _, symbols = self._char_ptr_with_string(b"hello")
+        assert isinstance(symbols["s"].attrs, StaticAttr)
+
+    def test_file_scope_char_ptr_empty_string_hidden_entry_exists(self) -> None:
+        """``char *s = "";`` still creates a hidden ``ConstantAttr`` entry for the empty string."""
+        _, symbols = self._char_ptr_with_string(b"")
+        hidden = [name for name, entry in symbols.items() if isinstance(entry.attrs, ConstantAttr)]
+        assert len(hidden) == 1
+
+    def test_two_string_literals_produce_distinct_hidden_names(self) -> None:
+        """Two ``char *`` file-scope variables initialised with string literals get distinct hidden names."""
+        decl_a = _file_var("a", ast.SingleInit(ast.String(b"foo")), var_type=ast.Pointer(ast.Char()))
+        decl_b = _file_var("b", ast.SingleInit(ast.String(b"bar")), var_type=ast.Pointer(ast.Char()))
+        program = _prog_with_decls(decl_a, decl_b)
+        _, symbols = resolve_with_symbols(program)
+        hidden = [name for name, entry in symbols.items() if isinstance(entry.attrs, ConstantAttr)]
+        assert len(hidden) == 2
+        assert hidden[0] != hidden[1]
+
+    def test_hidden_string_object_type_is_array_of_char(self) -> None:
+        """The hidden symbol's type is ``Array(Char, len+1)``."""
+        _, symbols = self._char_ptr_with_string(b"hi")
+        hidden_entry = next(entry for entry in symbols.values() if isinstance(entry.attrs, ConstantAttr))
+        assert hidden_entry.t == ast.Array(ast.Char(), 3)

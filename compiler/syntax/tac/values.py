@@ -5,7 +5,7 @@ Defines the ``Val`` abstract base class and its concrete variants, plus the
 the initial value of a static variable in the data segment.
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 
 from compiler.syntax.ast.constants import Const
@@ -50,15 +50,7 @@ class StaticInit(ABC):
     appears in the data segment. They are distinct from ``Constant`` and
     ``Var``: those are instruction operands; these are data-segment
     initialisers only.
-
-    All concrete subclasses must provide a ``value`` attribute of the
-    appropriate numeric type.
     """
-
-    @property
-    @abstractmethod
-    def value(self) -> int | float:
-        """The numeric value of the initialiser."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,3 +104,31 @@ class ZeroInit(StaticInit):
     def value(self) -> int:
         """Return zero — the numeric value of any ``ZeroInit`` initialiser."""
         return 0
+
+
+@dataclass(frozen=True, slots=True)
+class StringInit(StaticInit):
+    """String content initialiser for a character array or string-literal static object.
+
+    Attributes:
+        string: The raw byte content of the string (NUL terminator not included).
+        null_terminated: When ``True``, a NUL byte is appended after ``string`` during
+            emission; when ``False``, the bytes are written as-is.
+    """
+
+    string: bytes
+    null_terminated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PointerInit(StaticInit):
+    """Pointer initialiser set to the address of a named static object.
+
+    Used when a static pointer variable is initialised with the address of another
+    static object (e.g. a string-literal constant or a file-scope variable).
+
+    Attributes:
+        name: The resolved (unique) name of the static object whose address is used.
+    """
+
+    name: str

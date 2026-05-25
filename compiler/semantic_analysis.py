@@ -68,17 +68,22 @@ from compiler.syntax.ast.operators import (
 )
 from compiler.syntax.ast.types import (
     Array,
+    Char,
     DoubleType,
     FunType,
     IntType,
     Linkage,
     LongType,
     Pointer,
+    SChar,
     Type,
+    UChar,
     UIntType,
     ULongType,
 )
 from compiler.types.symbols import (
+    CharInit,
+    ConstantAttr,
     DoubleInit,
     FunAttr,
     Initial,
@@ -90,25 +95,38 @@ from compiler.types.symbols import (
     PointerInit,
     StaticAttr,
     StaticInit,
+    StringInit,
     SymbolTable,
     SymbolTableEntry,
     Tentative,
+    UCharInit,
     ULongInit,
     ZeroInit,
 )
 from compiler.utils.exceptions import SemanticError
 
-_TYPE_SIZE: dict[type, int] = {IntType: 4, UIntType: 4, LongType: 8, ULongType: 8, DoubleType: 8}
+_TYPE_SIZE: dict[type, int] = {
+    IntType: 4,
+    UIntType: 4,
+    LongType: 8,
+    ULongType: 8,
+    DoubleType: 8,
+    Char: 1,
+    SChar: 1,
+    UChar: 1,
+}
 _SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType})
+_CHAR_TYPES: tuple[type, ...] = (Char, SChar, UChar)
 
 
 def get_common_type(type1: Type, type2: Type) -> Type:
     """Return the common type to which both operands of a binary expression should be converted.
 
     Implements C's usual arithmetic conversions for the integer types supported by this compiler.
-    When both operands already share the same type the result is that type unchanged.  When the
-    sizes differ the wider type is chosen.  When sizes are equal but signedness differs the
-    unsigned type is chosen (C11 §6.3.1.8, rule 4).
+    Character types (``Char``, ``SChar``, ``UChar``) are first promoted to ``IntType`` per
+    C11 §6.3.1.1.  When both operands already share the same type the result is that type
+    unchanged.  When the sizes differ the wider type is chosen.  When sizes are equal but
+    signedness differs the unsigned type is chosen (C11 §6.3.1.8, rule 4).
 
     Args:
         type1: The type of the first operand.
@@ -118,6 +136,10 @@ def get_common_type(type1: Type, type2: Type) -> Type:
         The common ``Type`` to which both operands must be converted before the operation is
         performed.
     """
+    if isinstance(type1, (Char, SChar, UChar)):
+        type1 = IntType()
+    if isinstance(type2, (Char, SChar, UChar)):
+        type2 = IntType()
     if type1 == type2:
         return type1
     if isinstance(type1, DoubleType) or isinstance(type2, DoubleType):
@@ -303,6 +325,10 @@ def _zero_initializer(t: Type) -> ast.Initializer:
             return ast.SingleInit(ast.Constant(ast.ConstULong(0), exp_type=ULongType()))
         case DoubleType():
             return ast.SingleInit(ast.Constant(ast.ConstDouble(0.0), exp_type=DoubleType()))
+        case Char() | SChar():
+            return ast.SingleInit(ast.Constant(ast.ConstChar(0), exp_type=t))
+        case UChar():
+            return ast.SingleInit(ast.Constant(ast.ConstUChar(0), exp_type=UChar()))
         case Pointer():
             null = ast.Constant(ast.ConstULong(0), exp_type=ULongType())
             return ast.SingleInit(ast.Cast(t, null, exp_type=t))
@@ -329,6 +355,8 @@ def _is_constant_init(init: ast.Initializer) -> bool:
     match init:
         case ast.SingleInit(exp=ast.Constant()):
             return True
+        case ast.SingleInit(exp=ast.String()):
+            return True
         case ast.SingleInit():
             return False
         case ast.CompoundInit(initializers=sub_inits):
@@ -345,13 +373,15 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
 
     Args:
         t: The C type determining the byte width and variant — ``IntType``,
-            ``UIntType``, ``LongType``, ``ULongType``, or ``DoubleType``.
+            ``UIntType``, ``LongType``, ``ULongType``, ``DoubleType``,
+            ``Char``, ``SChar``, or ``UChar``.
             ``None`` or an unrecognised type defaults to a 4-byte ``IntInit``
             / ``ZeroInit``.
         v: The numeric value (``int`` or ``float``) from the constant expression.
 
     Returns:
-        A ``ZeroInit(n)``, ``IntInit``, ``LongInit``, or ``DoubleInit`` node.
+        A ``ZeroInit(n)``, ``IntInit``, ``LongInit``, ``DoubleInit``,
+        ``CharInit``, or ``UCharInit`` node.
     """
     match t:
         case DoubleType():
@@ -359,6 +389,10 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
             return ZeroInit(8) if fv == 0.0 and math.copysign(1.0, fv) > 0 else DoubleInit(fv)
         case LongType() | ULongType():
             return ZeroInit(8) if int(v) == 0 else LongInit(int(v))
+        case Char() | SChar():
+            return ZeroInit(1) if int(v) == 0 else CharInit(int(v))
+        case UChar():
+            return ZeroInit(1) if int(v) == 0 else UCharInit(int(v))
         case _:
             return ZeroInit(4) if int(v) == 0 else IntInit(int(v))
 
@@ -435,6 +469,12 @@ def _flatten_helper(init: ast.Initializer, result: list[StaticInit]) -> None:
         result: Accumulator list modified in place.
     """
     match init:
+        case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))):
+            for elem in _string_array_static_init(s, size):
+                if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
+                    result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
+                else:
+                    result.append(elem)
         case ast.SingleInit(exp=e):
             elem = _exp_to_static_init(e)
             if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
@@ -444,6 +484,32 @@ def _flatten_helper(init: ast.Initializer, result: list[StaticInit]) -> None:
         case ast.CompoundInit(initializers=sub_inits):
             for sub_init in sub_inits:
                 _flatten_helper(sub_init, result)
+
+
+def _string_array_static_init(s: bytes, array_size: int) -> list[StaticInit]:
+    """Build the ``StaticInit`` list for a character array initialised from a string literal.
+
+    The list always starts with a ``StringInit``.  When the array is large enough to hold
+    the NUL terminator, ``null_terminated`` is ``True`` and the terminator byte is included
+    in the ``StringInit``; any remaining unused bytes are represented by a trailing
+    ``ZeroInit``.  When the array is exactly the length of the string (no room for NUL),
+    ``null_terminated`` is ``False`` and the bytes are emitted as-is.
+
+    Args:
+        s: Raw byte content of the string literal, NUL terminator NOT included.
+        array_size: Declared size of the target character array.
+
+    Returns:
+        A list of one or two ``StaticInit`` elements: ``[StringInit(...), ZeroInit(n)]``
+        when padding is needed, or ``[StringInit(...)]`` when the array is exactly full.
+    """
+    null_terminated = len(s) + 1 <= array_size
+    result: list[StaticInit] = [StringInit(s, null_terminated)]
+    bytes_used = len(s) + (1 if null_terminated else 0)
+    remaining = array_size - bytes_used
+    if remaining > 0:
+        result.append(ZeroInit(remaining))
+    return result
 
 
 class VariableBinding(NamedTuple):
@@ -650,6 +716,19 @@ class SemanticAnalyser:
         """
         return f".L.{kind}.{next(self._loop_counter)}"
 
+    def _make_string_name(self) -> str:
+        """Generate a globally unique, assembler-safe name for a hidden string-literal constant.
+
+        Produces identifiers of the form ``.Lstr.0``, ``.Lstr.1``, etc., using the
+        same counter as ``_make_unique`` to guarantee uniqueness across the whole
+        translation unit regardless of how many other symbols have been named.
+
+        Returns:
+            A string of the form ``".Lstr.<n>"`` where ``<n>`` is the next value
+            drawn from ``_counter``.
+        """
+        return f".Lstr.{next(self._counter)}"
+
     def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
         """Recursively collect label names from a statement into ``_label_set``.
 
@@ -799,7 +878,13 @@ class SemanticAnalyser:
             raw_init_exp: ast.Exp | None = var_decl.init.exp if isinstance(var_decl.init, ast.SingleInit) else None
             if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
                 if isinstance(var_decl.var_type, Pointer):
-                    if not (
+                    if isinstance(raw_init_exp, ast.String):
+                        if not isinstance(var_decl.var_type.referenced, Char):
+                            raise SemanticError(
+                                f"Cannot initialize pointer to '{var_decl.var_type.referenced}' with a string "
+                                "literal; string literals have type 'char *'."
+                            )
+                    elif not (
                         isinstance(raw_init_exp, ast.Constant)
                         or (isinstance(raw_init_exp, ast.AddrOf) and isinstance(raw_init_exp.exp, ast.Var))
                     ):
@@ -824,10 +909,21 @@ class SemanticAnalyser:
                     static_init: InitialValue = Tentative()
                 elif isinstance(var_decl.var_type, Pointer):
                     assert raw_init_exp is not None
-                    static_init = _static_pointer_init(raw_init_exp, self._variable_map)
+                    if isinstance(raw_init_exp, ast.String):
+                        str_name = self._make_string_name()
+                        self._symbol_table[str_name] = SymbolTableEntry(
+                            t=Array(element=Char(), size=len(raw_init_exp.string) + 1),
+                            attrs=ConstantAttr(StringInit(raw_init_exp.string, True)),
+                        )
+                        static_init = PointerInit(str_name)
+                    else:
+                        static_init = _static_pointer_init(raw_init_exp, self._variable_map)
                 elif isinstance(var_decl.var_type, Array):
-                    assert isinstance(init, ast.CompoundInit)
-                    static_init = Initial(tuple(_flatten_static_init(init)))
+                    if isinstance(init, ast.SingleInit) and isinstance(init.exp, ast.String):
+                        static_init = Initial(tuple(_string_array_static_init(init.exp.string, var_decl.var_type.size)))
+                    else:
+                        assert isinstance(init, ast.CompoundInit)
+                        static_init = Initial(tuple(_flatten_static_init(init)))
                 else:
                     assert isinstance(init, ast.SingleInit)
                     static_init = Initial((_exp_to_static_init(init.exp),))
@@ -872,7 +968,13 @@ class SemanticAnalyser:
         file_raw_exp: ast.Exp | None = var_decl.init.exp if isinstance(var_decl.init, ast.SingleInit) else None
         if var_decl.init is not None:
             if isinstance(var_decl.var_type, Pointer):
-                if not (
+                if isinstance(file_raw_exp, ast.String):
+                    if not isinstance(var_decl.var_type.referenced, Char):
+                        raise SemanticError(
+                            f"Cannot initialize pointer to '{var_decl.var_type.referenced}' with a string "
+                            "literal; string literals have type 'char *'."
+                        )
+                elif not (
                     isinstance(file_raw_exp, ast.Constant)
                     or (isinstance(file_raw_exp, ast.AddrOf) and isinstance(file_raw_exp.exp, ast.Var))
                 ):
@@ -889,7 +991,7 @@ class SemanticAnalyser:
                 raise SemanticError(
                     f"Initialiser of file-scope variable '{var_decl.name}' must be a constant expression."
                 )
-            if file_raw_exp is not None:
+            if file_raw_exp is not None and not isinstance(file_raw_exp, ast.String):
                 _convert_by_assignment(self._type_check_exp(file_raw_exp), var_decl.var_type)
         if var_decl.init is not None:
             if var_decl.name in self._file_scope_definitions:
@@ -924,11 +1026,24 @@ class SemanticAnalyser:
         if var_decl.init is not None:
             if isinstance(var_decl.var_type, Pointer):
                 assert file_raw_exp is not None
-                file_init: InitialValue = _static_pointer_init(file_raw_exp, self._variable_map)
+                if isinstance(file_raw_exp, ast.String):
+                    str_name = self._make_string_name()
+                    self._symbol_table[str_name] = SymbolTableEntry(
+                        t=Array(element=Char(), size=len(file_raw_exp.string) + 1),
+                        attrs=ConstantAttr(StringInit(file_raw_exp.string, True)),
+                    )
+                    file_init: InitialValue = PointerInit(str_name)
+                else:
+                    file_init = _static_pointer_init(file_raw_exp, self._variable_map)
             elif isinstance(var_decl.var_type, Array):
                 file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
-                assert isinstance(file_typed_init, ast.CompoundInit)
-                file_init = Initial(tuple(_flatten_static_init(file_typed_init)))
+                if isinstance(file_typed_init, ast.SingleInit) and isinstance(file_typed_init.exp, ast.String):
+                    file_init = Initial(
+                        tuple(_string_array_static_init(file_typed_init.exp.string, var_decl.var_type.size))
+                    )
+                else:
+                    assert isinstance(file_typed_init, ast.CompoundInit)
+                    file_init = Initial(tuple(_flatten_static_init(file_typed_init)))
             else:
                 file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
                 assert isinstance(file_typed_init, ast.SingleInit)
@@ -1160,6 +1275,9 @@ class SemanticAnalyser:
           operand must be a ``Pointer`` and the other must be an integer type (``IntType``,
           ``LongType``, ``UIntType``, or ``ULongType``); the integer operand is cast to
           ``LongType`` when it is not already that type.
+        * ``String`` — ``Array(Char(), len(bytes) + 1)``; the ``+1`` accounts for the implicit
+          NUL terminator.  Array decay in ``_typecheck_and_convert`` will then convert the result
+          to ``Pointer(Char())`` at every call site that expects an expression value.
 
         Child expressions that are not yet typed are recursively type-checked
         before the parent's type is determined, so this method may be called on
@@ -1209,6 +1327,10 @@ class SemanticAnalyser:
                     raise SemanticError("Can't take the bitwise complement of a double")
                 if isinstance(typed_exp.exp_type, Pointer) and isinstance(op, (ast.Complement, ast.Negate)):
                     raise SemanticError("Cannot apply bitwise complement or arithmetic negation to a pointer type.")
+                if isinstance(typed_exp.exp_type, (Char, SChar, UChar)) and isinstance(
+                    op, (ast.Negate, ast.Complement)
+                ):
+                    typed_exp = ast.Cast(IntType(), typed_exp, exp_type=IntType())
                 exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
                 return ast.Unary(op, typed_exp, exp_type=exp_type)
             case ast.Binary(operator=op, left=left, right=right):
@@ -1311,7 +1433,7 @@ class SemanticAnalyser:
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
-                if not isinstance(typed_lv, (ast.Var, ast.Dereference, ast.Subscript)):
+                if not isinstance(typed_lv, (ast.Var, ast.Dereference, ast.Subscript, ast.String)):
                     raise SemanticError("Invalid lvalue in assignment expression.")
                 if isinstance(typed_lv.exp_type, Array):
                     raise SemanticError("Cannot assign to an expression of array type.")
@@ -1384,7 +1506,7 @@ class SemanticAnalyser:
                 return ast.Dereference(typed_exp, exp_type=typed_exp.exp_type.referenced)
             case ast.AddrOf(exp=exp):
                 typed_exp = self._type_check_exp(exp)
-                if not isinstance(typed_exp, (ast.Var, ast.Dereference, ast.Subscript)):
+                if not isinstance(typed_exp, (ast.Var, ast.Dereference, ast.Subscript, ast.String)):
                     raise SemanticError("Operand of '&' must be an lvalue.")
                 if typed_exp.exp_type is None:
                     raise SemanticError("Cannot take address of expression with unknown type.")
@@ -1394,7 +1516,7 @@ class SemanticAnalyser:
                 typed_e2 = self._typecheck_and_convert(exp2)
                 t1 = typed_e1.exp_type
                 t2 = typed_e2.exp_type
-                _int_types = (IntType, LongType, UIntType, ULongType)
+                _int_types = (IntType, LongType, UIntType, ULongType, Char, SChar, UChar)
                 if isinstance(t1, Pointer) and isinstance(t2, _int_types):
                     if not isinstance(t2, LongType):
                         typed_e2 = ast.Cast(LongType(), typed_e2, exp_type=LongType())
@@ -1406,6 +1528,8 @@ class SemanticAnalyser:
                 else:
                     raise SemanticError("Subscript must have integer and pointer operands.")
                 return ast.Subscript(typed_e1, typed_e2, exp_type=subscript_type)
+            case ast.String(string=s):
+                return ast.String(s, exp_type=Array(element=Char(), size=len(s) + 1))
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -1437,6 +1561,26 @@ class SemanticAnalyser:
             case _:
                 return typed_e
 
+    def _pad_to_size(self, inits: list[ast.Initializer], elem_t: Type, size: int) -> list[ast.Initializer]:
+        """Pad a type-checked initializer list to ``size`` elements with zero initialisers.
+
+        Appends zero-valued ``SingleInit`` nodes (using ``_zero_initializer``) until the list
+        reaches ``size``.  Character element types use ``ConstChar`` / ``ConstUChar`` zero
+        constants; all other types use their natural zero constant (C11 §6.7.9p21).
+
+        Args:
+            inits: Already type-checked initializer nodes for the explicitly-given elements.
+                Modified in place and returned.
+            elem_t: The C element type of the array being padded.
+            size: The total declared array size to pad up to.
+
+        Returns:
+            ``inits`` extended with zero initialisers so that ``len(inits) == size``.
+        """
+        while len(inits) < size:
+            inits.append(_zero_initializer(elem_t))
+        return inits
+
     def _typecheck_init(self, target_type: Type, init: ast.Initializer) -> ast.Initializer:
         """Type-check a variable initializer against its declared type, applying assignment conversion.
 
@@ -1458,10 +1602,20 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If a ``CompoundInit`` is used with a non-array target type; if the
-                initializer list is longer than the declared array size; or if any sub-expression
-                fails type-checking or assignment conversion.
+                initializer list is longer than the declared array size; if a string literal is
+                used to initialise a non-character array or the string (including NUL terminator)
+                exceeds the declared array size; or if any sub-expression fails type-checking
+                or assignment conversion.
         """
         match target_type, init:
+            case Array(element=elem_t, size=size), ast.SingleInit(exp=ast.String(string=s)):
+                if not isinstance(elem_t, _CHAR_TYPES):
+                    raise SemanticError("Cannot initialize a non-character array with a string literal.")
+                if len(s) > size:
+                    raise SemanticError(
+                        f"Too many characters in string literal: string has {len(s)} bytes but array has size {size}."
+                    )
+                return ast.SingleInit(ast.String(s, exp_type=target_type))
             case _, ast.SingleInit(exp=e):
                 typechecked_exp = self._typecheck_and_convert(self.resolve_exp(e))
                 cast_exp = _convert_by_assignment(typechecked_exp, target_type)
@@ -1474,9 +1628,7 @@ class SemanticAnalyser:
                 typechecked_list: list[ast.Initializer] = [
                     self._typecheck_init(elem_t, elem_init) for elem_init in init_list
                 ]
-                while len(typechecked_list) < size:
-                    typechecked_list.append(_zero_initializer(elem_t))
-                return ast.CompoundInit(typechecked_list)
+                return ast.CompoundInit(self._pad_to_size(typechecked_list, elem_t, size))
             case _:
                 raise SemanticError("Cannot initialize a scalar object with a compound initializer.")
 
@@ -1562,6 +1714,8 @@ class SemanticAnalyser:
                 return self._type_check_exp(ast.AddrOf(self.resolve_exp(exp)))
             case ast.Subscript(exp1=exp1, exp2=exp2):
                 return self._type_check_exp(ast.Subscript(self.resolve_exp(exp1), self.resolve_exp(exp2)))
+            case ast.String():
+                return self._type_check_exp(e)
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 

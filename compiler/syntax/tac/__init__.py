@@ -30,6 +30,7 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | CopyToOffset(val src, identifier dst, int offset)
     val                 = Constant(const) | Var(identifier)
     static_init         = IntInit(int) | LongInit(int) | DoubleInit(float) | ZeroInit(int bytes)
+                        | StringInit(bytes string, bool null_terminated) | PointerInit(str name)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
                         | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
@@ -101,7 +102,18 @@ from compiler.syntax.tac.operators import (
     Subtract,
     UnaryOperator,
 )
-from compiler.syntax.tac.values import Constant, DoubleInit, IntInit, LongInit, StaticInit, Val, Var, ZeroInit
+from compiler.syntax.tac.values import (
+    Constant,
+    DoubleInit,
+    IntInit,
+    LongInit,
+    PointerInit,
+    StaticInit,
+    StringInit,
+    Val,
+    Var,
+    ZeroInit,
+)
 
 __all__ = [
     "AddPtr",
@@ -159,4 +171,6 @@ __all__ = [
     "LongInit",
     "DoubleInit",
     "ZeroInit",
+    "StringInit",
+    "PointerInit",
 ]

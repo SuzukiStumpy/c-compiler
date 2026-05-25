@@ -11,7 +11,17 @@ import compiler.syntax.ast as ast
 from compiler.semantic_analysis import SemanticAnalyser, resolve
 from compiler.syntax.ast.constants import ConstDouble, ConstInt
 from compiler.syntax.ast.types import Linkage
-from compiler.types.symbols import DoubleInit, Initial, IntInit, PointerInit, StaticAttr, ULongInit, ZeroInit
+from compiler.types.symbols import (
+    ConstantAttr,
+    DoubleInit,
+    Initial,
+    IntInit,
+    PointerInit,
+    StaticAttr,
+    StringInit,
+    ULongInit,
+    ZeroInit,
+)
 from compiler.utils.exceptions import SemanticError
 from test.semantic_analysis.helpers import (
     _file_var,
@@ -758,6 +768,76 @@ class TestStaticPointerInitialisers:
                 )
             )
 
+    # --- string literal initialisers ---
+
+    def test_file_scope_char_pointer_string_literal_creates_hidden_constant_entry(self) -> None:
+        """``char *s = "hello";`` at file scope creates a hidden ``ConstantAttr`` entry for the string bytes."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("s", ast.String(b"hello"), ast.Pointer(ast.Char()))
+        )
+        lstr_entries = {k: v for k, v in analyser._symbol_table.items() if k.startswith(".Lstr.")}
+        assert len(lstr_entries) == 1
+        str_name, str_entry = next(iter(lstr_entries.items()))
+        assert isinstance(str_entry.attrs, ConstantAttr)
+        assert str_entry.attrs.init == StringInit(b"hello", True)
+        assert str_entry.t == ast.Array(ast.Char(), 6)
+
+    def test_file_scope_char_pointer_string_literal_pointer_init_references_string(self) -> None:
+        """``char *s = "hello";`` stores ``PointerInit(str_name)`` on the pointer variable."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration("s", ast.String(b"hello"), ast.Pointer(ast.Char()))
+        )
+        str_name = next(k for k in analyser._symbol_table if k.startswith(".Lstr."))
+        entry = analyser._symbol_table["s"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.init == PointerInit(str_name)
+
+    def test_block_scope_static_char_pointer_string_literal_creates_hidden_entry(self) -> None:
+        """``static char *s = "hi";`` at block scope also creates a hidden ``ConstantAttr`` entry."""
+        analyser = SemanticAnalyser()
+        analyser.resolve_variable_declaration(
+            ast.VariableDeclaration("s", ast.String(b"hi"), ast.Pointer(ast.Char()), ast.StorageClass.Static)
+        )
+        lstr_entries = {k for k in analyser._symbol_table if k.startswith(".Lstr.")}
+        assert len(lstr_entries) == 1
+
+    def test_block_scope_static_char_pointer_string_literal_pointer_init_references_string(self) -> None:
+        """``static char *s = "hi";`` stores ``PointerInit(str_name)`` on the renamed variable."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration("s", ast.String(b"hi"), ast.Pointer(ast.Char()), ast.StorageClass.Static)
+        )
+        str_name = next(k for k in analyser._symbol_table if k.startswith(".Lstr."))
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert entry.attrs.init == PointerInit(str_name)
+
+    def test_file_scope_signed_char_pointer_string_literal_raises(self) -> None:
+        """``signed char *s = "hello";`` raises ``SemanticError`` — string literals have type ``char *``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="char"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration("s", ast.String(b"hello"), ast.Pointer(ast.SChar()))
+            )
+
+    def test_file_scope_unsigned_char_pointer_string_literal_raises(self) -> None:
+        """``unsigned char *s = "hello";`` raises ``SemanticError`` — string literals have type ``char *``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="char"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration("s", ast.String(b"hello"), ast.Pointer(ast.UChar()))
+            )
+
+    def test_file_scope_int_pointer_string_literal_raises(self) -> None:
+        """``int *p = "hello";`` raises ``SemanticError`` — string literals have type ``char *``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="char"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration("p", ast.String(b"hello"), ast.Pointer(ast.IntType()))
+            )
+
 
 # ---------------------------------------------------------------------------
 # Static array initializers
@@ -992,6 +1072,165 @@ class TestStaticArrayInitialisers:
                         ]
                     ),
                     ast.Array(ast.IntType(), 2),
+                )
+            )
+
+    # --- string literal array init (block-scope static) ---
+
+    def test_block_scope_static_char_array_string_init_with_padding(self) -> None:
+        """``static char arr[10] = "abc"`` stores ``Initial((StringInit(b"abc", True), ZeroInit(6),))``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"abc")),
+                ast.Array(ast.Char(), 10),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"abc", True), ZeroInit(6))
+
+    def test_block_scope_static_char_array_string_exact_fit_with_nul(self) -> None:
+        """``static char arr[4] = "abc"`` (exact fit including NUL) stores ``Initial((StringInit(b"abc", True),))``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"abc")),
+                ast.Array(ast.Char(), 4),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"abc", True),)
+
+    def test_block_scope_static_char_array_string_exact_fit_no_nul(self) -> None:
+        """``static char arr[3] = "abc"`` (no room for NUL) stores ``Initial((StringInit(b"abc", False),))``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"abc")),
+                ast.Array(ast.Char(), 3),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"abc", False),)
+
+    def test_block_scope_static_schar_array_string_init(self) -> None:
+        """``static signed char arr[5] = "hi"`` stores ``Initial((StringInit(b"hi", True), ZeroInit(2),))``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"hi")),
+                ast.Array(ast.SChar(), 5),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"hi", True), ZeroInit(2))
+
+    def test_block_scope_static_uchar_array_string_init(self) -> None:
+        """``static unsigned char arr[5] = "hi"`` stores ``Initial((StringInit(b"hi", True), ZeroInit(2),))``."""
+        analyser = SemanticAnalyser()
+        result = analyser.resolve_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"hi")),
+                ast.Array(ast.UChar(), 5),
+                ast.StorageClass.Static,
+            )
+        )
+        entry = analyser._symbol_table[result.name]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"hi", True), ZeroInit(2))
+
+    def test_block_scope_static_char_array_string_too_long_raises(self) -> None:
+        """``static char arr[2] = "abc"`` (string too long for array) raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="Too many characters"):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.SingleInit(ast.String(b"abc")),
+                    ast.Array(ast.Char(), 2),
+                    ast.StorageClass.Static,
+                )
+            )
+
+    def test_block_scope_static_int_array_string_init_raises(self) -> None:
+        """``static int arr[4] = "abc"`` raises ``SemanticError`` (can't init int array with string)."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError):
+            analyser.resolve_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.SingleInit(ast.String(b"abc")),
+                    ast.Array(ast.IntType(), 4),
+                    ast.StorageClass.Static,
+                )
+            )
+
+    # --- string literal array init (file-scope) ---
+
+    def test_file_scope_char_array_string_init_with_padding(self) -> None:
+        """``char arr[10] = "abc";`` at file scope stores ``Initial((StringInit(b"abc", True), ZeroInit(6),))``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"abc")),
+                ast.Array(ast.Char(), 10),
+            )
+        )
+        entry = analyser._symbol_table["arr"]
+        assert isinstance(entry.attrs, StaticAttr)
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"abc", True), ZeroInit(6))
+
+    def test_file_scope_char_array_string_exact_fit_no_nul(self) -> None:
+        """``char arr[3] = "abc";`` at file scope stores ``Initial((StringInit(b"abc", False),))``."""
+        analyser = SemanticAnalyser()
+        analyser._resolve_file_scope_variable_declaration(
+            ast.VariableDeclaration(
+                "arr",
+                ast.SingleInit(ast.String(b"abc")),
+                ast.Array(ast.Char(), 3),
+            )
+        )
+        entry = analyser._symbol_table["arr"]
+        assert isinstance(entry.attrs.init, Initial)
+        assert entry.attrs.init.initializers == (StringInit(b"abc", False),)
+
+    def test_file_scope_char_array_string_too_long_raises(self) -> None:
+        """``char arr[2] = "abc";`` at file scope raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError, match="Too many characters"):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.SingleInit(ast.String(b"abc")),
+                    ast.Array(ast.Char(), 2),
+                )
+            )
+
+    def test_file_scope_int_array_string_init_raises(self) -> None:
+        """``int arr[4] = "abc";`` at file scope raises ``SemanticError``."""
+        analyser = SemanticAnalyser()
+        with pytest.raises(SemanticError):
+            analyser._resolve_file_scope_variable_declaration(
+                ast.VariableDeclaration(
+                    "arr",
+                    ast.SingleInit(ast.String(b"abc")),
+                    ast.Array(ast.IntType(), 4),
                 )
             )
 

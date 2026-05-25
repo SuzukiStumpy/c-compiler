@@ -10,12 +10,15 @@ import pytest  # noqa: F401 — re-exported for test modules that don't import i
 from compiler.parser import parse  # noqa: F401
 from compiler.syntax.ast import (  # noqa: F401
     AddrOf,
+    Array,
     Block,
     BlockItem,
     Break,
     Case,
     Cast,
+    Char,
     Compound,
+    CompoundInit,
     Constant,
     ConstInt,
     ConstLong,
@@ -43,9 +46,13 @@ from compiler.syntax.ast import (  # noqa: F401
     Program,
     Return,
     S,
+    SChar,
+    SingleInit,
     Statement,
     StorageClass,
+    String,
     Switch,
+    UChar,
     VarDecl,
     VariableDeclaration,
     While,
@@ -156,6 +163,11 @@ _COMMA = _tok(TokenType.COMMA, ",")
 _STATIC = _tok(TokenType.STATIC, "static")
 _EXTERN = _tok(TokenType.EXTERN, "extern")
 _LONG = _tok(TokenType.LONG, "long")
+_CHAR = _tok(TokenType.CHAR, "char")
+_SIGNED = _tok(TokenType.SIGNED, "signed")
+_UNSIGNED = _tok(TokenType.UNSIGNED, "unsigned")
+_LBRACKET = _tok(TokenType.LBRACKET, "[")
+_RBRACKET = _tok(TokenType.RBRACKET, "]")
 
 
 def _ident(name: str) -> Token:
@@ -171,6 +183,30 @@ def _number(value: str) -> Token:
 def _longint(value: str) -> Token:
     """Return a LONGINT token with the given literal text (e.g. ``"42L"``)."""
     return _tok(TokenType.LONGINT, value)
+
+
+def _charconst(value: str) -> Token:
+    """Return a CONSTCHAR token with the given literal text (e.g. ``"'a'"``).
+
+    Args:
+        value: Raw source text of the character constant, including surrounding single quotes.
+
+    Returns:
+        A ``Token`` of type ``CONSTCHAR``.
+    """
+    return _tok(TokenType.CONSTCHAR, value)
+
+
+def _string_tok(value: str) -> Token:
+    """Return a STRING token with the given literal text (e.g. ``'"hello"'``).
+
+    Args:
+        value: Raw source text of the string literal, including surrounding double quotes.
+
+    Returns:
+        A ``Token`` of type ``STRING``.
+    """
+    return _tok(TokenType.STRING, value)
 
 
 def _parsed_body(*body_tokens: Token) -> tuple[BlockItem, ...]:

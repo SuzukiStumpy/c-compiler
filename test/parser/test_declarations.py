@@ -4,6 +4,8 @@ import pytest
 
 from compiler.parser import parse
 from compiler.syntax.ast import (
+    Array,
+    Char,
     Constant,
     ConstInt,
     D,
@@ -18,8 +20,11 @@ from compiler.syntax.ast import (
     Program,
     Return,
     S,
+    SChar,
     SingleInit,
     StorageClass,
+    String,
+    UChar,
     Unary,
     VarDecl,
     VariableDeclaration,
@@ -30,23 +35,29 @@ from compiler.types.tokens import TokenType
 from compiler.utils.exceptions import ParseError
 from test.parser.helpers import (
     _ASSIGNMENT,
+    _CHAR,
     _COMMA,
     _EXTERN,
     _INCREMENT,
     _INT,
     _LBRACE,
+    _LBRACKET,
     _LPAREN,
     _PLUS,
     _RBRACE,
+    _RBRACKET,
     _RETURN,
     _RPAREN,
     _SEMICOLON,
+    _SIGNED,
     _STATIC,
+    _UNSIGNED,
     _VOID,
     _ident,
     _number,
     _parsed_body,
     _parsed_exp,
+    _string_tok,
     _tok,
 )
 
@@ -992,3 +1003,91 @@ class TestPointerDeclaratorErrors:
         ]
         with pytest.raises(ParseError, match="function returning a function"):
             parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# char, signed char, and unsigned char type declarations
+# ---------------------------------------------------------------------------
+
+
+class TestCharTypeDeclarations:
+    """Parser builds ``VariableDeclaration`` nodes with the correct char type variant."""
+
+    def test_char_variable_declaration(self) -> None:
+        """``char x;`` → ``VariableDeclaration("x", None, Char())``."""
+        body = _parsed_body(_CHAR, _ident("x"), _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        vd = item.declaration.variable_declaration
+        assert vd.var_type == Char()
+        assert vd.name == "x"
+        assert vd.init is None
+
+    def test_signed_char_variable_declaration(self) -> None:
+        """``signed char x;`` → ``VariableDeclaration("x", None, SChar())``."""
+        body = _parsed_body(_SIGNED, _CHAR, _ident("x"), _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        assert item.declaration.variable_declaration.var_type == SChar()
+
+    def test_char_signed_variable_declaration_order_independent(self) -> None:
+        """``char signed x;`` produces the same ``SChar`` type as ``signed char x;``."""
+        body = _parsed_body(_CHAR, _SIGNED, _ident("x"), _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        assert item.declaration.variable_declaration.var_type == SChar()
+
+    def test_unsigned_char_variable_declaration(self) -> None:
+        """``unsigned char x;`` → ``VariableDeclaration("x", None, UChar())``."""
+        body = _parsed_body(_UNSIGNED, _CHAR, _ident("x"), _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        assert item.declaration.variable_declaration.var_type == UChar()
+
+    def test_char_array_declaration(self) -> None:
+        """``char arr[5];`` → array type ``Array(Char(), 5)``."""
+        body = _parsed_body(_CHAR, _ident("arr"), _LBRACKET, _number("5"), _RBRACKET, _SEMICOLON)
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        assert item.declaration.variable_declaration.var_type == Array(Char(), 5)
+
+    def test_char_array_with_string_literal_initializer(self) -> None:
+        """``char arr[6] = "hello";`` → ``SingleInit(String(b"hello"))``."""
+        body = _parsed_body(
+            _CHAR,
+            _ident("arr"),
+            _LBRACKET,
+            _number("6"),
+            _RBRACKET,
+            _ASSIGNMENT,
+            _string_tok('"hello"'),
+            _SEMICOLON,
+        )
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        vd = item.declaration.variable_declaration
+        assert vd.var_type == Array(Char(), 6)
+        assert vd.init == SingleInit(String(b"hello"))
+
+    def test_char_pointer_with_string_literal_initializer(self) -> None:
+        """``char *s = "hi";`` → ``SingleInit(String(b"hi"))`` with pointer type."""
+        body = _parsed_body(
+            _CHAR,
+            _tok(TokenType.ASTERISK, "*"),
+            _ident("s"),
+            _ASSIGNMENT,
+            _string_tok('"hi"'),
+            _SEMICOLON,
+        )
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        vd = item.declaration.variable_declaration
+        assert vd.var_type == Pointer(Char())
+        assert vd.init == SingleInit(String(b"hi"))

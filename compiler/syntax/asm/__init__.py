@@ -137,8 +137,10 @@ from compiler.syntax.asm.values import (
     IntInit,
     LongInit,
     Longword,
+    PointerInit,
     Quadword,
     StaticInit,
+    StringInit,
     ZeroInit,
 )
 
@@ -215,4 +217,6 @@ __all__ = [
     "Quadword",
     "StaticInit",
     "ZeroInit",
+    "StringInit",
+    "PointerInit",
 ]

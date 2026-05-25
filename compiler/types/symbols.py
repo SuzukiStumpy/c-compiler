@@ -10,6 +10,7 @@ Grammar::
     attrs              = StaticAttr(initial_value, bool globl)
                        | FunAttr(bool defined, bool globl)
                        | LocalAttr
+                       | ConstantAttr(static_init init)
     initial_value      = Initial(tuple[StaticInit, ...])
                        | ULongInit(int)
                        | PointerInit(str)
@@ -18,7 +19,10 @@ Grammar::
     static_init        = IntInit(int)
                        | LongInit(int)
                        | DoubleInit(float)
+                       | CharInit(int)
+                       | UCharInit(int)
                        | ZeroInit(int bytes)
+                       | StringInit(bytes string, bool null_terminated)
 
 ``StaticAttr`` is attached to every variable with static storage duration:
 file-scope variables (external or internal linkage) and block-scope ``static``
@@ -90,6 +94,30 @@ class DoubleInit(StaticInit):
 
 
 @dataclass(frozen=True, slots=True)
+class CharInit(StaticInit):
+    """1-byte signed character initialiser element (C ``char`` / ``signed char``).
+
+    Attributes:
+        value: The integer value to store.  Never zero — use ``ZeroInit(1)``
+            for a zero-valued 1-byte signed character element.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class UCharInit(StaticInit):
+    """1-byte unsigned character initialiser element (C ``unsigned char``).
+
+    Attributes:
+        value: The integer value to store.  Never zero — use ``ZeroInit(1)``
+            for a zero-valued 1-byte unsigned character element.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
 class ZeroInit(StaticInit):
     """Zero-fill initialiser element spanning ``bytes`` bytes.
 
@@ -102,6 +130,24 @@ class ZeroInit(StaticInit):
     """
 
     bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class StringInit(StaticInit):
+    """String content initialiser for a character array or string-literal static object.
+
+    Used both when a string literal initialises a ``char``/``signed char``/``unsigned char``
+    array and when the compiler emits a hidden static object for a string-literal constant.
+
+    Attributes:
+        string: The raw byte content of the string (NUL terminator not included).
+        null_terminated: When ``True``, a NUL byte is appended after ``string`` during
+            emission; when ``False``, the bytes are written as-is (used when the array
+            is smaller than the full string or the terminator is handled separately).
+    """
+
+    string: bytes
+    null_terminated: bool
 
 
 class InitialValue(ABC):
@@ -174,6 +220,21 @@ class StaticAttr(SymbolAttrs):
 
     init: InitialValue
     globl: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConstantAttr(SymbolAttrs):
+    """Attributes for a compiler-generated read-only string-literal constant.
+
+    Attached to the hidden static objects the compiler creates for each distinct
+    string literal.  The object lives in ``.rodata`` and is never exported.
+
+    Attributes:
+        init: The single ``StaticInit`` element that describes the content of
+            the constant (typically a ``StringInit``).
+    """
+
+    init: StaticInit
 
 
 @dataclass(frozen=True, slots=True)
