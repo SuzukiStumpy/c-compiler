@@ -34,6 +34,7 @@ class TokenType(Enum):
     SIGNED = auto()
     UNSIGNED = auto()
     DOUBLE = auto()
+    CHAR = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
@@ -41,6 +42,8 @@ class TokenType(Enum):
     UINT = auto()
     ULONG = auto()
     FPDOUBLE = auto()
+    CONSTCHAR = auto()
+    STRING = auto()
     # Punctuation
     LPAREN = auto()
     RPAREN = auto()

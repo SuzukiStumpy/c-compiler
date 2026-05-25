@@ -28,6 +28,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("SIGNED", r"signed\b"),
     ("UNSIGNED", r"unsigned\b"),
     ("DOUBLE", r"double\b"),
+    ("CHAR", r"char\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("FPDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)(?![\w.])"),
@@ -35,6 +36,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LONGINT", r"[0-9]+[lL](?![\w.])"),
     ("UINT", r"[0-9]+[uU](?![\w.])"),
     ("NUMBER", r"[0-9]+(?![\w.])"),
+    ("CONSTCHAR", r"'([^'\\\n]|\\['\"?\\abfnrtv])'"),
+    ("STRING", r"\"([^\"\\\n]|\\['\"\\?abfnrtv])*\""),
     # Punctuation
     ("LPAREN", r"\("),
     ("RPAREN", r"\)"),
