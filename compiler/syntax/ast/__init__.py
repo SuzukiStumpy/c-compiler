@@ -58,6 +58,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | ConstUInt(int)
                          | ConstULong(int)
                          | ConstDouble(double)
+                         | ConstChar(int)
+                         | ConstUChar(int)
 
 Nodes are organised into submodules by logical role:
 

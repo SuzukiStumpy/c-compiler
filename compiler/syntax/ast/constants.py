@@ -64,3 +64,25 @@ class ConstDouble(Const):
     """
 
     val: float
+
+
+@dataclass(frozen=True, slots=True)
+class ConstChar(Const):
+    """Represents a signed character constant within the C code
+
+    Attributes:
+        val: The integer value representing the character
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstUChar(Const):
+    """Represents an unsigned character constant within the C code
+
+    Attributes:
+        val: The (unsigned) integer value representing the character
+    """
+
+    val: int
