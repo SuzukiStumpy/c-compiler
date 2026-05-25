@@ -74,6 +74,8 @@ def test_minimal_program_indentation() -> None:
         "                fun_type=FunType(params=(), ret=IntType())\n"
         "                globl=False\n"
         "                storage_class=None\n"
+        '                source_file=""\n'
+        "                source_line=0\n"
         "            )\n"
         "        )\n"
         "    )\n"
@@ -235,7 +237,7 @@ def test_function_with_none_body_renders_inline() -> None:
     node = Function(name="foo", params=(), body=None, fun_type=FunType(params=(), ret=IntType()))
     assert pretty_print(node) == (
         'Function(name="foo", params=(), body=None, '
-        "fun_type=FunType(params=(), ret=IntType()), globl=False, storage_class=None)"
+        'fun_type=FunType(params=(), ret=IntType()), globl=False, storage_class=None, source_file="", source_line=0)'
     )
 
 

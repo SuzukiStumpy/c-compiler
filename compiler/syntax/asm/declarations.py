@@ -65,18 +65,30 @@ class Function(TopLevel):
         instructions: The ordered sequence of instructions in the function
             body. May be empty before code generation fills it in, but will
             contain at least one instruction in fully generated output.
+        source_file: Path of the source file where this function was declared.
+            Propagated from ``ast.Function`` via the TAC stage; empty string
+            when not available (e.g. hand-constructed in tests).
+        source_line: 1-indexed line number of the function declaration in
+            ``source_file``.  Zero when not available.
     """
 
     name: str
     globl: bool
     params: tuple[Operand, ...] = ()
     instructions: tuple[Instruction, ...] = ()
+    source_file: str = ""
+    source_line: int = 0
 
     def emit(self) -> str:
         """Return the assembly text for this function definition.
 
-        Produces a ``.globl`` directive (if required), a label, and the emitted text of
-        each instruction, all joined by newlines.
+        Produces an optional source-location comment block, a ``.globl`` directive
+        (if required), a label, and the emitted text of each instruction, all
+        joined by newlines.
+
+        When ``source_file`` is non-empty a blank line followed by a ``###`` /
+        ``# Function:`` / ``# Source:`` / ``###`` block is prepended so the
+        assembly file identifies each function's origin.
 
         When the instruction list contains an ``AllocateStack`` instruction,
         a standard frame-pointer prologue (``pushq %rbp; movq %rsp, %rbp``) is
@@ -86,6 +98,11 @@ class Function(TopLevel):
         Returns:
             A multi-line string of the form::
 
+                [blank line]
+                [###]
+                [# Function: <name>]
+                [# Source: <file>:<line>]
+                [###]
                   .globl <name>
                 <name>:
                   [pushq %rbp]
@@ -96,13 +113,22 @@ class Function(TopLevel):
                   [popq %rbp]
                   ret
         """
-        lines = [
-            _asm_line(".globl", self.name) if self.globl else "",
-            _asm_line(".text"),
-            f"{self.name}:",
-            _asm_line("pushq", "%rbp"),
-            _asm_line("movq", "%rsp", "%rbp"),
-        ]
+        lines: list[str] = []
+        if self.source_file:
+            lines.append("")
+            lines.append("###")
+            lines.append(f"# Function: {self.name}")
+            lines.append(f"# Source: {self.source_file}:{self.source_line}")
+            lines.append("###")
+        lines.extend(
+            [
+                _asm_line(".globl", self.name) if self.globl else "",
+                _asm_line(".text"),
+                f"{self.name}:",
+                _asm_line("pushq", "%rbp"),
+                _asm_line("movq", "%rsp", "%rbp"),
+            ]
+        )
         for instr in self.instructions:
             lines.append(instr.emit())
         return "\n".join(lines)

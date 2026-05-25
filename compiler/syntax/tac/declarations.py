@@ -32,12 +32,18 @@ class Function(TopLevel):
         body:   The ordered sequence of instructions in the function body.  May
                 be empty before code generation fills it in, but will contain at
                 least one instruction in fully generated output.
+        source_file: Path of the source file where this function was declared.
+            Propagated from ``ast.Function``; empty when not available.
+        source_line: 1-indexed line number of the function declaration.
+            Propagated from ``ast.Function``; zero when not available.
     """
 
     name: str
     globl: bool = False
     params: tuple[str, ...] = ()
     body: tuple[Instruction, ...] = ()
+    source_file: str = ""
+    source_line: int = 0
 
 
 @dataclass(frozen=True, slots=True)

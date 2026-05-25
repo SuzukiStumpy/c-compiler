@@ -842,6 +842,7 @@ class Parser:
             ParseError: If no type specifier is present, the declarator is malformed,
                 or the initialiser expression or function body is malformed.
         """
+        first_token = self._peek()
         base_type, storage = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
         full_type = transform(base_type)
@@ -863,6 +864,8 @@ class Parser:
                     body=body,
                     fun_type=full_type,
                     storage_class=storage,
+                    source_file=first_token.filename if first_token is not None else "",
+                    source_line=first_token.line if first_token is not None else 0,
                 )
             )
         init: Initializer | None = None

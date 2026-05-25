@@ -187,6 +187,50 @@ class TestFunction:
         with pytest.raises(dataclasses.FrozenInstanceError):
             fn.name = "other"  # type: ignore[misc]
 
+    def test_no_comment_block_when_source_file_absent(self) -> None:
+        """When ``source_file`` is empty no comment block appears in the emitted text."""
+        fn = Function(name="main", globl=True, instructions=(Ret(),))
+        assert "###" not in fn.emit()
+        assert "# Function:" not in fn.emit()
+
+    def test_comment_block_emitted_when_source_file_set(self) -> None:
+        """When ``source_file`` is non-empty the comment block appears before the directives."""
+        fn = Function(name="main", globl=True, source_file="foo.c", source_line=5, instructions=(Ret(),))
+        assert "###" in fn.emit()
+        assert "# Function: main" in fn.emit()
+        assert "# Source: foo.c:5" in fn.emit()
+
+    def test_comment_block_precedes_globl_directive(self) -> None:
+        """The ``###`` comment block appears before the ``.globl`` directive."""
+        fn = Function(name="main", globl=True, source_file="foo.c", source_line=1, instructions=(Ret(),))
+        lines = fn.emit().splitlines()
+        hash_idx = next(i for i, ln in enumerate(lines) if ln == "###")
+        globl_idx = next(i for i, ln in enumerate(lines) if ".globl" in ln)
+        assert hash_idx < globl_idx
+
+    def test_blank_line_before_comment_block(self) -> None:
+        """A blank line immediately precedes the opening ``###``."""
+        fn = Function(name="main", globl=True, source_file="foo.c", source_line=1, instructions=(Ret(),))
+        lines = fn.emit().splitlines()
+        hash_idx = next(i for i, ln in enumerate(lines) if ln == "###")
+        assert lines[hash_idx - 1] == ""
+
+    def test_existing_tests_unaffected_without_source_file(self) -> None:
+        """Existing callers that omit ``source_file`` get the same output as before."""
+        fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+        expected = (
+            "      .globl main\n"
+            "      .text\n"
+            "main:\n"
+            "      pushq %rbp\n"
+            "      movq  %rsp, %rbp\n"
+            "      movl  $0, %eax\n"
+            "      movq  %rbp, %rsp\n"
+            "      popq  %rbp\n"
+            "      ret"
+        )
+        assert fn.emit() == expected
+
 
 class TestProgram:
     """``Program`` is the root assembly AST node holding function definitions."""

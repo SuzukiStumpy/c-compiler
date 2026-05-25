@@ -143,6 +143,11 @@ class Function:
             visible to the linker.  Set by the semantic analysis stage; defaults
             to ``False`` before analysis runs.
         storage_class: The optional storage-class specifier (``static``).
+        source_file: Path of the source file in which the function appears, as
+            recorded by the lexer's linemarker tracking.  Empty string when not
+            available (e.g. in hand-constructed ASTs used by tests).
+        source_line: 1-indexed line number of the first token of the function
+            declaration in ``source_file``.  Zero when not available.
     """
 
     name: str
@@ -151,6 +156,8 @@ class Function:
     fun_type: Type
     globl: bool = False
     storage_class: StorageClass | None = None
+    source_file: str = ""
+    source_line: int = 0
 
 
 @dataclass(frozen=True, slots=True)

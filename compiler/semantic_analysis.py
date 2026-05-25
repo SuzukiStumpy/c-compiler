@@ -1142,6 +1142,8 @@ class SemanticAnalyser:
                 fun_type=new_fun_type,
                 globl=fun.globl,
                 storage_class=fun.storage_class,
+                source_file=fun.source_file,
+                source_line=fun.source_line,
             )
         var_binding = self._variable_map.get(fun.name)
         if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
@@ -2012,6 +2014,8 @@ class SemanticAnalyser:
             fun_type=function.fun_type,
             globl=globl,
             storage_class=function.storage_class,
+            source_file=function.source_file,
+            source_line=function.source_line,
         )
 
     def _resolve_program(self, program: ast.Program) -> ast.Program:

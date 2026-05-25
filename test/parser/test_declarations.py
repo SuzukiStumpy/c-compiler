@@ -81,6 +81,8 @@ class TestValidPrograms:
                         params=(),
                         body=(S(statement=Return(exp=Constant(value=ConstInt(0)))),),
                         fun_type=FunType(params=(), ret=IntType()),
+                        source_file="test.c",
+                        source_line=1,
                     ),
                 ),
             )
@@ -371,7 +373,12 @@ class TestFunctionForwardDeclarations:
         decl = result.declarations[0]
         assert isinstance(decl, FunDecl)
         assert decl.function_declaration == Function(
-            name="foo", params=(), body=None, fun_type=FunType(params=(), ret=IntType())
+            name="foo",
+            params=(),
+            body=None,
+            fun_type=FunType(params=(), ret=IntType()),
+            source_file="test.c",
+            source_line=1,
         )
 
     def test_forward_declaration_with_params(self) -> None:

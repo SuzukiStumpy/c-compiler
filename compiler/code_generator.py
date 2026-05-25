@@ -388,7 +388,14 @@ def _translate_function(
     for instr in fn.body:
         instructions.extend(_translate_instruction(instr, symbol_table, constants))
 
-    return asm.Function(name=fn.name, globl=fn.globl, params=(), instructions=tuple(instructions))
+    return asm.Function(
+        name=fn.name,
+        globl=fn.globl,
+        params=(),
+        instructions=tuple(instructions),
+        source_file=fn.source_file,
+        source_line=fn.source_line,
+    )
 
 
 def _translate_binary(
@@ -1507,7 +1514,12 @@ def _replace_pseudos(  # noqa: C901 - ignore complexity warning
 
     stack_size = -next_offset[0]
     return asm.Function(
-        name=fn.name, globl=fn.globl, params=fn.params, instructions=tuple(new_instructions)
+        name=fn.name,
+        globl=fn.globl,
+        params=fn.params,
+        instructions=tuple(new_instructions),
+        source_file=fn.source_file,
+        source_line=fn.source_line,
     ), stack_size
 
 
@@ -1796,7 +1808,14 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.Quadword()))
             case _:
                 fixed.append(instr)
-    return asm.Function(name=fn.name, globl=fn.globl, params=fn.params, instructions=tuple(fixed))
+    return asm.Function(
+        name=fn.name,
+        globl=fn.globl,
+        params=fn.params,
+        instructions=tuple(fixed),
+        source_file=fn.source_file,
+        source_line=fn.source_line,
+    )
 
 
 # ==============================================================================
@@ -1826,4 +1845,6 @@ def _add_stack_allocation(fn: asm.Function, stack_size: int) -> asm.Function:
         globl=fn.globl,
         params=fn.params,
         instructions=(asm.AllocateStack(size=aligned), *fn.instructions),
+        source_file=fn.source_file,
+        source_line=fn.source_line,
     )

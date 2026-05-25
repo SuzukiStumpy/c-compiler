@@ -490,6 +490,8 @@ class _TacGenerator:
             globl=function.globl,
             params=tuple(p.name for p in function.params),
             body=tuple(instructions),
+            source_file=function.source_file,
+            source_line=function.source_line,
         )
 
     def translate_block(self, block: ast.Block) -> list[tac.Instruction]:
