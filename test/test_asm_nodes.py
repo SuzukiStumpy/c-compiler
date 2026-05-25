@@ -10,6 +10,7 @@ import pytest
 
 from compiler.syntax.asm import (
     AllocateStack,
+    Byte,
     Call,
     Cmp,
     CondCodes,
@@ -20,11 +21,15 @@ from compiler.syntax.asm import (
     Jmp,
     JmpCC,
     Label,
+    Longword,
     Memory,
     Mov,
+    MoveZeroExtend,
+    Movsx,
     Operand,
     Program,
     Push,
+    Quadword,
     Register,
     Registers,
     Ret,
@@ -432,3 +437,81 @@ class TestCall:
         c = Call(name="foo")
         with pytest.raises(dataclasses.FrozenInstanceError):
             c.name = "bar"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Byte-width instruction emit
+# ---------------------------------------------------------------------------
+
+_AX_BYTE = Register(Registers.AX, Width.BYTE)
+_AX_DWORD = Register(Registers.AX, Width.DWORD)
+_AX_QWORD = Register(Registers.AX, Width.QWORD)
+_R10_BYTE = Register(Registers.R10, Width.BYTE)
+_R10_DWORD = Register(Registers.R10, Width.DWORD)
+_R10_QWORD = Register(Registers.R10, Width.QWORD)
+
+
+class TestMovByteEmit:
+    """``Mov(Byte)`` emits ``movb``."""
+
+    def test_mov_byte_reg_reg(self) -> None:
+        """``Mov(Byte, reg, reg)`` emits ``movb``."""
+        assert Mov(src=_R10_BYTE, dst=_AX_BYTE, assembly_type=Byte()).emit() == "  movb %r10b, %al"
+
+    def test_mov_longword_emits_movl(self) -> None:
+        """``Mov(Longword)`` still emits ``movl`` (regression guard)."""
+        assert Mov(src=_R10_DWORD, dst=_AX_DWORD, assembly_type=Longword()).emit() == "  movl %r10d, %eax"
+
+    def test_mov_quadword_emits_movq(self) -> None:
+        """``Mov(Quadword)`` still emits ``movq`` (regression guard)."""
+        assert Mov(src=_R10_QWORD, dst=_AX_QWORD, assembly_type=Quadword()).emit() == "  movq %r10, %rax"
+
+
+class TestCmpByteEmit:
+    """``Cmp(Byte)`` emits ``cmpb``."""
+
+    def test_cmp_byte_emits_cmpb(self) -> None:
+        """``Cmp(Byte, reg, reg)`` emits ``cmpb``."""
+        assert Cmp(op1=_R10_BYTE, op2=_AX_BYTE, assembly_type=Byte()).emit() == "  cmpb %r10b, %al"
+
+    def test_cmp_longword_regression(self) -> None:
+        """``Cmp(Longword)`` still emits ``cmpl``."""
+        assert Cmp(op1=_R10_DWORD, op2=_AX_DWORD, assembly_type=Longword()).emit() == "  cmpl %r10d, %eax"
+
+
+class TestMovsxEmit:
+    """``Movsx.emit()`` selects the correct sign-extending mnemonic."""
+
+    def test_byte_to_longword_emits_movsbl(self) -> None:
+        """``Movsx(Byte, Longword)`` emits ``movsbl``."""
+        instr = Movsx(src_type=Byte(), dst_type=Longword(), src=_R10_BYTE, dst=_AX_DWORD)
+        assert instr.emit() == "  movsbl %r10b, %eax"
+
+    def test_byte_to_quadword_emits_movsbq(self) -> None:
+        """``Movsx(Byte, Quadword)`` emits ``movsbq``."""
+        instr = Movsx(src_type=Byte(), dst_type=Quadword(), src=_R10_BYTE, dst=_AX_QWORD)
+        assert instr.emit() == "  movsbq %r10b, %rax"
+
+    def test_longword_to_quadword_emits_movslq(self) -> None:
+        """``Movsx(Longword, Quadword)`` emits ``movslq`` (regression guard)."""
+        instr = Movsx(src_type=Longword(), dst_type=Quadword(), src=_R10_DWORD, dst=_AX_QWORD)
+        assert instr.emit() == "  movslq %r10d, %rax"
+
+
+class TestMoveZeroExtendEmit:
+    """``MoveZeroExtend.emit()`` selects the correct zero-extending mnemonic."""
+
+    def test_byte_to_longword_emits_movzbl(self) -> None:
+        """``MoveZeroExtend(Byte, Longword)`` emits ``movzbl``."""
+        instr = MoveZeroExtend(src_type=Byte(), dst_type=Longword(), src=_R10_BYTE, dst=_AX_DWORD)
+        assert instr.emit() == "  movzbl %r10b, %eax"
+
+    def test_byte_to_quadword_emits_movzbq(self) -> None:
+        """``MoveZeroExtend(Byte, Quadword)`` emits ``movzbq``."""
+        instr = MoveZeroExtend(src_type=Byte(), dst_type=Quadword(), src=_R10_BYTE, dst=_AX_QWORD)
+        assert instr.emit() == "  movzbq %r10b, %rax"
+
+    def test_longword_to_quadword_emits_movl(self) -> None:
+        """``MoveZeroExtend(Longword, Quadword)`` emits ``movl`` (regression guard)."""
+        instr = MoveZeroExtend(src_type=Longword(), dst_type=Quadword(), src=_R10_DWORD, dst=_AX_DWORD)
+        assert instr.emit() == "  movl %r10d, %eax"

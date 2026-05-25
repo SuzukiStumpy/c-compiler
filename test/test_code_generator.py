@@ -10,8 +10,8 @@ import pytest
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.code_generator import generate
-from compiler.syntax.ast.constants import ConstDouble, ConstInt, ConstLong
-from compiler.syntax.ast.types import IntType, LongType
+from compiler.syntax.ast.constants import ConstChar, ConstDouble, ConstInt, ConstLong, ConstUChar
+from compiler.syntax.ast.types import Char, DoubleType, IntType, LongType, SChar, UChar, UIntType, ULongType
 from compiler.types.symbols import LocalAttr, SymbolTable, SymbolTableEntry
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -1309,3 +1309,519 @@ class TestCmpBothLargeImmFixup:
                 assert not (isinstance(instr.op1, asm.Imm) and not (-(1 << 31) <= instr.op1.value <= (1 << 31) - 1)), (
                     "large Imm survived as Cmp.op1 after fixup"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Char type support
+# ---------------------------------------------------------------------------
+
+
+def _make_symbol_table(**vars: type) -> SymbolTable:
+    """Build a ``SymbolTable`` mapping each name to the given C type.
+
+    Args:
+        **vars: Keyword arguments mapping variable names to their C type classes.
+
+    Returns:
+        A ``SymbolTable`` with a ``LocalAttr`` entry for each variable.
+    """
+    return {name: SymbolTableEntry(t=t(), attrs=LocalAttr()) for name, t in vars.items()}
+
+
+class TestAsmTypeChar:
+    """``_asm_type`` returns ``Byte`` for char-typed TAC values."""
+
+    def test_const_char_returns_byte(self) -> None:
+        """``ConstChar`` constant maps to ``Byte`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        assert _asm_type(tac.Constant(value=ConstChar(65))) == asm.Byte()
+
+    def test_const_uchar_returns_byte(self) -> None:
+        """``ConstUChar`` constant maps to ``Byte`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        assert _asm_type(tac.Constant(value=ConstUChar(200))) == asm.Byte()
+
+    def test_schar_var_returns_byte(self) -> None:
+        """``SChar`` variable maps to ``Byte`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(c=SChar)
+        assert _asm_type(tac.Var("c"), st) == asm.Byte()
+
+    def test_uchar_var_returns_byte(self) -> None:
+        """``UChar`` variable maps to ``Byte`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(c=UChar)
+        assert _asm_type(tac.Var("c"), st) == asm.Byte()
+
+    def test_char_var_returns_byte(self) -> None:
+        """``Char`` variable maps to ``Byte`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(c=Char)
+        assert _asm_type(tac.Var("c"), st) == asm.Byte()
+
+    def test_int_var_still_returns_longword(self) -> None:
+        """``IntType`` variable still maps to ``Longword`` (regression guard)."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(x=IntType)
+        assert _asm_type(tac.Var("x"), st) == asm.Longword()
+
+
+class TestRegWidthByte:
+    """``_reg_width`` returns ``Width.BYTE`` for ``Byte()``."""
+
+    def test_byte_returns_width_byte(self) -> None:
+        """``_reg_width(Byte())`` returns ``Width.BYTE``."""
+        from compiler.code_generator import _reg_width
+
+        assert _reg_width(asm.Byte()) == asm.Width.BYTE
+
+    def test_longword_still_returns_dword(self) -> None:
+        """``_reg_width(Longword())`` still returns ``Width.DWORD`` (regression guard)."""
+        from compiler.code_generator import _reg_width
+
+        assert _reg_width(asm.Longword()) == asm.Width.DWORD
+
+    def test_quadword_still_returns_qword(self) -> None:
+        """``_reg_width(Quadword())`` still returns ``Width.QWORD`` (regression guard)."""
+        from compiler.code_generator import _reg_width
+
+        assert _reg_width(asm.Quadword()) == asm.Width.QWORD
+
+
+def _sign_extend_program(src_type: type, dst_type: type, src_name: str = "s", dst_name: str = "d") -> tac.Program:
+    """Build a TAC program containing a single ``SignExtend`` instruction.
+
+    Args:
+        src_type: C type for the source variable (e.g. ``SChar``).
+        dst_type: C type for the destination variable (e.g. ``IntType``).
+        src_name: Variable name for the source.
+        dst_name: Variable name for the destination.
+
+    Returns:
+        A ``tac.Program`` with one ``SignExtend`` and one ``Return``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.SignExtend(src=tac.Var(src_name), dst=tac.Var(dst_name)),
+                    tac.Return(val=tac.Var(dst_name)),
+                ),
+            ),
+        )
+    )
+
+
+def _zero_extend_program(src_type: type, dst_type: type, src_name: str = "s", dst_name: str = "d") -> tac.Program:
+    """Build a TAC program containing a single ``ZeroExtend`` instruction.
+
+    Args:
+        src_type: C type for the source variable (e.g. ``UChar``).
+        dst_type: C type for the destination variable (e.g. ``UIntType``).
+        src_name: Variable name for the source.
+        dst_name: Variable name for the destination.
+
+    Returns:
+        A ``tac.Program`` with one ``ZeroExtend`` and one ``Return``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.ZeroExtend(src=tac.Var(src_name), dst=tac.Var(dst_name)),
+                    tac.Return(val=tac.Var(dst_name)),
+                ),
+            ),
+        )
+    )
+
+
+class TestSignExtendCharCodeGen:
+    """``tac.SignExtend`` from char generates ``Movsx`` with correct src/dst types."""
+
+    def test_schar_to_int_generates_movsx_byte_longword(self) -> None:
+        """``SignExtend(SChar → int)`` generates ``Movsx(Byte, Longword)``."""
+        st = _make_symbol_table(s=SChar, d=IntType)
+        program = _sign_extend_program(SChar, IntType)
+        instrs = _fn_instructions_with_table(program, st)
+        movsx = next(i for i in instrs if isinstance(i, asm.Movsx))
+        assert movsx.src_type == asm.Byte()
+        assert movsx.dst_type == asm.Longword()
+
+    def test_schar_to_long_generates_movsx_byte_quadword(self) -> None:
+        """``SignExtend(SChar → long)`` generates ``Movsx(Byte, Quadword)``."""
+        st = _make_symbol_table(s=SChar, d=LongType)
+        program = _sign_extend_program(SChar, LongType)
+        instrs = _fn_instructions_with_table(program, st)
+        movsx = next(i for i in instrs if isinstance(i, asm.Movsx))
+        assert movsx.src_type == asm.Byte()
+        assert movsx.dst_type == asm.Quadword()
+
+    def test_int_to_long_generates_movsx_longword_quadword(self) -> None:
+        """``SignExtend(int → long)`` generates ``Movsx(Longword, Quadword)`` (regression guard)."""
+        st = _make_symbol_table(s=IntType, d=LongType)
+        program = _sign_extend_program(IntType, LongType)
+        instrs = _fn_instructions_with_table(program, st)
+        movsx = next(i for i in instrs if isinstance(i, asm.Movsx))
+        assert movsx.src_type == asm.Longword()
+        assert movsx.dst_type == asm.Quadword()
+
+
+class TestZeroExtendCharCodeGen:
+    """``tac.ZeroExtend`` from uchar generates ``MoveZeroExtend`` with correct src/dst types."""
+
+    def test_uchar_to_uint_generates_movze_byte_longword(self) -> None:
+        """``ZeroExtend(UChar → uint)`` generates ``MoveZeroExtend(Byte, Longword)``."""
+        st = _make_symbol_table(s=UChar, d=UIntType)
+        program = _zero_extend_program(UChar, UIntType)
+        instrs = _fn_instructions_with_table(program, st)
+        mze = next(i for i in instrs if isinstance(i, asm.MoveZeroExtend))
+        assert mze.src_type == asm.Byte()
+        assert mze.dst_type == asm.Longword()
+
+    def test_uchar_to_ulong_generates_movze_byte_quadword(self) -> None:
+        """``ZeroExtend(UChar → ulong)`` generates ``MoveZeroExtend(Byte, Quadword)``."""
+        st = _make_symbol_table(s=UChar, d=ULongType)
+        program = _zero_extend_program(UChar, ULongType)
+        instrs = _fn_instructions_with_table(program, st)
+        mze = next(i for i in instrs if isinstance(i, asm.MoveZeroExtend))
+        assert mze.src_type == asm.Byte()
+        assert mze.dst_type == asm.Quadword()
+
+    def test_uint_to_ulong_generates_mov_longword(self) -> None:
+        """``ZeroExtend(uint → ulong)`` is lowered to ``Mov(Longword)`` after fixup.
+
+        ``movl`` to a 32-bit register implicitly zero-extends to 64 bits, so the
+        fixup pass replaces ``MoveZeroExtend(Longword, Quadword)`` with a plain
+        ``Mov(Longword)`` instruction.
+        """
+        st = _make_symbol_table(s=UIntType, d=ULongType)
+        program = _zero_extend_program(UIntType, ULongType)
+        instrs = _fn_instructions_with_table(program, st)
+        assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs)
+        mov = next(i for i in instrs if isinstance(i, asm.Mov) and i.assembly_type == asm.Longword())
+        assert mov.assembly_type == asm.Longword()
+
+
+class TestTruncateToCharCodeGen:
+    """``tac.Truncate`` to a char destination generates ``Mov(Byte)`` not ``Mov(Longword)``."""
+
+    def test_truncate_to_schar_emits_movb(self) -> None:
+        """``Truncate`` with an ``SChar`` destination uses ``Byte`` assembly type."""
+        st = _make_symbol_table(s=IntType, d=SChar)
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.Truncate(src=tac.Var("s"), dst=tac.Var("d")),
+                        tac.Return(val=tac.Var("d")),
+                    ),
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        movs = [i for i in instrs if isinstance(i, asm.Mov)]
+        assert any(m.assembly_type == asm.Byte() for m in movs), "expected a Mov(Byte) for Truncate → SChar"
+
+    def test_truncate_to_int_still_emits_movl(self) -> None:
+        """``Truncate`` with an ``IntType`` destination still uses ``Longword`` (regression guard)."""
+        st = _make_symbol_table(s=LongType, d=IntType)
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.Truncate(src=tac.Var("s"), dst=tac.Var("d")),
+                        tac.Return(val=tac.Var("d")),
+                    ),
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        movs = [i for i in instrs if isinstance(i, asm.Mov)]
+        assert any(m.assembly_type == asm.Longword() for m in movs), "expected a Mov(Longword) for Truncate → int"
+
+
+def _funcall_program(arg_name: str) -> tac.Program:
+    """Build a TAC program with a single function call passing one named variable.
+
+    Args:
+        arg_name: The variable name to pass as the sole argument.
+
+    Returns:
+        A ``tac.Program`` calling ``foo(arg_name)`` and returning the result.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.FunCall(
+                        fun_val=tac.Var("foo"),
+                        args=(tac.Var(arg_name),),
+                        dst=tac.Var("ret"),
+                    ),
+                    tac.Return(val=tac.Var("ret")),
+                ),
+            ),
+        )
+    )
+
+
+class TestCharArgExtension:
+    """Char arguments are sign/zero-extended before placement in ABI registers."""
+
+    def test_schar_arg_in_register_uses_movsx(self) -> None:
+        """Signed char register argument emits ``Movsx(Byte, Longword)`` (``movsbl``)."""
+        st = _make_symbol_table(c=SChar, ret=IntType)
+        program = _funcall_program("c")
+        instrs = _fn_instructions_with_table(program, st)
+        movsx = next((i for i in instrs if isinstance(i, asm.Movsx)), None)
+        assert movsx is not None, "expected Movsx for signed char arg"
+        assert movsx.src_type == asm.Byte()
+        assert movsx.dst_type == asm.Longword()
+
+    def test_uchar_arg_in_register_uses_movzx(self) -> None:
+        """Unsigned char register argument emits ``MoveZeroExtend(Byte, Longword)`` (``movzbl``)."""
+        st = _make_symbol_table(c=UChar, ret=IntType)
+        program = _funcall_program("c")
+        instrs = _fn_instructions_with_table(program, st)
+        mze = next((i for i in instrs if isinstance(i, asm.MoveZeroExtend)), None)
+        assert mze is not None, "expected MoveZeroExtend for unsigned char arg"
+        assert mze.src_type == asm.Byte()
+        assert mze.dst_type == asm.Longword()
+
+    def test_schar_arg_no_byte_width_register(self) -> None:
+        """Signed char register argument never uses a byte-width (%dil) ABI register."""
+        st = _make_symbol_table(c=SChar, ret=IntType)
+        program = _funcall_program("c")
+        instrs = _fn_instructions_with_table(program, st)
+        for instr in instrs:
+            if isinstance(instr, asm.Mov):
+                if isinstance(instr.dst, asm.Register) and instr.dst.reg == asm.Registers.DI:
+                    assert instr.dst.width != asm.Width.BYTE, "char arg should not use byte-width DI register"
+
+    def test_uchar_arg_no_byte_width_register(self) -> None:
+        """Unsigned char register argument never uses a byte-width (%dil) ABI register."""
+        st = _make_symbol_table(c=UChar, ret=IntType)
+        program = _funcall_program("c")
+        instrs = _fn_instructions_with_table(program, st)
+        for instr in instrs:
+            if isinstance(instr, asm.Mov):
+                if isinstance(instr.dst, asm.Register) and instr.dst.reg == asm.Registers.DI:
+                    assert instr.dst.width != asm.Width.BYTE, "uchar arg should not use byte-width DI register"
+
+    def test_int_arg_still_uses_mov(self) -> None:
+        """Integer register argument still uses ``Mov`` (regression guard)."""
+        st = _make_symbol_table(x=IntType, ret=IntType)
+        program = _funcall_program("x")
+        instrs = _fn_instructions_with_table(program, st)
+        assert not any(isinstance(i, asm.Movsx) for i in instrs), "int arg should not produce Movsx"
+        assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs), "int arg should not produce MoveZeroExtend"
+
+
+def _double_to_char_program(dst_name: str) -> tac.Program:
+    """Build a TAC program with a single ``DoubleToInt`` instruction targeting a char variable.
+
+    Args:
+        dst_name: The destination variable name.
+
+    Returns:
+        A ``tac.Program`` that converts a double constant to ``dst_name`` via ``DoubleToInt``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.DoubleToInt(src=tac.Var("d"), dst=tac.Var(dst_name)),
+                    tac.Return(val=tac.Var(dst_name)),
+                ),
+            ),
+        )
+    )
+
+
+def _double_to_uchar_program(dst_name: str) -> tac.Program:
+    """Build a TAC program with a single ``DoubleToUInt`` instruction targeting an unsigned char variable.
+
+    Args:
+        dst_name: The destination variable name.
+
+    Returns:
+        A ``tac.Program`` that converts a double variable to ``dst_name`` via ``DoubleToUInt``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.DoubleToUInt(src=tac.Var("d"), dst=tac.Var(dst_name)),
+                    tac.Return(val=tac.Var(dst_name)),
+                ),
+            ),
+        )
+    )
+
+
+def _char_to_double_program(src_name: str) -> tac.Program:
+    """Build a TAC program with a single ``IntToDouble`` instruction from a char variable.
+
+    Args:
+        src_name: The source variable name (a char-typed variable).
+
+    Returns:
+        A ``tac.Program`` that converts ``src_name`` to double via ``IntToDouble``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.IntToDouble(src=tac.Var(src_name), dst=tac.Var("d")),
+                    tac.Return(val=tac.Var("d")),
+                ),
+            ),
+        )
+    )
+
+
+def _uchar_to_double_program(src_name: str) -> tac.Program:
+    """Build a TAC program with a single ``UIntToDouble`` instruction from an unsigned char variable.
+
+    Args:
+        src_name: The source variable name (a unsigned char-typed variable).
+
+    Returns:
+        A ``tac.Program`` that converts ``src_name`` to double via ``UIntToDouble``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.UIntToDouble(src=tac.Var(src_name), dst=tac.Var("d")),
+                    tac.Return(val=tac.Var("d")),
+                ),
+            ),
+        )
+    )
+
+
+class TestDoubleToCharConversion:
+    """``DoubleToInt`` with a char destination converts via int32 scratch then truncates."""
+
+    def test_double_to_schar_emits_cvttsd2si_then_movb(self) -> None:
+        """``DoubleToInt(dst=SChar)`` emits ``cvttsd2sil`` into scratch then ``movb`` to dst."""
+        st = _make_symbol_table(d=DoubleType, c=SChar)
+        instrs = _fn_instructions_with_table(_double_to_char_program("c"), st)
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvttsd2si)), None)
+        assert cvt is not None, "expected Cvttsd2si"
+        assert cvt.assembly_type == asm.Longword(), "cvttsd2si should target int32 scratch"
+        movb = next((i for i in instrs if isinstance(i, asm.Mov) and i.assembly_type == asm.Byte()), None)
+        assert movb is not None, "expected Mov(Byte) to truncate to char"
+
+    def test_double_to_char_emits_cvttsd2si_then_movb(self) -> None:
+        """``DoubleToInt(dst=Char)`` emits the same int32-then-truncate sequence."""
+        st = _make_symbol_table(d=DoubleType, c=Char)
+        instrs = _fn_instructions_with_table(_double_to_char_program("c"), st)
+        assert any(isinstance(i, asm.Cvttsd2si) and i.assembly_type == asm.Longword() for i in instrs)
+        assert any(isinstance(i, asm.Mov) and i.assembly_type == asm.Byte() for i in instrs)
+
+    def test_double_to_int_still_uses_cvttsd2si_directly(self) -> None:
+        """``DoubleToInt(dst=IntType)`` still emits a single ``cvttsd2sil`` (regression guard)."""
+        st = _make_symbol_table(d=DoubleType, x=IntType)
+        instrs = _fn_instructions_with_table(_double_to_char_program("x"), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvttsd2si)]
+        assert len(cvts) == 1
+        assert cvts[0].assembly_type == asm.Longword()
+        assert not any(isinstance(i, asm.Mov) and i.assembly_type == asm.Byte() for i in instrs)
+
+
+class TestDoubleToUCharConversion:
+    """``DoubleToUInt`` with an unsigned char destination converts via int32 scratch then truncates."""
+
+    def test_double_to_uchar_emits_cvttsd2si_then_movb(self) -> None:
+        """``DoubleToUInt(dst=UChar)`` emits ``cvttsd2sil`` into scratch then ``movb`` to dst."""
+        st = _make_symbol_table(d=DoubleType, c=UChar)
+        instrs = _fn_instructions_with_table(_double_to_uchar_program("c"), st)
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvttsd2si)), None)
+        assert cvt is not None, "expected Cvttsd2si"
+        assert cvt.assembly_type == asm.Longword(), "cvttsd2si should target int32 scratch"
+        assert any(isinstance(i, asm.Mov) and i.assembly_type == asm.Byte() for i in instrs)
+
+    def test_double_to_uint_still_uses_cvttsd2siq_then_movl(self) -> None:
+        """``DoubleToUInt(dst=UIntType)`` still uses the quadword-then-truncate path (regression guard)."""
+        from compiler.syntax.ast.types import UIntType
+
+        st = _make_symbol_table(d=DoubleType, x=UIntType)
+        instrs = _fn_instructions_with_table(_double_to_uchar_program("x"), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvttsd2si)]
+        assert len(cvts) == 1
+        assert cvts[0].assembly_type == asm.Quadword()
+
+
+class TestCharToDoubleConversion:
+    """``IntToDouble`` with a char source sign-extends to int32 then converts."""
+
+    def test_schar_to_double_emits_movsbl_then_cvtsi2sd(self) -> None:
+        """``IntToDouble(src=SChar)`` emits ``movsbl`` then ``cvtsi2sdl``."""
+        st = _make_symbol_table(c=SChar, d=DoubleType)
+        instrs = _fn_instructions_with_table(_char_to_double_program("c"), st)
+        movsx = next((i for i in instrs if isinstance(i, asm.Movsx)), None)
+        assert movsx is not None, "expected Movsx (movsbl) to sign-extend char"
+        assert movsx.src_type == asm.Byte()
+        assert movsx.dst_type == asm.Longword()
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvtsi2sd)), None)
+        assert cvt is not None, "expected Cvtsi2sd"
+        assert cvt.assembly_type == asm.Longword()
+
+    def test_char_to_double_emits_movsbl_then_cvtsi2sd(self) -> None:
+        """``IntToDouble(src=Char)`` emits the same sign-extend-then-convert sequence."""
+        st = _make_symbol_table(c=Char, d=DoubleType)
+        instrs = _fn_instructions_with_table(_char_to_double_program("c"), st)
+        assert any(isinstance(i, asm.Movsx) and i.src_type == asm.Byte() for i in instrs)
+        assert any(isinstance(i, asm.Cvtsi2sd) and i.assembly_type == asm.Longword() for i in instrs)
+
+    def test_int_to_double_still_uses_cvtsi2sd_directly(self) -> None:
+        """``IntToDouble(src=IntType)`` still emits a single ``cvtsi2sdl`` directly (regression guard)."""
+        st = _make_symbol_table(x=IntType, d=DoubleType)
+        instrs = _fn_instructions_with_table(_char_to_double_program("x"), st)
+        assert not any(isinstance(i, asm.Movsx) for i in instrs), "int src should not produce Movsx"
+        cvts = [i for i in instrs if isinstance(i, asm.Cvtsi2sd)]
+        assert len(cvts) == 1
+        assert cvts[0].assembly_type == asm.Longword()
+
+
+class TestUCharToDoubleConversion:
+    """``UIntToDouble`` with an unsigned char source zero-extends to int32 then converts."""
+
+    def test_uchar_to_double_emits_movzbl_then_cvtsi2sd(self) -> None:
+        """``UIntToDouble(src=UChar)`` emits ``movzbl`` then ``cvtsi2sdl``."""
+        st = _make_symbol_table(c=UChar, d=DoubleType)
+        instrs = _fn_instructions_with_table(_uchar_to_double_program("c"), st)
+        mze = next((i for i in instrs if isinstance(i, asm.MoveZeroExtend)), None)
+        assert mze is not None, "expected MoveZeroExtend (movzbl) to zero-extend uchar"
+        assert mze.src_type == asm.Byte()
+        assert mze.dst_type == asm.Longword()
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvtsi2sd)), None)
+        assert cvt is not None, "expected Cvtsi2sd"
+        assert cvt.assembly_type == asm.Longword()
+
+    def test_uint_to_double_still_uses_movl_zero_extend_path(self) -> None:
+        """``UIntToDouble(src=UIntType)`` still uses the 32-bit zero-extend path (regression guard)."""
+        from compiler.syntax.ast.types import UIntType
+
+        st = _make_symbol_table(x=UIntType, d=DoubleType)
+        instrs = _fn_instructions_with_table(_uchar_to_double_program("x"), st)
+        assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs), "uint src should not produce MoveZeroExtend"
+        assert any(isinstance(i, asm.Cvtsi2sd) and i.assembly_type == asm.Quadword() for i in instrs)

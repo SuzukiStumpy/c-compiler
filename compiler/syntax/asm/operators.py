@@ -12,7 +12,7 @@ Consumers should use structural pattern matching (``match``/``case``) or call
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from compiler.syntax.asm.values import AssemblyType, Longword
+from compiler.syntax.asm.values import AssemblyType, Byte, Longword
 
 
 class UnaryOperator(ABC):
@@ -44,14 +44,16 @@ class Neg(UnaryOperator):
     """
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``negl`` or ``negq`` mnemonic.
+        """Return the ``negb``, ``negl``, or ``negq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"negl"`` for Longword, ``"negq"`` for Quadword.
+            ``"negb"`` for Byte, ``"negl"`` for Longword, ``"negq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "negb"
         return "negl" if assembly_type == Longword() else "negq"
 
 
@@ -63,14 +65,16 @@ class Not(UnaryOperator):
     """
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``notl`` or ``notq`` mnemonic.
+        """Return the ``notb``, ``notl``, or ``notq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"notl"`` for Longword, ``"notq"`` for Quadword.
+            ``"notb"`` for Byte, ``"notl"`` for Longword, ``"notq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "notb"
         return "notl" if assembly_type == Longword() else "notq"
 
 
@@ -97,33 +101,37 @@ class BinaryOperator(ABC):
 
 @dataclass(frozen=True, slots=True)
 class Add(BinaryOperator):
-    """The ``addl``/``addq`` instruction: addition."""
+    """The ``addb``/``addl``/``addq`` instruction: addition."""
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``addl`` or ``addq`` mnemonic.
+        """Return the ``addb``, ``addl``, or ``addq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"addl"`` for Longword, ``"addq"`` for Quadword.
+            ``"addb"`` for Byte, ``"addl"`` for Longword, ``"addq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "addb"
         return "addl" if assembly_type == Longword() else "addq"
 
 
 @dataclass(frozen=True, slots=True)
 class Sub(BinaryOperator):
-    """The ``subl``/``subq`` instruction: subtraction."""
+    """The ``subb``/``subl``/``subq`` instruction: subtraction."""
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``subl`` or ``subq`` mnemonic.
+        """Return the ``subb``, ``subl``, or ``subq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"subl"`` for Longword, ``"subq"`` for Quadword.
+            ``"subb"`` for Byte, ``"subl"`` for Longword, ``"subq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "subb"
         return "subl" if assembly_type == Longword() else "subq"
 
 
@@ -135,59 +143,68 @@ class Mult(BinaryOperator):
         """Return the ``imull`` or ``imulq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 32-bit or 64-bit form.  ``Byte`` is not a
+                valid operand size for two-operand ``imul``; char arithmetic is always
+                promoted to ``int`` before multiplication.
 
         Returns:
-            ``"imull"`` for Longword, ``"imulq"`` for Quadword.
+            ``"imull"`` for Longword (and Byte, which should not occur in practice),
+            ``"imulq"`` for Quadword.
         """
-        return "imull" if assembly_type == Longword() else "imulq"
+        return "imulq" if assembly_type != Longword() and assembly_type != Byte() else "imull"
 
 
 @dataclass(frozen=True, slots=True)
 class And(BinaryOperator):
-    """The ``andl``/``andq`` instruction: bitwise AND."""
+    """The ``andb``/``andl``/``andq`` instruction: bitwise AND."""
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``andl`` or ``andq`` mnemonic.
+        """Return the ``andb``, ``andl``, or ``andq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"andl"`` for Longword, ``"andq"`` for Quadword.
+            ``"andb"`` for Byte, ``"andl"`` for Longword, ``"andq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "andb"
         return "andl" if assembly_type == Longword() else "andq"
 
 
 @dataclass(frozen=True, slots=True)
 class Or(BinaryOperator):
-    """The ``orl``/``orq`` instruction: bitwise OR."""
+    """The ``orb``/``orl``/``orq`` instruction: bitwise OR."""
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``orl`` or ``orq`` mnemonic.
+        """Return the ``orb``, ``orl``, or ``orq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"orl"`` for Longword, ``"orq"`` for Quadword.
+            ``"orb"`` for Byte, ``"orl"`` for Longword, ``"orq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "orb"
         return "orl" if assembly_type == Longword() else "orq"
 
 
 @dataclass(frozen=True, slots=True)
 class Xor(BinaryOperator):
-    """The ``xorl``/``xorq`` instruction: bitwise exclusive OR."""
+    """The ``xorb``/``xorl``/``xorq`` instruction: bitwise exclusive OR."""
 
     def emit(self, assembly_type: AssemblyType) -> str:
-        """Return the ``xorl`` or ``xorq`` mnemonic.
+        """Return the ``xorb``, ``xorl``, or ``xorq`` mnemonic.
 
         Args:
-            assembly_type: Selects the 32-bit or 64-bit form.
+            assembly_type: Selects the 8-bit, 32-bit, or 64-bit form.
 
         Returns:
-            ``"xorl"`` for Longword, ``"xorq"`` for Quadword.
+            ``"xorb"`` for Byte, ``"xorl"`` for Longword, ``"xorq"`` for Quadword.
         """
+        if assembly_type == Byte():
+            return "xorb"
         return "xorl" if assembly_type == Longword() else "xorq"
 
 

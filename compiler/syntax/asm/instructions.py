@@ -30,7 +30,7 @@ from compiler.syntax.asm.operators import (
     Xor,
     XorDouble,
 )
-from compiler.syntax.asm.values import AssemblyType, Double, Longword
+from compiler.syntax.asm.values import AssemblyType, Byte, Double, Longword
 from compiler.utils.exceptions import CodeGenerationError
 
 
@@ -85,15 +85,20 @@ class Mov(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``movl``, ``movq``, or ``movsd`` instruction in AT&T syntax.
+        """Return a ``movb``, ``movl``, ``movq``, or ``movsd`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``  movl <src>, <dst>``, ``  movq <src>, <dst>``,
-            or ``  movsd <src>, <dst>``.
+            A string of the form ``  movb <src>, <dst>``, ``  movl <src>, <dst>``,
+            ``  movq <src>, <dst>``, or ``  movsd <src>, <dst>``.
         """
         if self.assembly_type == Double():
             return f"  movsd {self.src.emit()}, {self.dst.emit()}"
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  mov{suffix} {self.src.emit()}, {self.dst.emit()}"
 
 
@@ -104,20 +109,34 @@ class Movsx(Instruction):
     Always operates longword → quadword; no ``assembly_type`` field is needed.
 
     Attributes:
+        src_type: The type of the source operand.
+        dst_type: The type of the destination operand.
         src: The 32-bit (Longword) source operand.
         dst: The 64-bit (Quadword) destination operand (must be a register after fixup).
     """
 
+    src_type: AssemblyType
+    dst_type: AssemblyType
     src: Operand
     dst: Operand
 
     def emit(self) -> str:
-        """Return a ``movslq`` instruction in AT&T syntax.
+        """Return a sign-extending move instruction in AT&T syntax.
+
+        Selects the mnemonic based on ``src_type`` and ``dst_type``:
+
+        * ``Byte → Longword`` → ``movsbl``
+        * ``Byte → Quadword`` → ``movsbq``
+        * ``Longword → Quadword`` → ``movslq``
 
         Returns:
-            A string of the form ``  movslq <src>, <dst>``.
+            A string of the form ``  <mnemonic> <src>, <dst>``.
         """
-        return f"  movslq {self.src.emit()}, {self.dst.emit()}"
+        if self.src_type == Byte():
+            mnemonic = "movsbl" if self.dst_type == Longword() else "movsbq"
+        else:
+            mnemonic = "movslq"
+        return f"  {mnemonic} {self.src.emit()}, {self.dst.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,23 +147,35 @@ class MoveZeroExtend(Instruction):
     Always operates longword → quadword; no ``assembly_type`` field is needed.
 
     Attributes:
+        src_type: The type of the source operand
+        dst_type: The type of the destination operand
         src: The 32-bit (Longword) source operand.
         dst: The 64-bit (Quadword) destination operand (must be a register after fixup).
     """
 
+    src_type: AssemblyType
+    dst_type: AssemblyType
     src: Operand
     dst: Operand
 
     def emit(self) -> str:
-        """Return a ``movl`` instruction in AT&T syntax.
+        """Return a zero-extending move instruction in AT&T syntax.
 
-        Writing to a 32-bit register on x86-64 automatically zeroes the upper 32 bits of the
-        64-bit register, so a plain ``movl`` achieves zero-extension without a dedicated opcode.
+        Selects the mnemonic based on ``src_type`` and ``dst_type``:
+
+        * ``Byte → Longword`` → ``movzbl``
+        * ``Byte → Quadword`` → ``movzbq``
+        * ``Longword → Quadword`` → ``movl`` (writing to a 32-bit register automatically
+          zeroes the upper 32 bits of the 64-bit register on x86-64)
 
         Returns:
-            A string of the form ``  movl <src>, <dst>``.
+            A string of the form ``  <mnemonic> <src>, <dst>``.
         """
-        return f"  movl {self.src.emit()}, {self.dst.emit()}"
+        if self.src_type == Byte():
+            mnemonic = "movzbl" if self.dst_type == Longword() else "movzbq"
+        else:
+            mnemonic = "movl"
+        return f"  {mnemonic} {self.src.emit()}, {self.dst.emit()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,7 +300,12 @@ class Binary(Instruction):
         """
         match self.operator:
             case Add() | Sub() | Mult() | And() | Or() | Xor():
-                suffix = "l" if self.assembly_type == Longword() else "q"
+                if self.assembly_type == Byte():
+                    suffix = "b"
+                elif self.assembly_type == Longword():
+                    suffix = "l"
+                else:
+                    suffix = "q"
                 return "\n".join(
                     [
                         f"  mov{suffix} {self.src1.emit()}, {self.dst.emit()}",
@@ -330,12 +366,18 @@ class Idiv(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return an ``idivl`` or ``idivq`` instruction in AT&T syntax.
+        """Return an ``idivb``, ``idivl``, or ``idivq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  idivl <operand>"`` or ``"  idivq <operand>"``.
+            A string of the form ``"  idivb <operand>"``, ``"  idivl <operand>"``,
+            or ``"  idivq <operand>"``.
         """
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  idiv{suffix} {self.operand.emit()}"
 
 
@@ -359,12 +401,18 @@ class Div(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``divl`` or ``divq`` instruction in AT&T syntax.
+        """Return a ``divb``, ``divl``, or ``divq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  divl <operand>"`` or ``"  divq <operand>"``.
+            A string of the form ``"  divb <operand>"``, ``"  divl <operand>"``,
+            or ``"  divq <operand>"``.
         """
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  div{suffix} {self.operand.emit()}"
 
 
@@ -384,12 +432,18 @@ class Shl(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``shll`` or ``shlq`` instruction in AT&T syntax.
+        """Return a ``shlb``, ``shll``, or ``shlq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  shll %cl, <operand>"`` or ``"  shlq %cl, <operand>"``.
+            A string of the form ``"  shlb %cl, <operand>"``, ``"  shll %cl, <operand>"``,
+            or ``"  shlq %cl, <operand>"``.
         """
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  shl{suffix} %cl, {self.operand.emit()}"
 
 
@@ -409,12 +463,18 @@ class Sar(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``sarl`` or ``sarq`` instruction in AT&T syntax.
+        """Return a ``sarb``, ``sarl``, or ``sarq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  sarl %cl, <operand>"`` or ``"  sarq %cl, <operand>"``.
+            A string of the form ``"  sarb %cl, <operand>"``, ``"  sarl %cl, <operand>"``,
+            or ``"  sarq %cl, <operand>"``.
         """
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  sar{suffix} %cl, {self.operand.emit()}"
 
 
@@ -435,12 +495,18 @@ class Shr(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``shrl`` or ``shrq`` instruction in AT&T syntax.
+        """Return a ``shrb``, ``shrl``, or ``shrq`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  shrl %cl, <operand>"`` or ``"  shrq %cl, <operand>"``.
+            A string of the form ``"  shrb %cl, <operand>"``, ``"  shrl %cl, <operand>"``,
+            or ``"  shrq %cl, <operand>"``.
         """
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  shr{suffix} %cl, {self.operand.emit()}"
 
 
@@ -464,15 +530,20 @@ class Cmp(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``cmpl``, ``cmpq``, or ``ucomisd`` instruction in AT&T syntax.
+        """Return a ``cmpb``, ``cmpl``, ``cmpq``, or ``ucomisd`` instruction in AT&T syntax.
 
         Returns:
-            A string of the form ``"  cmpl <op1>, <op2>"``, ``"  cmpq <op1>, <op2>"``,
-            or ``"  ucomisd <op1>, <op2>"``.
+            A string of the form ``"  cmpb <op1>, <op2>"``, ``"  cmpl <op1>, <op2>"``,
+            ``"  cmpq <op1>, <op2>"``, or ``"  ucomisd <op1>, <op2>"``.
         """
         if self.assembly_type == Double():
             return f"  ucomisd {self.op1.emit()}, {self.op2.emit()}"
-        suffix = "l" if self.assembly_type == Longword() else "q"
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
         return f"  cmp{suffix} {self.op1.emit()}, {self.op2.emit()}"
 
 

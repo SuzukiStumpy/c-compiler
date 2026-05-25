@@ -120,6 +120,9 @@ from itertools import count
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.types.symbols import (
+    CharInit as SymCharInit,
+)
+from compiler.types.symbols import (
     ConstantAttr,
     Initial,
     LocalAttr,
@@ -141,7 +144,13 @@ from compiler.types.symbols import (
     LongInit as SymLongInit,
 )
 from compiler.types.symbols import (
+    StaticInit as SymStaticInit,
+)
+from compiler.types.symbols import (
     StringInit as SymStringInit,
+)
+from compiler.types.symbols import (
+    UCharInit as SymUCharInit,
 )
 from compiler.types.symbols import (
     ZeroInit as SymZeroInit,
@@ -179,21 +188,56 @@ def generate(program: ast.Program, symbol_table: SymbolTable) -> tac.Program:
     return tac.Program(top_level=tuple(static_vars) + tuple(functions))
 
 
-def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVariable]:
-    """Emit a ``tac.StaticVariable`` for every static-storage variable in the symbol table.
+def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
+    """Convert a symbol-table ``StaticInit`` to its TAC-layer equivalent.
+
+    Used when lowering ``ConstantAttr`` entries to ``tac.StaticConstant`` nodes.
+    ``CharInit`` and ``UCharInit`` are both mapped to ``tac.IntInit`` because the
+    TAC layer carries no byte-width init variant.
+
+    Args:
+        sym_init: A ``compiler.types.symbols.StaticInit`` instance.
+
+    Returns:
+        The corresponding ``tac.StaticInit`` node.
+
+    Raises:
+        CodeGenerationError: If the init variant has no TAC equivalent.
+    """
+    match sym_init:
+        case SymIntInit(value=v):
+            return tac.IntInit(v)
+        case SymLongInit(value=v):
+            return tac.LongInit(v)
+        case SymDoubleInit(value=v):
+            return tac.DoubleInit(v)
+        case SymCharInit(value=v) | SymUCharInit(value=v):
+            return tac.IntInit(v)
+        case SymZeroInit(bytes=n):
+            return tac.ZeroInit(n)
+        case SymStringInit(string=s, null_terminated=nt):
+            return tac.StringInit(s, nt)
+        case _:
+            raise CodeGenerationError(f"Cannot lower symbol StaticInit {sym_init!r} to TAC.")
+
+
+def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.TopLevel]:
+    """Emit TAC top-level nodes for every static-storage symbol in the symbol table.
 
     Walks all entries in ``symbol_table``.  Entries that carry a ``StaticAttr``
     with an ``Initial`` or ``Tentative`` initial value produce a
-    ``tac.StaticVariable``; entries with ``NoInitializer`` (non-defining
+    ``tac.StaticVariable``; ``ConstantAttr`` entries (compiler-generated
+    read-only constants such as string literals and double constants) produce a
+    ``tac.StaticConstant``; entries with ``NoInitializer`` (non-defining
     ``extern`` declarations) or ``FunAttr`` entries are silently skipped.
 
     Args:
         symbol_table: The symbol table returned by the semantic analysis stage.
 
     Returns:
-        A list of ``tac.StaticVariable`` nodes, in symbol-table insertion order.
+        A list of ``tac.TopLevel`` nodes, in symbol-table insertion order.
     """
-    result: list[tac.StaticVariable] = []
+    result: list[tac.TopLevel] = []
     for name, entry in symbol_table.items():
         is_double = isinstance(entry.t, ast.DoubleType)
         match entry.attrs:
@@ -206,6 +250,8 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
                             static_inits.append(tac.IntInit(v))
                         case SymLongInit(value=v):
                             static_inits.append(tac.LongInit(v))
+                        case SymCharInit(value=v) | SymUCharInit(value=v):
+                            static_inits.append(tac.IntInit(v))
                         case SymDoubleInit(value=v):
                             static_inits.append(tac.DoubleInit(v))
                         case SymZeroInit(bytes=n):
@@ -229,8 +275,8 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
                 )
             case StaticAttr(init=NoInitializer()):
                 pass
-            case ConstantAttr(init=SymStringInit(string=s, null_terminated=nt)):
-                result.append(tac.StaticConstant(name=name, t=entry.t, init=tac.StringInit(s, nt)))
+            case ConstantAttr(init=sym_init):
+                result.append(tac.StaticConstant(name=name, t=entry.t, init=_sym_const_init_to_tac(sym_init)))
             case _:
                 pass
     return result

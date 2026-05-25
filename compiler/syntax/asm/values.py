@@ -13,6 +13,11 @@ class AssemblyType(ABC):
 
 
 @dataclass(frozen=True, slots=True)
+class Byte(AssemblyType):
+    """8-bit integer assembly type (C ``char`` / ``signed char`` / ``unsigned char``)."""
+
+
+@dataclass(frozen=True, slots=True)
 class Longword(AssemblyType):
     """32-bit integer assembly type (C ``int`` / ``unsigned int``)."""
 

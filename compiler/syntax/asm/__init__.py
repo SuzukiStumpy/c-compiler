@@ -6,13 +6,13 @@ and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
     program             = Program(top_level*)
-    assembly_type       = Longword | Quadword | Double | ByteArray(int size, int alignment)
+    assembly_type       = Byte | Longword | Quadword | Double | ByteArray(int size, int alignment)
     top_level           = Function(identifier name, bool globl, instruction* instructions)
                         | StaticVariable(identifier name, bool globl, int init, int alignment, static_init* init_list)
                         | StaticConstant(identifier name, int alignment, static_init init)
     instruction         = Mov(assembly_type, operand src, operand dst)
-                        | Movsx(operand src, operand dst)
-                        | MoveZeroExtend(operand src, operand dst)
+                        | Movsx(assembly_type src_type, assembly_type dst_type, operand src, operand dst)
+                        | MoveZeroExtend(assembly_type src_type, assembly_type, dst_type, operand src, operand dst)
                         | Unary(unary_operator, assembly_type, operand)
                         | Binary(binary_operator, assembly_type, operand src1, operand src2, operand dst)
                         | Cmp(assembly_type, operand, operand)
@@ -131,6 +131,7 @@ from compiler.syntax.asm.operators import (
 )
 from compiler.syntax.asm.values import (
     AssemblyType,
+    Byte,
     ByteArray,
     Double,
     DoubleInit,
@@ -208,6 +209,7 @@ __all__ = [
     "TopLevel",
     # values
     "AssemblyType",
+    "Byte",
     "ByteArray",
     "Double",
     "DoubleInit",
