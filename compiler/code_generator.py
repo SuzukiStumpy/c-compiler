@@ -57,7 +57,18 @@ import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.syntax.ast.constants import ConstDouble, ConstInt, ConstLong, ConstUInt, ConstULong
 from compiler.syntax.ast.types import Array as ArrayType
-from compiler.syntax.ast.types import DoubleType, IntType, LongType, Pointer, Type, UIntType, ULongType
+from compiler.syntax.ast.types import (
+    Char,
+    DoubleType,
+    IntType,
+    LongType,
+    Pointer,
+    SChar,
+    Type,
+    UChar,
+    UIntType,
+    ULongType,
+)
 from compiler.types.symbols import FunAttr, StaticAttr, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -237,6 +248,8 @@ def _type_size(t: Type) -> int:
         4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``/``double``/pointer;
         element_size * count for arrays.
     """
+    if isinstance(t, (Char, SChar, UChar)):
+        return 1
     if isinstance(t, (IntType, UIntType)):
         return 4
     if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):

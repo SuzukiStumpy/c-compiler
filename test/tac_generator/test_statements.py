@@ -599,3 +599,107 @@ class TestTacGeneratorCompoundStatement:
 
         with pytest.raises(CodeGenerationError):
             _stmt_instrs(ast.Compound(body=(_FakeItem(),)))
+
+
+# ---------------------------------------------------------------------------
+# String-literal initialisation for automatic char arrays
+# ---------------------------------------------------------------------------
+
+
+def _string_init_decl(name: str, string: bytes, array_size: int) -> ast.D:
+    """Build a block item for ``char <name>[<array_size>] = <string>;``.
+
+    Args:
+        name: Variable name to use in the declaration.
+        string: Raw byte content of the string literal (NUL terminator not included).
+        array_size: Declared size of the char array.
+
+    Returns:
+        A ``D`` block item wrapping a ``VarDecl`` / ``VariableDeclaration`` with a
+        ``SingleInit(String(...))`` initialiser.
+    """
+    array_type = ast.Array(element=ast.Char(), size=array_size)
+    return ast.D(
+        declaration=ast.VarDecl(
+            variable_declaration=ast.VariableDeclaration(
+                name=name,
+                init=ast.SingleInit(ast.String(string, exp_type=array_type)),
+                var_type=array_type,
+            )
+        )
+    )
+
+
+class TestTacGeneratorStringInit:
+    """String-literal initialisers for automatic ``char`` arrays emit packed ``CopyToOffset`` instructions."""
+
+    def test_four_byte_array_emits_single_const_int(self) -> None:
+        """``char arr[4] = "hi"`` → one ``ConstInt`` covering all 4 bytes (string + NUL + pad)."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"hi", 4),))
+        expected_val = int.from_bytes(b"hi\x00\x00", "little")
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstInt(expected_val)), dst="arr", offset=0),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )
+
+    def test_six_byte_array_emits_int_then_two_chars(self) -> None:
+        """``char arr[6] = "hello"`` → ``ConstInt`` for first 4 bytes, ``ConstChar`` for 'o' and NUL."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"hello", 6),))
+        expected_int = int.from_bytes(b"hell", "little")
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstInt(expected_int)), dst="arr", offset=0),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstChar(ord("o"))), dst="arr", offset=4),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstChar(0)), dst="arr", offset=5),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )
+
+    def test_exact_fit_no_nul_terminator(self) -> None:
+        """``char arr[5] = "hello"`` (array exactly fits string, no NUL) → ``ConstInt`` + ``ConstChar``."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"hello", 5),))
+        expected_int = int.from_bytes(b"hell", "little")
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstInt(expected_int)), dst="arr", offset=0),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstChar(ord("o"))), dst="arr", offset=4),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )
+
+    def test_empty_string_in_one_byte_array(self) -> None:
+        """``char arr[1] = ""`` → single ``ConstChar(0)`` for the NUL terminator."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"", 1),))
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstChar(0)), dst="arr", offset=0),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )
+
+    def test_sixteen_byte_array_emits_two_const_longs(self) -> None:
+        """``char arr[16] = "hello, world!!!"`` → two ``ConstLong`` covering 8 bytes each."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"hello, world!!!", 16),))
+        lo = int.from_bytes(b"hello, w", "little")
+        hi = int.from_bytes(b"orld!!!\x00", "little")
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstLong(lo)), dst="arr", offset=0),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstLong(hi)), dst="arr", offset=8),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )
+
+    def test_nine_byte_exact_fit_emits_long_then_char(self) -> None:
+        """``char arr[9] = "abcdefghi"`` (exact fit) → ``ConstLong`` for first 8 bytes + ``ConstChar``."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"abcdefghi", 9),))
+        expected_long = int.from_bytes(b"abcdefgh", "little")
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstLong(expected_long)), dst="arr", offset=0),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstChar(ord("i"))), dst="arr", offset=8),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )
+
+    def test_thirteen_byte_exact_fit_emits_long_int_char(self) -> None:
+        """13-byte exact-fit string → ``ConstLong`` (8) + ``ConstInt`` (4) + ``ConstChar`` (1)."""
+        instrs = _instrs_for_body((_string_init_decl("arr", b"hello world!!", 13),))
+        expected_long = int.from_bytes(b"hello wo", "little")
+        expected_int = int.from_bytes(b"rld!", "little")
+        assert instrs == (
+            tac.CopyToOffset(src=tac.Constant(ast.ConstLong(expected_long)), dst="arr", offset=0),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstInt(expected_int)), dst="arr", offset=8),
+            tac.CopyToOffset(src=tac.Constant(ast.ConstChar(ord("!"))), dst="arr", offset=12),
+            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
+        )

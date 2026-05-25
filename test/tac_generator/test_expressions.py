@@ -698,3 +698,83 @@ class TestTacGeneratorConditionalExpression:
         label_names = [i.name for i in instrs if isinstance(i, tac.Label)]
         assert len(label_names) == len(set(label_names))
         assert len(label_names) == 4  # two labels per ternary
+
+
+# ---------------------------------------------------------------------------
+# String literal expressions (AddrOf(String(...)))
+# ---------------------------------------------------------------------------
+
+
+class TestTacGeneratorStringLiteralExpression:
+    """String literals in expression context generate a ``StaticConstant`` and a ``GetAddress`` instruction."""
+
+    def _string_as_expr(self, s: bytes) -> ast.AddrOf:
+        """Build a type-annotated ``AddrOf(String(...))`` as produced by the type-checker.
+
+        Args:
+            s: Raw byte content of the string (NUL not included).
+
+        Returns:
+            An ``AddrOf`` node wrapping a ``String`` with array type, itself typed as
+            ``Pointer(Char())``.
+        """
+        array_type = ast.Array(element=ast.Char(), size=len(s) + 1)
+        return ast.AddrOf(
+            exp=ast.String(s, exp_type=array_type),
+            exp_type=ast.Pointer(ast.Char()),
+        )
+
+    def test_string_literal_emits_static_constant(self) -> None:
+        """A string literal expression creates one ``StaticConstant`` in the program's top level."""
+        sym: dict = {}
+        prog = generate(_program_returning(self._string_as_expr(b"hello")), sym)
+        static_consts = [t for t in prog.top_level if isinstance(t, tac.StaticConstant)]
+        assert len(static_consts) == 1
+        assert static_consts[0].init == tac.StringInit(b"hello", True)
+
+    def test_string_literal_static_constant_has_correct_type(self) -> None:
+        """The ``StaticConstant`` for a string has type ``Array(Char(), len+1)``."""
+        sym: dict = {}
+        prog = generate(_program_returning(self._string_as_expr(b"hi")), sym)
+        static_consts = [t for t in prog.top_level if isinstance(t, tac.StaticConstant)]
+        assert static_consts[0].t == ast.Array(element=ast.Char(), size=3)
+
+    def test_string_literal_emits_get_address(self) -> None:
+        """A string literal expression emits a ``GetAddress`` instruction in the function body."""
+        sym: dict = {}
+        prog = generate(_program_returning(self._string_as_expr(b"hello")), sym)
+        static_consts = [t for t in prog.top_level if isinstance(t, tac.StaticConstant)]
+        fn_body = prog.functions[0].body
+        get_addr = fn_body[0]
+        assert isinstance(get_addr, tac.GetAddress)
+        assert get_addr.src == tac.Var(static_consts[0].name)
+
+    def test_string_literal_return_value_is_get_address_destination(self) -> None:
+        """The ``Return`` instruction uses the temporary written by ``GetAddress``."""
+        sym: dict = {}
+        prog = generate(_program_returning(self._string_as_expr(b"hello")), sym)
+        fn_body = prog.functions[0].body
+        get_addr = fn_body[0]
+        ret = fn_body[1]
+        assert isinstance(get_addr, tac.GetAddress)
+        assert isinstance(ret, tac.Return)
+        assert ret.val == get_addr.dst
+
+    def test_two_distinct_string_literals_create_two_static_constants(self) -> None:
+        """Two different string literal expressions each get their own ``StaticConstant``."""
+        sym: dict = {}
+        prog = generate(
+            _program_returning(
+                ast.Conditional(
+                    condition=ast.Constant(ast.ConstInt(1)),
+                    exp_true=self._string_as_expr(b"foo"),
+                    exp_false=self._string_as_expr(b"bar"),
+                )
+            ),
+            sym,
+        )
+        static_consts = [t for t in prog.top_level if isinstance(t, tac.StaticConstant)]
+        assert len(static_consts) == 2
+        inits = {c.init for c in static_consts}
+        assert tac.StringInit(b"foo", True) in inits
+        assert tac.StringInit(b"bar", True) in inits

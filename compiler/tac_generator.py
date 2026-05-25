@@ -21,6 +21,10 @@ The translation follows this mapping:
     ast.CompoundInit({e0,e1,...})         → [CopyToOffset(v0, name, 0),
                                              CopyToOffset(v1, name, sizeof(e0)),
                                              CopyToOffset(v2, name, sizeof(e0)+sizeof(e1)), ...]
+    ast.SingleInit(String(s))             → [CopyToOffset(ConstLong(le8), name, 0), ...
+      [auto char array]                      CopyToOffset(ConstInt(le4), name, n), ...
+                                             CopyToOffset(ConstChar(b), name, m), ...]
+                                            (greedy packing, little-endian, NUL+zero-pad if len<size)
     ast.Return(exp)                       → <emit(exp)> + [tac.Return(result_val)]
     ast.Constant(v)                       → tac.Constant(v)   (no extra instructions)
     ast.Unary(op, inner)                  → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
@@ -43,6 +47,9 @@ The translation follows this mapping:
                                                Copy(1, tmp), Jump(end_lbl),
                                                false_lbl, Copy(0, tmp), end_lbl]
                                             returns tmp as the result val
+    ast.AddrOf(String(s))                 → sym[".Lstr.N"] = ConstantAttr(StringInit(s, True))
+                                            + [GetAddress(Var(".Lstr.N"), tmp)]
+                                            returns tmp (pointer-to-char-typed)
     ast.AddrOf(Dereference(inner))        → <emit(inner)>   (&* cancels out)
     ast.AddrOf(Subscript(ptr, idx))       → <ptr+idx AddPtr, no Load>  (&arr[i] ≡ arr+i)
     ast.AddrOf(Var(name))                 → [GetAddress(Var(name), tmp)]
@@ -113,9 +120,7 @@ from itertools import count
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.types.symbols import (
-    DoubleInit as SymDoubleInit,
-)
-from compiler.types.symbols import (
+    ConstantAttr,
     Initial,
     LocalAttr,
     NoInitializer,
@@ -127,10 +132,16 @@ from compiler.types.symbols import (
     ULongInit,
 )
 from compiler.types.symbols import (
+    DoubleInit as SymDoubleInit,
+)
+from compiler.types.symbols import (
     IntInit as SymIntInit,
 )
 from compiler.types.symbols import (
     LongInit as SymLongInit,
+)
+from compiler.types.symbols import (
+    StringInit as SymStringInit,
 )
 from compiler.types.symbols import (
     ZeroInit as SymZeroInit,
@@ -218,6 +229,8 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.StaticVaria
                 )
             case StaticAttr(init=NoInitializer()):
                 pass
+            case ConstantAttr(init=SymStringInit(string=s, null_terminated=nt)):
+                result.append(tac.StaticConstant(name=name, t=entry.t, init=tac.StringInit(s, nt)))
             case _:
                 pass
     return result
@@ -304,11 +317,14 @@ def _type_size(t: ast.Type) -> int:
         t: The C type whose size is required.
 
     Returns:
-        4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``/any pointer type.
+        1 for ``char``/``signed char``/``unsigned char``; 4 for ``int``/``unsigned int``;
+        8 for ``long``/``unsigned long``/any pointer type.
 
     Raises:
         CodeGenerationError: If the type is not a scalar integer or pointer type.
     """
+    if isinstance(t, (ast.Char, ast.SChar, ast.UChar)):
+        return 1
     if isinstance(t, (ast.IntType, ast.UIntType)):
         return 4
     if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer, ast.DoubleType)):
@@ -327,15 +343,15 @@ def _is_signed(t: ast.Type) -> bool:
         t: The C type to inspect.
 
     Returns:
-        ``True`` for ``int`` and ``long``; ``False`` for ``unsigned int``, ``unsigned long``,
-        and any pointer type.
+        ``True`` for ``int``, ``long``, ``char``, and ``signed char``; ``False`` for
+        ``unsigned int``, ``unsigned long``, ``unsigned char``, and any pointer type.
 
     Raises:
         CodeGenerationError: If the type is not a scalar integer or pointer type.
     """
-    if isinstance(t, (ast.IntType, ast.LongType)):
+    if isinstance(t, (ast.IntType, ast.LongType, ast.Char, ast.SChar)):
         return True
-    if isinstance(t, (ast.UIntType, ast.ULongType, ast.Pointer)):
+    if isinstance(t, (ast.UIntType, ast.ULongType, ast.Pointer, ast.UChar)):
         return False
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 
@@ -389,6 +405,19 @@ class _TacGenerator:
             A ``tac.Label`` named ``<base>.<n>`` where ``n`` is the next counter value.
         """
         return tac.Label(name=f"{base}.{next(self._label_counter)}")
+
+    def _make_string_name(self) -> str:
+        """Generate a unique name for a hidden string-literal constant.
+
+        Produces identifiers of the form ``.Lstr.<n>``, mirroring the naming convention
+        used by the semantic analysis stage.  Uses ``_counter`` to guarantee uniqueness
+        across temporaries and string names within the translation unit.
+
+        Returns:
+            A string of the form ``".Lstr.<n>"`` where ``n`` is the next value drawn from
+            ``_counter``.
+        """
+        return f".Lstr.{next(self._counter)}"
 
     def translate_function(self, function: ast.Function) -> tac.Function:
         """Translate an AST ``Function`` into a TAC ``Function``.
@@ -459,6 +488,8 @@ class _TacGenerator:
                 if init is None:
                     return []
                 match init:
+                    case ast.SingleInit(exp=ast.String(string=s, exp_type=ast.Array(size=array_size))):
+                        return self._translate_string_init(name, s, array_size)
                     case ast.SingleInit(exp=e):
                         val, instrs = self.translate_exp(e)
                         return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
@@ -514,6 +545,8 @@ class _TacGenerator:
             instructions: The instruction list to which new instructions are appended in-place.
         """
         match init:
+            case ast.SingleInit(exp=ast.String(string=s, exp_type=ast.Array(size=array_size))):
+                instructions.extend(self._translate_string_init(var_name, s, array_size, base_offset=byte_offset))
             case ast.SingleInit(exp=e):
                 val, elem_instrs = self.translate_exp(e)
                 instructions.extend(elem_instrs)
@@ -540,6 +573,70 @@ class _TacGenerator:
         """
         instructions: list[tac.Instruction] = []
         self._emit_copy_to_offset(name, 0, init, instructions)
+        return instructions
+
+    def _translate_string_init(
+        self, var_name: str, string: bytes, array_size: int, base_offset: int = 0
+    ) -> list[tac.Instruction]:
+        """Emit ``CopyToOffset`` instructions to initialise a local char array from a string literal.
+
+        Bytes are packed greedily into the largest available constant type to minimise the number
+        of instructions: 8-byte aligned chunks become ``ConstLong``, 4-byte chunks become
+        ``ConstInt``, and individual bytes become ``ConstChar``.  Multi-byte values are packed
+        in little-endian order to match the x86-64 C ABI.
+
+        When ``len(string) < array_size``, a NUL terminator and zero padding are appended to fill
+        the array.  When ``len(string) == array_size``, the bytes are written as-is with no NUL
+        (C11 §6.7.9p15 — the NUL is omitted when the array is exactly the string length).
+
+        Args:
+            var_name: Resolved name of the local array variable (e.g. ``".Varr.0"``).
+            string: Raw byte content of the string literal, NUL terminator not included.
+            array_size: Declared size of the target character array in bytes.
+            base_offset: Byte offset from ``var_name``'s base to start writing at.  Defaults to
+                0 for top-level array declarations; set to the element's byte position when
+                initialising a sub-array inside a ``CompoundInit``.
+
+        Returns:
+            A list of ``CopyToOffset`` instructions that write the string content into the array,
+            using as few instructions as possible.
+        """
+        if len(string) < array_size:
+            full = string + b"\x00" * (array_size - len(string))
+        else:
+            full = string
+
+        instructions: list[tac.Instruction] = []
+        rel_offset = 0
+        remaining = array_size
+
+        while remaining >= 8:
+            val = int.from_bytes(full[rel_offset : rel_offset + 8], byteorder="little")
+            instructions.append(
+                tac.CopyToOffset(src=tac.Constant(ast.ConstLong(val)), dst=var_name, offset=base_offset + rel_offset)
+            )
+            rel_offset += 8
+            remaining -= 8
+
+        if remaining >= 4:
+            val = int.from_bytes(full[rel_offset : rel_offset + 4], byteorder="little")
+            instructions.append(
+                tac.CopyToOffset(src=tac.Constant(ast.ConstInt(val)), dst=var_name, offset=base_offset + rel_offset)
+            )
+            rel_offset += 4
+            remaining -= 4
+
+        while remaining > 0:
+            instructions.append(
+                tac.CopyToOffset(
+                    src=tac.Constant(ast.ConstChar(full[rel_offset])),
+                    dst=var_name,
+                    offset=base_offset + rel_offset,
+                )
+            )
+            rel_offset += 1
+            remaining -= 1
+
         return instructions
 
     def translate_statement(self, stmt: ast.Statement) -> list[tac.Instruction]:  # noqa: C901 - suppress function too complicated
@@ -1060,6 +1157,14 @@ class _TacGenerator:
                 scale = _type_size(ptr_node.exp_type.referenced)
                 dst = self._make_temp(exp.exp_type or ptr_node.exp_type)
                 return dst, [*ptr_instrs, *int_instrs, tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=dst)]
+            case ast.AddrOf(exp=ast.String(string=s)):
+                str_name = self._make_string_name()
+                self._symbol_table[str_name] = SymbolTableEntry(
+                    t=ast.Array(element=ast.Char(), size=len(s) + 1),
+                    attrs=ConstantAttr(SymStringInit(s, True)),
+                )
+                dst = self._make_temp(exp.exp_type or ast.Pointer(ast.Char()))
+                return dst, [tac.GetAddress(src=tac.Var(value=str_name), dst=dst)]
             case ast.AddrOf(exp=ast.Dereference(exp=inner)):
                 return self.translate_exp(inner)
             case ast.AddrOf(exp=ast.Var(name=name)):

@@ -60,6 +60,21 @@ class StaticVariable(TopLevel):
 
 
 @dataclass(frozen=True, slots=True)
+class StaticConstant(TopLevel):
+    """A globally defined static constant declaration.
+
+    Attributes:
+        name: The symbol representing the constant.
+        t: The type of the constant
+        init: The value of the constant
+    """
+
+    name: str
+    t: Type
+    init: StaticInit
+
+
+@dataclass(frozen=True, slots=True)
 class Program:
     """A tac program definition.
 

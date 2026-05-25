@@ -7,6 +7,7 @@ mirrors the ASDL grammar for the supported assembly subset:
     program             = Program(top_level*)
     top_level           = Function(identifier, bool global, identifier* params, instruction* body)
                         | StaticVariable(identifier, bool global, type t,static_init* init)
+                        | StaticConstant(identifier, type t, static_init init)
     instruction         = Return(val)
                         | SignExtend(val src, val dst)
                         | Truncate(val src, val dst)
@@ -54,7 +55,7 @@ variant is a concrete frozen dataclass subclassing the appropriate base.  All
 nodes are immutable - once constructed a tac AST node cannot be modified.
 """
 
-from compiler.syntax.tac.declarations import Function, Program, StaticVariable, TopLevel
+from compiler.syntax.tac.declarations import Function, Program, StaticConstant, StaticVariable, TopLevel
 from compiler.syntax.tac.instructions import (
     AddPtr,
     Binary,
@@ -116,6 +117,7 @@ from compiler.syntax.tac.values import (
 )
 
 __all__ = [
+    "StaticConstant",
     "AddPtr",
     "CopyToOffset",
     "DoubleToInt",
