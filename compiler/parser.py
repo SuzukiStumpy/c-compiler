@@ -1659,8 +1659,9 @@ class Parser:
         """Parse a single array dimension from a ``[`` ``]`` declarator suffix.
 
         Expects the opening ``[`` to have been consumed already.  Reads an
-        integer constant (plain, ``l``/``L``, ``u``/``U``, or ``ul``/``UL``
-        suffix) and leaves the stream positioned at the closing ``]``, which
+        integer constant (plain, ``l``/``L``, ``u``/``U``, ``ul``/``UL``
+        suffix, or a character literal) and leaves the stream positioned at
+        the closing ``]``, which
         the caller must consume via ``_expect``.
 
         Returns:
@@ -1681,6 +1682,9 @@ class Parser:
                 val = int(tok.value.rstrip("uU"))
             case TokenType.ULONG:
                 val = int(tok.value.rstrip("uUlL"))
+            case TokenType.CONSTCHAR:
+                inner = tok.value[1:-1]
+                val = self._ESCAPE_VALUES[inner[1]] if inner.startswith("\\") else ord(inner)
             case _:
                 raise self._token_error("Array size must be an integer constant", tok)
         self._consume()
