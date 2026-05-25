@@ -76,6 +76,8 @@ class Pointer(Type):
         referenced: The type of the object the pointer references
     """
 
+    referenced: Type
+
 
 @dataclass(frozen=True, slots=True)
 class Char(Type):
