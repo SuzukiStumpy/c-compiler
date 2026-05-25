@@ -24,7 +24,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     variable_declaration = (identifier name, initializer? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
     initializer          = SingleInit(exp) | CompoundInit(intializer*)
-    type                 = Int | Long | UInt | ULong | Double
+    type                 = Int | Long | UInt | ULong | Double | Char | SChar | UChar
                          | FunType(type* params, type ret)
                          | Pointer(type referenced)
                          | Array(type element, int size)
@@ -32,6 +32,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
     exp                  = Constant(const)
+                         | String(string)
                          | Var(identifier)
                          | Cast(type target_type, exp)
                          | Unary(unary_operator, exp)
@@ -90,7 +91,16 @@ dataclass subclassing the appropriate base. All nodes are immutable — once
 constructed an AST node cannot be modified.
 """
 
-from compiler.syntax.ast.constants import Const, ConstDouble, ConstInt, ConstLong, ConstUInt, ConstULong
+from compiler.syntax.ast.constants import (
+    Const,
+    ConstChar,
+    ConstDouble,
+    ConstInt,
+    ConstLong,
+    ConstUChar,
+    ConstUInt,
+    ConstULong,
+)
 from compiler.syntax.ast.declarations import (
     Block,
     BlockItem,
@@ -123,6 +133,7 @@ from compiler.syntax.ast.expressions import (
     FunctionCall,
     Initializer,
     SingleInit,
+    String,
     Subscript,
     Unary,
     Var,
@@ -175,18 +186,27 @@ from compiler.syntax.ast.statements import (
 )
 from compiler.syntax.ast.types import (
     Array,
+    Char,
     DoubleType,
     FunType,
     IntType,
     Linkage,
     LongType,
     Pointer,
+    SChar,
     Type,
+    UChar,
     UIntType,
     ULongType,
 )
 
 __all__ = [
+    "String",
+    "ConstChar",
+    "ConstUChar",
+    "Char",
+    "SChar",
+    "UChar",
     "Subscript",
     "Array",
     "Initializer",

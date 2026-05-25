@@ -69,6 +69,42 @@ class DoubleType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class Pointer(Type):
+    """Represents a pointer within the C code
+
+    Attributes:
+        referenced: The type of the object the pointer references
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class Char(Type):
+    """Represents a character within the C code
+
+    Used whenever ``char`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class UChar(Type):
+    """Represents an unsigned character within the C code
+
+    Used whenever ``unsigned char`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class SChar(Type):
+    """Represents a signed character within the C code
+
+    Used whenever ``signed char`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class FunType(Type):
     """Represents the type signature of a function definition.
 
@@ -79,17 +115,6 @@ class FunType(Type):
 
     params: tuple[Type, ...]
     ret: Type
-
-
-@dataclass(frozen=True, slots=True)
-class Pointer(Type):
-    """Represents a pointer within the C code
-
-    Attributes:
-        referenced: The type of the object the pointer references
-    """
-
-    referenced: Type
 
 
 @dataclass(frozen=True, slots=True)

@@ -179,6 +179,18 @@ class Subscript(Exp):
     exp2: Exp
 
 
+@dataclass(frozen=True, slots=True)
+class String(Exp):
+    """Represents a string literal within the C code of the for:
+    ```"hello world!"```
+
+    Attributes:
+        string: The string that this literal represents
+    """
+
+    string: str
+
+
 class Initializer(ABC):
     """Abstract base for initializer objects.  Wraps the SingleInit and CompoundInit
     AST Nodes
