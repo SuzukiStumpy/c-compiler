@@ -54,6 +54,19 @@ class StaticInit(ABC):
 
 
 @dataclass(frozen=True, slots=True)
+class CharInit(StaticInit):
+    """Initialiser for a static variable of C ``char``, ``signed char``, or ``unsigned char`` type.
+
+    Emits a single byte (``.byte v``) in the data segment.
+
+    Attributes:
+        value: The initial byte value, as a plain Python int.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
 class IntInit(StaticInit):
     """Initialiser for a static variable of C ``int`` type.
 

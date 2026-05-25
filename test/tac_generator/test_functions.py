@@ -229,7 +229,7 @@ class TestTacGeneratorFunctionCall:
         """The return value of a call is stored in a temporary that is then returned."""
         instrs = _body(ast.FunctionCall(callee=ast.Var("foo"), args=[]))
         funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
-        ret = instrs[-2]  # penultimate; last is the function guard
+        ret = instrs[-1]
         assert isinstance(ret, tac.Return)
         assert ret.val == funcall.dst
 

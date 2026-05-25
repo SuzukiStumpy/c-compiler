@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from compiler.syntax.asm.instructions import Instruction
 from compiler.syntax.asm.operands import Operand
-from compiler.syntax.asm.values import DoubleInit, IntInit, LongInit, StaticInit, ZeroInit
+from compiler.syntax.asm.values import CharInit, DoubleInit, IntInit, LongInit, StaticInit, StringInit, ZeroInit
 
 
 class TopLevel(ABC):
@@ -116,7 +116,8 @@ class StaticVariable(TopLevel):
             lines.append(f"   .globl {self.identifier}")
 
         in_bss = all(
-            isinstance(i, ZeroInit) or (isinstance(i, (IntInit, LongInit)) and i.value == 0) for i in self.init
+            isinstance(i, ZeroInit) or (isinstance(i, (CharInit, IntInit, LongInit)) and i.value == 0)
+            for i in self.init
         )
         lines.append("   .bss" if in_bss else "   .data")
         lines.append(f"   .balign {self.alignment}")
@@ -124,6 +125,8 @@ class StaticVariable(TopLevel):
 
         for init in self.init:
             match init:
+                case CharInit(value=v):
+                    lines.append(f"   .byte {v}")
                 case ZeroInit(bytes=n):
                     lines.append(f"   .zero {n}")
                 case IntInit(value=0):
@@ -138,6 +141,9 @@ class StaticVariable(TopLevel):
                     lines.append("   .zero 8")
                 case DoubleInit() as d:
                     lines.append(f"   .quad {d.as_bits()}")
+                case StringInit(string=s, null_terminated=nt):
+                    data = list(s) + ([0] if nt else [])
+                    lines.append(f"   .byte {', '.join(str(b) for b in data)}")
 
         return "\n".join(lines)
 
@@ -150,16 +156,20 @@ class StaticConstant(TopLevel):
         identifier: The name associated with the value
         alignment: The number of bytes to align the value to in memory
         init: The value of the constant to set
+        section: The assembler section directive body (platform-specific).
+            Defaults to ``.rodata`` (Linux/ELF); the emitter replaces this with
+            ``__TEXT,__const`` on macOS before calling ``emit()``.
     """
 
     identifier: str
     alignment: int
     init: StaticInit
+    section: str = ".rodata"
 
     def emit(self) -> str:
         """Return the assembly text for the constant definition.
 
-        Constants are placed in ``.rodata`` (read-only data).  Double values are
+        Constants are placed in the section named by ``self.section``.  Double values are
         emitted as their raw IEEE 754 bit pattern via ``.quad`` to guarantee
         exact bit-level fidelity.
 
@@ -168,7 +178,7 @@ class StaticConstant(TopLevel):
             directive, label, and data directive.
         """
         lines = [
-            "   .section .rodata",
+            f"   .section {self.section}",
             f"   .balign {self.alignment}",
             f"{self.identifier}:",
         ]
@@ -179,6 +189,9 @@ class StaticConstant(TopLevel):
                 lines.append(f"   .long {v}")
             case LongInit(value=v):
                 lines.append(f"   .quad {v}")
+            case StringInit(string=s, null_terminated=nt):
+                data = list(s) + ([0] if nt else [])
+                lines.append(f"   .byte {', '.join(str(b) for b in data)}")
         return "\n".join(lines)
 
 

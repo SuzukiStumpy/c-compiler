@@ -17,20 +17,16 @@ class TestTacGeneratorExistingConstructs:
     """Constant and unary constructs continue to translate correctly."""
 
     def test_constant_produces_only_return(self) -> None:
-        """``return 42;`` → ``Return(Constant(42))`` then the function guard."""
+        """``return 42;`` → ``Return(Constant(42))`` with no guard (already returns)."""
         instrs = _body(ast.Constant(value=ast.ConstInt(42)))
-        assert instrs == (
-            tac.Return(val=tac.Constant(value=ast.ConstInt(42))),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
-        )
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(42))),)
 
     def test_unary_negate_produces_unary_then_return(self) -> None:
-        """``return -1;`` → ``Unary(Negate, Constant(1), tmp.0)`` + ``Return(tmp.0)`` + guard."""
+        """``return -1;`` → ``Unary(Negate, Constant(1), tmp.0)`` + ``Return(tmp.0)``."""
         instrs = _body(ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1))))
         assert instrs == (
             tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ast.ConstInt(1)), dst=tac.Var(value="tmp.0")),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
 
@@ -78,7 +74,7 @@ class TestTacGeneratorBinaryInstructions:
     """Binary expressions produce the correct instruction sequence and operands."""
 
     def test_two_constants_produce_binary_then_return(self) -> None:
-        """``return 1 + 2;`` → ``Binary(Add, Constant(1), Constant(2), tmp.0)`` + ``Return(tmp.0)`` + guard."""
+        """``return 1 + 2;`` → ``Binary(Add, Constant(1), Constant(2), tmp.0)`` + ``Return(tmp.0)``."""
         instrs = _body(
             ast.Binary(
                 operator=ast.Add(), left=ast.Constant(value=ast.ConstInt(1)), right=ast.Constant(value=ast.ConstInt(2))
@@ -92,7 +88,6 @@ class TestTacGeneratorBinaryInstructions:
                 dst=tac.Var(value="tmp.0"),
             ),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_binary_result_is_returned(self) -> None:
@@ -149,8 +144,8 @@ class TestTacGeneratorInstructionOrdering:
             right=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(2))),
         )
         instrs = _body(exp)
-        # Unary(Negate, 1, tmp.0), Unary(Negate, 2, tmp.1), Binary(Add, tmp.0, tmp.1, tmp.2), Return(tmp.2), guard
-        assert len(instrs) == 5
+        # Unary(Negate, 1, tmp.0), Unary(Negate, 2, tmp.1), Binary(Add, tmp.0, tmp.1, tmp.2), Return(tmp.2)
+        assert len(instrs) == 4
         assert instrs[0] == tac.Unary(
             operator=tac.Negate(), src=tac.Constant(value=ast.ConstInt(1)), dst=tac.Var(value="tmp.0")
         )
@@ -177,8 +172,8 @@ class TestTacGeneratorInstructionOrdering:
             ),
         )
         instrs = _body(exp)
-        # Binary(Multiply, 2, 3, tmp.0), Binary(Add, 1, tmp.0, tmp.1), Return(tmp.1), guard
-        assert len(instrs) == 4
+        # Binary(Multiply, 2, 3, tmp.0), Binary(Add, 1, tmp.0, tmp.1), Return(tmp.1)
+        assert len(instrs) == 3
         assert instrs[0] == tac.Binary(
             operator=tac.Multiply(),
             src1=tac.Constant(value=ast.ConstInt(2)),
@@ -295,7 +290,7 @@ class TestTacGeneratorAndExpression:
     """``ast.And`` produces a short-circuit JumpIfZero sequence."""
 
     def test_full_instruction_sequence(self) -> None:
-        """``return 1 && 2;`` emits the full short-circuit sequence followed by the guard."""
+        """``return 1 && 2;`` emits the full short-circuit sequence."""
         instrs = _body(
             ast.Binary(
                 operator=ast.And(), left=ast.Constant(value=ast.ConstInt(1)), right=ast.Constant(value=ast.ConstInt(2))
@@ -310,7 +305,6 @@ class TestTacGeneratorAndExpression:
             tac.Copy(src=tac.Constant(value=ast.ConstInt(0)), dst=tac.Var(value="tmp.0")),
             tac.Label(name="and_end.1"),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_right_operand_instructions_appear_after_first_jump(self) -> None:
@@ -333,7 +327,7 @@ class TestTacGeneratorAndExpression:
                 operator=ast.And(), left=ast.Constant(value=ast.ConstInt(1)), right=ast.Constant(value=ast.ConstInt(2))
             )
         )
-        ret = instrs[-2]
+        ret = instrs[-1]
         assert isinstance(ret, tac.Return)
         assert ret.val == tac.Var(value="tmp.0")
 
@@ -361,7 +355,7 @@ class TestTacGeneratorOrExpression:
     """``ast.Or`` produces a short-circuit JumpIfNotZero sequence."""
 
     def test_full_instruction_sequence(self) -> None:
-        """``return 1 || 2;`` emits the full short-circuit sequence followed by the guard."""
+        """``return 1 || 2;`` emits the full short-circuit sequence."""
         instrs = _body(
             ast.Binary(
                 operator=ast.Or(), left=ast.Constant(value=ast.ConstInt(1)), right=ast.Constant(value=ast.ConstInt(2))
@@ -376,7 +370,6 @@ class TestTacGeneratorOrExpression:
             tac.Copy(src=tac.Constant(value=ast.ConstInt(1)), dst=tac.Var(value="tmp.0")),
             tac.Label(name="or_end.1"),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_right_operand_instructions_appear_after_first_jump(self) -> None:
@@ -399,7 +392,7 @@ class TestTacGeneratorOrExpression:
                 operator=ast.Or(), left=ast.Constant(value=ast.ConstInt(1)), right=ast.Constant(value=ast.ConstInt(2))
             )
         )
-        ret = instrs[-2]
+        ret = instrs[-1]
         assert isinstance(ret, tac.Return)
         assert ret.val == tac.Var(value="tmp.0")
 
@@ -429,7 +422,7 @@ class TestTacGeneratorVarExpression:
     def test_var_produces_no_instructions(self) -> None:
         """A bare variable reference emits no instructions beyond the enclosing statement."""
         instrs = _instrs_for_body((ast.S(statement=ast.Return(exp=ast.Var(name="x"))),))
-        assert len(instrs) == 2
+        assert len(instrs) == 1
         assert isinstance(instrs[0], tac.Return)
 
     def test_var_name_is_preserved(self) -> None:
@@ -518,7 +511,6 @@ class TestTacGeneratorIncDecOperators:
             ),
             tac.Copy(src=tac.Var(value="tmp.0"), dst=tac.Var(value="x")),
             tac.Return(val=tac.Var(value="x")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_pre_decrement_full_sequence(self) -> None:
@@ -533,7 +525,6 @@ class TestTacGeneratorIncDecOperators:
             ),
             tac.Copy(src=tac.Var(value="tmp.0"), dst=tac.Var(value="x")),
             tac.Return(val=tac.Var(value="x")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_post_increment_full_sequence(self) -> None:
@@ -549,7 +540,6 @@ class TestTacGeneratorIncDecOperators:
             ),
             tac.Copy(src=tac.Var(value="tmp.1"), dst=tac.Var(value="x")),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_post_decrement_full_sequence(self) -> None:
@@ -565,20 +555,19 @@ class TestTacGeneratorIncDecOperators:
             ),
             tac.Copy(src=tac.Var(value="tmp.1"), dst=tac.Var(value="x")),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_pre_increment_returns_new_value(self) -> None:
         """``++x`` returns the variable itself (post-increment value)."""
         instrs = _body(ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name="x")))
-        ret = instrs[-2]
+        ret = instrs[-1]
         assert isinstance(ret, tac.Return)
         assert ret.val == tac.Var(value="x")
 
     def test_post_increment_returns_original_value(self) -> None:
         """``x++`` returns the saved copy, not the variable after increment."""
         instrs = _body(ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name="x")))
-        ret = instrs[-2]
+        ret = instrs[-1]
         assert isinstance(ret, tac.Return)
         assert ret.val == tac.Var(value="tmp.0")  # the saved copy, not Var("x")
         assert ret.val != tac.Var(value="x")
@@ -593,7 +582,7 @@ class TestTacGeneratorConditionalExpression:
     """``ast.Conditional`` translates to the correct ternary jump-and-copy sequence."""
 
     def test_full_instruction_sequence(self) -> None:
-        """``return 1 ? 2 : 3;`` emits the full ternary sequence followed by the guard."""
+        """``return 1 ? 2 : 3;`` emits the full ternary sequence."""
         instrs = _body(
             ast.Conditional(
                 condition=ast.Constant(value=ast.ConstInt(1)),
@@ -609,7 +598,6 @@ class TestTacGeneratorConditionalExpression:
             tac.Copy(src=tac.Constant(value=ast.ConstInt(3)), dst=tac.Var(value="tmp.0")),
             tac.Label(name="cond_end.1"),
             tac.Return(val=tac.Var(value="tmp.0")),
-            tac.Return(val=tac.Constant(value=ast.ConstInt(0))),
         )
 
     def test_condition_instructions_precede_jump(self) -> None:
@@ -678,7 +666,7 @@ class TestTacGeneratorConditionalExpression:
             )
         )
         copies = [i for i in instrs if isinstance(i, tac.Copy)]
-        ret = instrs[-2]  # penultimate; last is the function guard
+        ret = instrs[-1]
         assert isinstance(ret, tac.Return)
         assert ret.val == copies[0].dst
 

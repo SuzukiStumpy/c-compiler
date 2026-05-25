@@ -251,12 +251,14 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.TopLevel]:
                         case SymLongInit(value=v):
                             static_inits.append(tac.LongInit(v))
                         case SymCharInit(value=v) | SymUCharInit(value=v):
-                            static_inits.append(tac.IntInit(v))
+                            static_inits.append(tac.CharInit(v))
                         case SymDoubleInit(value=v):
                             static_inits.append(tac.DoubleInit(v))
                         case SymZeroInit(bytes=n):
                             # Doubles: preserve DoubleInit so -0.0 vs +0.0 is not collapsed.
                             static_inits.append(tac.DoubleInit(0.0) if is_double else tac.ZeroInit(n))
+                        case SymStringInit(string=s, null_terminated=nt):
+                            static_inits.append(tac.StringInit(s, nt))
                         case _:
                             skip = True
                             break
@@ -479,8 +481,10 @@ class _TacGenerator:
         """
         self._function_name = function.name
         instructions = self.translate_block(function.body)
-        # Guard instruction for functions that don't supply a return value
-        instructions.append(tac.Return(tac.Constant(ast.ConstInt(0))))
+        # Guard return for functions that don't supply a return value; omit if
+        # the last emitted instruction is already a Return.
+        if not instructions or not isinstance(instructions[-1], tac.Return):
+            instructions.append(tac.Return(tac.Constant(ast.ConstInt(0))))
         return tac.Function(
             name=function.name,
             globl=function.globl,
@@ -971,12 +975,12 @@ class _TacGenerator:
                     return result, inner_instrs
                 dst = self._make_temp(t)
                 if isinstance(t, ast.DoubleType):
-                    if isinstance(inner_type, (ast.IntType, ast.LongType)):
+                    if _is_signed(inner_type):  # type: ignore[arg-type]
                         conv: tac.Instruction = tac.IntToDouble(src=result, dst=dst)
                     else:
                         conv = tac.UIntToDouble(src=result, dst=dst)
                 elif isinstance(inner_type, ast.DoubleType):
-                    if isinstance(t, (ast.IntType, ast.LongType)):
+                    if _is_signed(t):  # type: ignore[arg-type]
                         conv = tac.DoubleToInt(src=result, dst=dst)
                     else:
                         conv = tac.DoubleToUInt(src=result, dst=dst)

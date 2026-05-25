@@ -86,6 +86,8 @@ def _apply_platform_conventions(program: asm.Program, platform: str) -> asm.Prog
                 )
             if isinstance(item, asm.StaticVariable):
                 return dataclasses.replace(item, identifier=f"_{item.identifier}")
+            if isinstance(item, asm.StaticConstant):
+                return dataclasses.replace(item, identifier=f"_{item.identifier}", section="__TEXT,__const")
             return item
 
         return dataclasses.replace(program, definitions=tuple(_adjust_darwin(d) for d in program.definitions))

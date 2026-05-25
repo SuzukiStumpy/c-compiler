@@ -210,7 +210,7 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
     """
     # Names from tac.StaticVariable nodes (Initial / Tentative variables).
     tac_static_names: frozenset[str] = frozenset(
-        item.name for item in program.top_level if isinstance(item, tac.StaticVariable)
+        item.name for item in program.top_level if isinstance(item, (tac.StaticVariable, tac.StaticConstant))
     )
     # Names from the symbol table for NoInitializer (extern-only) declarations that
     # produce no tac.StaticVariable but must still be addressed via Data operands.
@@ -239,6 +239,14 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
                         globl=globl,
                         alignment=_static_alignment(t),
                         init=tuple(_translate_static_init(i) for i in init),
+                    )
+                )
+            case tac.StaticConstant(name=name, t=t, init=init):
+                constants.append(
+                    asm.StaticConstant(
+                        identifier=name,
+                        alignment=_static_alignment(t),
+                        init=_translate_static_init(init),
                     )
                 )
     return asm.Program(definitions=tuple(constants + definitions))
@@ -309,8 +317,12 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
             return asm.LongInit(v)
         case tac.DoubleInit(value=v):
             return asm.DoubleInit(v)
+        case tac.CharInit(value=v):
+            return asm.CharInit(v)
         case tac.ZeroInit(bytes=n):
             return asm.ZeroInit(n)
+        case tac.StringInit(string=s, null_terminated=nt):
+            return asm.StringInit(s, nt)
         case _:
             raise CodeGenerationError(f"unsupported static initialiser: {type(init).__name__}")
 
@@ -1654,12 +1666,16 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore 
                 fixed.append(asm.Mov(src=imm, dst=r11, assembly_type=at))
                 fixed.append(asm.Div(operand=r11, assembly_type=at))
             case asm.MoveZeroExtend(src_type=asm.Longword(), dst_type=dt, src=src, dst=dst):
-                # movl to a 32-bit register implicitly zero-extends to 64 bits; replace with Mov.
-                # If both operands are memory, route src through %r10d (single-pass; no re-processing).
-                if _is_mem(src) and _is_mem(dst):
+                # movl to a 32-bit register implicitly zero-extends its 64-bit alias to 0.
+                # When dst is memory the implicit zero-extension does not apply (movl writes
+                # only 4 bytes, leaving the upper 4 bytes of the 8-byte slot unmodified).
+                # Route through %r10d so the zero-extension happens in the register, then
+                # store the full 64-bit %r10 to dst.  Covers both-mem and reg-src+mem-dst.
+                if _is_mem(dst):
                     r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
                     fixed.append(asm.Mov(src=src, dst=r10d, assembly_type=asm.Longword()))
-                    fixed.append(asm.Mov(src=r10d, dst=dst, assembly_type=asm.Longword()))
+                    fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=dt))
                 else:
                     fixed.append(asm.Mov(src=src, dst=dst, assembly_type=asm.Longword()))
             case asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=asm.Imm() as imm, dst=dst):
