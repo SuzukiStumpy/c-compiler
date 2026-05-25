@@ -34,6 +34,9 @@ from compiler.syntax.asm import (
     Registers,
     Ret,
     SetCC,
+    StaticConstant,
+    StaticVariable,
+    StringInit,
     Width,
 )
 
@@ -456,15 +459,15 @@ class TestMovByteEmit:
 
     def test_mov_byte_reg_reg(self) -> None:
         """``Mov(Byte, reg, reg)`` emits ``movb``."""
-        assert Mov(src=_R10_BYTE, dst=_AX_BYTE, assembly_type=Byte()).emit() == "  movb %r10b, %al"
+        assert Mov(src=_R10_BYTE, dst=_AX_BYTE, assembly_type=Byte()).emit() == "      movb  %r10b, %al"
 
     def test_mov_longword_emits_movl(self) -> None:
         """``Mov(Longword)`` still emits ``movl`` (regression guard)."""
-        assert Mov(src=_R10_DWORD, dst=_AX_DWORD, assembly_type=Longword()).emit() == "  movl %r10d, %eax"
+        assert Mov(src=_R10_DWORD, dst=_AX_DWORD, assembly_type=Longword()).emit() == "      movl  %r10d, %eax"
 
     def test_mov_quadword_emits_movq(self) -> None:
         """``Mov(Quadword)`` still emits ``movq`` (regression guard)."""
-        assert Mov(src=_R10_QWORD, dst=_AX_QWORD, assembly_type=Quadword()).emit() == "  movq %r10, %rax"
+        assert Mov(src=_R10_QWORD, dst=_AX_QWORD, assembly_type=Quadword()).emit() == "      movq  %r10, %rax"
 
 
 class TestCmpByteEmit:
@@ -472,11 +475,11 @@ class TestCmpByteEmit:
 
     def test_cmp_byte_emits_cmpb(self) -> None:
         """``Cmp(Byte, reg, reg)`` emits ``cmpb``."""
-        assert Cmp(op1=_R10_BYTE, op2=_AX_BYTE, assembly_type=Byte()).emit() == "  cmpb %r10b, %al"
+        assert Cmp(op1=_R10_BYTE, op2=_AX_BYTE, assembly_type=Byte()).emit() == "      cmpb  %r10b, %al"
 
     def test_cmp_longword_regression(self) -> None:
         """``Cmp(Longword)`` still emits ``cmpl``."""
-        assert Cmp(op1=_R10_DWORD, op2=_AX_DWORD, assembly_type=Longword()).emit() == "  cmpl %r10d, %eax"
+        assert Cmp(op1=_R10_DWORD, op2=_AX_DWORD, assembly_type=Longword()).emit() == "      cmpl  %r10d, %eax"
 
 
 class TestMovsxEmit:
@@ -485,17 +488,17 @@ class TestMovsxEmit:
     def test_byte_to_longword_emits_movsbl(self) -> None:
         """``Movsx(Byte, Longword)`` emits ``movsbl``."""
         instr = Movsx(src_type=Byte(), dst_type=Longword(), src=_R10_BYTE, dst=_AX_DWORD)
-        assert instr.emit() == "  movsbl %r10b, %eax"
+        assert instr.emit() == "      movsbl %r10b, %eax"
 
     def test_byte_to_quadword_emits_movsbq(self) -> None:
         """``Movsx(Byte, Quadword)`` emits ``movsbq``."""
         instr = Movsx(src_type=Byte(), dst_type=Quadword(), src=_R10_BYTE, dst=_AX_QWORD)
-        assert instr.emit() == "  movsbq %r10b, %rax"
+        assert instr.emit() == "      movsbq %r10b, %rax"
 
     def test_longword_to_quadword_emits_movslq(self) -> None:
         """``Movsx(Longword, Quadword)`` emits ``movslq`` (regression guard)."""
         instr = Movsx(src_type=Longword(), dst_type=Quadword(), src=_R10_DWORD, dst=_AX_QWORD)
-        assert instr.emit() == "  movslq %r10d, %rax"
+        assert instr.emit() == "      movslq %r10d, %rax"
 
 
 class TestMoveZeroExtendEmit:
@@ -504,14 +507,85 @@ class TestMoveZeroExtendEmit:
     def test_byte_to_longword_emits_movzbl(self) -> None:
         """``MoveZeroExtend(Byte, Longword)`` emits ``movzbl``."""
         instr = MoveZeroExtend(src_type=Byte(), dst_type=Longword(), src=_R10_BYTE, dst=_AX_DWORD)
-        assert instr.emit() == "  movzbl %r10b, %eax"
+        assert instr.emit() == "      movzbl %r10b, %eax"
 
     def test_byte_to_quadword_emits_movzbq(self) -> None:
         """``MoveZeroExtend(Byte, Quadword)`` emits ``movzbq``."""
         instr = MoveZeroExtend(src_type=Byte(), dst_type=Quadword(), src=_R10_BYTE, dst=_AX_QWORD)
-        assert instr.emit() == "  movzbq %r10b, %rax"
+        assert instr.emit() == "      movzbq %r10b, %rax"
 
     def test_longword_to_quadword_emits_movl(self) -> None:
         """``MoveZeroExtend(Longword, Quadword)`` emits ``movl`` (regression guard)."""
         instr = MoveZeroExtend(src_type=Longword(), dst_type=Quadword(), src=_R10_DWORD, dst=_AX_DWORD)
-        assert instr.emit() == "  movl %r10d, %eax"
+        assert instr.emit() == "      movl  %r10d, %eax"
+
+
+# ---------------------------------------------------------------------------
+# StaticVariable / StaticConstant — StringInit comment
+# ---------------------------------------------------------------------------
+
+
+class TestStaticVariableStringComment:
+    """``StaticVariable.emit()`` prepends a human-readable comment before ``StringInit`` bytes."""
+
+    def test_simple_string_comment_present(self) -> None:
+        """A comment line appears immediately before the ``.byte`` directive."""
+        var = StaticVariable(identifier="s", globl=False, alignment=1, init=(StringInit(b"Hi", null_terminated=True),))
+        lines = var.emit().splitlines()
+        comment_idx = next(i for i, ln in enumerate(lines) if "# String:" in ln)
+        assert lines[comment_idx + 1].startswith("      .byte")
+
+    def test_comment_shows_printable_chars(self) -> None:
+        """Printable ASCII bytes appear verbatim in the comment."""
+        var = StaticVariable(
+            identifier="s", globl=False, alignment=1, init=(StringInit(b"Hello", null_terminated=False),)
+        )
+        assert "      # String: Hello" in var.emit()
+
+    def test_comment_appends_null_terminator(self) -> None:
+        """When ``null_terminated=True`` the comment ends with ``\\0``."""
+        var = StaticVariable(identifier="s", globl=False, alignment=1, init=(StringInit(b"Hi", null_terminated=True),))
+        assert "      # String: Hi\\0" in var.emit()
+
+    def test_comment_no_null_when_not_terminated(self) -> None:
+        """When ``null_terminated=False`` the comment does not end with ``\\0``."""
+        var = StaticVariable(identifier="s", globl=False, alignment=1, init=(StringInit(b"Hi", null_terminated=False),))
+        lines = [ln for ln in var.emit().splitlines() if "# String:" in ln]
+        assert lines[0] == "      # String: Hi"
+
+    def test_comment_escapes_newline(self) -> None:
+        """Newline bytes are rendered as ``\\n`` in the comment."""
+        var = StaticVariable(
+            identifier="s", globl=False, alignment=1, init=(StringInit(b"a\nb", null_terminated=False),)
+        )
+        assert r"\n" in var.emit()
+
+    def test_comment_escapes_tab(self) -> None:
+        """Tab bytes are rendered as ``\\t`` in the comment."""
+        var = StaticVariable(
+            identifier="s", globl=False, alignment=1, init=(StringInit(b"a\tb", null_terminated=False),)
+        )
+        assert r"\t" in var.emit()
+
+    def test_comment_escapes_non_printable(self) -> None:
+        """Non-printable bytes outside named escapes are rendered as ``\\xNN``."""
+        var = StaticVariable(
+            identifier="s", globl=False, alignment=1, init=(StringInit(bytes([0x01]), null_terminated=False),)
+        )
+        assert r"\x01" in var.emit()
+
+
+class TestStaticConstantStringComment:
+    """``StaticConstant.emit()`` prepends a human-readable comment before ``StringInit`` bytes."""
+
+    def test_comment_present(self) -> None:
+        """A comment line appears immediately before the ``.byte`` directive."""
+        const = StaticConstant(identifier="s", alignment=1, init=StringInit(b"Hi", null_terminated=True))
+        lines = const.emit().splitlines()
+        comment_idx = next(i for i, ln in enumerate(lines) if "# String:" in ln)
+        assert lines[comment_idx + 1].startswith("      .byte")
+
+    def test_comment_content(self) -> None:
+        """Comment shows printable content plus ``\\0`` for null-terminated strings."""
+        const = StaticConstant(identifier="s", alignment=1, init=StringInit(b"Hi", null_terminated=True))
+        assert "      # String: Hi\\0" in const.emit()

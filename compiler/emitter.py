@@ -23,7 +23,7 @@ from pathlib import Path
 
 import compiler.syntax.asm as asm
 
-_GNU_STACK = '  .section .note.GNU-stack,"",@progbits'
+_GNU_STACK = '      .section .note.GNU-stack,"",@progbits'
 
 
 def emit_program(program: asm.Program, output_path: Path, platform: str | None = None) -> None:

@@ -89,13 +89,13 @@ def test_register_emit_all_widths(reg: Registers, width: Width, expected: str) -
 
 
 def test_mov_emit() -> None:
-    """``Mov`` emits ``  movl <src>, <dst>``."""
-    assert Mov(src=Imm(value=2), dst=Register(Registers.AX)).emit() == "  movl $2, %eax"
+    """``Mov`` emits ``movl <src>, <dst>`` at column 6 with operands at column 12."""
+    assert Mov(src=Imm(value=2), dst=Register(Registers.AX)).emit() == "      movl  $2, %eax"
 
 
 def test_ret_emit() -> None:
-    """``Ret`` emits ``  ret``."""
-    assert Ret().emit() == "  movq  %rbp, %rsp\n  popq  %rbp\n  ret"
+    """``Ret`` emits the frame-teardown sequence followed by ``ret``."""
+    assert Ret().emit() == "      movq  %rbp, %rsp\n      popq  %rbp\n      ret"
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ def test_ret_emit() -> None:
 def test_function_emit_globl_directive() -> None:
     """Function emission begins with a ``.globl`` directive."""
     fn = Function(name="main", globl=True, instructions=(Ret(),))
-    assert fn.emit().startswith("  .globl main\n")
+    assert fn.emit().startswith("      .globl main\n")
 
 
 def test_function_emit_label() -> None:
@@ -121,23 +121,23 @@ def test_function_emit_instructions() -> None:
     fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=2), dst=Register(Registers.AX)), Ret()))
     lines = fn.emit().splitlines()
     # lines[0] = .globl, [1] = .text, [2] = label, [3] = pushq, [4] = movq (prologue)
-    assert lines[5] == "  movl $2, %eax"
-    assert lines[8] == "  ret"
+    assert lines[5] == "      movl  $2, %eax"
+    assert lines[8] == "      ret"
 
 
 def test_function_emit_full() -> None:
     """Full function emission matches the expected template exactly."""
     fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
     expected = (
-        "  .globl main\n"
-        "   .text\n"
+        "      .globl main\n"
+        "      .text\n"
         "main:\n"
-        "  pushq %rbp\n"
-        "  movq %rsp, %rbp\n"
-        "  movl $0, %eax\n"
-        "  movq  %rbp, %rsp\n"
-        "  popq  %rbp\n"
-        "  ret"
+        "      pushq %rbp\n"
+        "      movq  %rsp, %rbp\n"
+        "      movl  $0, %eax\n"
+        "      movq  %rbp, %rsp\n"
+        "      popq  %rbp\n"
+        "      ret"
     )
     assert fn.emit() == expected
 
@@ -154,10 +154,10 @@ def test_emit_program_linux_content(tmp_path: Path) -> None:
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
-    assert "  .globl main" in content
+    assert "      .globl main" in content
     assert "main:" in content
-    assert "  movl $3, %eax" in content
-    assert "  ret" in content
+    assert "      movl  $3, %eax" in content
+    assert "      ret" in content
 
 
 def test_emit_program_linux_gnu_stack(tmp_path: Path) -> None:
@@ -175,7 +175,7 @@ def test_emit_program_linux_gnu_stack_is_last_line(tmp_path: Path) -> None:
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
-    assert lines[-1] == '  .section .note.GNU-stack,"",@progbits'
+    assert lines[-1] == '      .section .note.GNU-stack,"",@progbits'
 
 
 def test_emit_program_linux_no_underscore_prefix(tmp_path: Path) -> None:
@@ -206,7 +206,7 @@ def test_emit_program_macos_underscore_prefix(tmp_path: Path) -> None:
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     content = out.read_text()
-    assert "  .globl _main" in content
+    assert "      .globl _main" in content
     assert "_main:" in content
 
 
@@ -247,32 +247,32 @@ def test_emit_program_bad_path_raises(tmp_path: Path) -> None:
 
 
 def test_cmp_emit() -> None:
-    """``Cmp`` emits ``  cmpl <op1>, <op2>``."""
-    assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)).emit() == "  cmpl $1, %eax"
+    """``Cmp`` emits ``cmpl <op1>, <op2>`` at column 6 with operands at column 12."""
+    assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)).emit() == "      cmpl  $1, %eax"
 
 
 def test_cmp_emit_memory_operands() -> None:
     """``Cmp`` with a stack op2 emits the correct memory reference."""
     assert (
         Cmp(op1=Imm(value=0), op2=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)).emit()
-        == "  cmpl $0, -4(%rbp)"
+        == "      cmpl  $0, -4(%rbp)"
     )
 
 
 def test_jmp_emit() -> None:
-    """``Jmp`` emits ``  jmp .L<label>``."""
-    assert Jmp(label="my_label").emit() == "  jmp .Lmy_label"
+    """``Jmp`` emits ``jmp .L<label>`` at column 6 with operand at column 12."""
+    assert Jmp(label="my_label").emit() == "      jmp   .Lmy_label"
 
 
 @pytest.mark.parametrize(
     ("cond_code", "expected"),
     [
-        (CondCodes.E, "  je .Lfoo"),
-        (CondCodes.NE, "  jne .Lfoo"),
-        (CondCodes.L, "  jl .Lfoo"),
-        (CondCodes.LE, "  jle .Lfoo"),
-        (CondCodes.G, "  jg .Lfoo"),
-        (CondCodes.GE, "  jge .Lfoo"),
+        (CondCodes.E, "      je    .Lfoo"),
+        (CondCodes.NE, "      jne   .Lfoo"),
+        (CondCodes.L, "      jl    .Lfoo"),
+        (CondCodes.LE, "      jle   .Lfoo"),
+        (CondCodes.G, "      jg    .Lfoo"),
+        (CondCodes.GE, "      jge   .Lfoo"),
     ],
     ids=["e", "ne", "l", "le", "g", "ge"],
 )
@@ -284,12 +284,12 @@ def test_jmpcc_emit(cond_code: CondCodes, expected: str) -> None:
 @pytest.mark.parametrize(
     ("cond_code", "expected"),
     [
-        (CondCodes.E, "  sete %al"),
-        (CondCodes.NE, "  setne %al"),
-        (CondCodes.L, "  setl %al"),
-        (CondCodes.LE, "  setle %al"),
-        (CondCodes.G, "  setg %al"),
-        (CondCodes.GE, "  setge %al"),
+        (CondCodes.E, "      sete  %al"),
+        (CondCodes.NE, "      setne %al"),
+        (CondCodes.L, "      setl  %al"),
+        (CondCodes.LE, "      setle %al"),
+        (CondCodes.G, "      setg  %al"),
+        (CondCodes.GE, "      setge %al"),
     ],
     ids=["e", "ne", "l", "le", "g", "ge"],
 )
@@ -302,7 +302,7 @@ def test_setcc_emit_stack_operand() -> None:
     """``SetCC`` with a stack operand emits the memory reference correctly."""
     assert (
         SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)).emit()
-        == "  sete -4(%rbp)"
+        == "      sete  -4(%rbp)"
     )
 
 
@@ -312,23 +312,23 @@ def test_label_emit() -> None:
 
 
 def test_push_emit() -> None:
-    """``Push`` emits ``  pushq <operand>``."""
-    assert Push(operand=Register(Registers.AX, Width.QWORD)).emit() == "  pushq %rax"
+    """``Push`` emits ``pushq <operand>`` at column 6 with operand at column 12."""
+    assert Push(operand=Register(Registers.AX, Width.QWORD)).emit() == "      pushq %rax"
 
 
 def test_allocate_stack_emit() -> None:
-    """``AllocateStack`` emits ``  subq $<size>, %rsp``."""
-    assert AllocateStack(size=16).emit() == "  subq $16, %rsp"
+    """``AllocateStack`` emits ``subq $<size>, %rsp`` at column 6."""
+    assert AllocateStack(size=16).emit() == "      subq  $16, %rsp"
 
 
 def test_deallocate_stack_emit() -> None:
-    """``DeallocateStack`` emits ``  addq $<size>, %rsp``."""
-    assert DeallocateStack(size=16).emit() == "  addq $16, %rsp"
+    """``DeallocateStack`` emits ``addq $<size>, %rsp`` at column 6."""
+    assert DeallocateStack(size=16).emit() == "      addq  $16, %rsp"
 
 
 def test_call_emit() -> None:
-    """``Call`` emits ``  call <name>``."""
-    assert Call(name="foo").emit() == "  call foo"
+    """``Call`` emits ``call <name>`` at column 6 with operand at column 12."""
+    assert Call(name="foo").emit() == "      call  foo"
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ def test_emit_program_macos_call_prefix(tmp_path: Path) -> None:
     out = tmp_path / "main.s"
     emit_program(program, out, platform="darwin")
     content = out.read_text()
-    assert "  call _foo" in content
+    assert "      call  _foo" in content
 
 
 def test_emit_program_linux_call_plt_suffix(tmp_path: Path) -> None:
@@ -353,7 +353,7 @@ def test_emit_program_linux_call_plt_suffix(tmp_path: Path) -> None:
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
-    assert "  call foo@PLT" in content
+    assert "      call  foo@PLT" in content
 
 
 def test_emit_program_linux_call_no_underscore_prefix(tmp_path: Path) -> None:
@@ -363,7 +363,7 @@ def test_emit_program_linux_call_no_underscore_prefix(tmp_path: Path) -> None:
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
     content = out.read_text()
-    assert "  call _foo" not in content
+    assert "      call  _foo" not in content
 
 
 def test_emit_program_macos_call_no_plt(tmp_path: Path) -> None:

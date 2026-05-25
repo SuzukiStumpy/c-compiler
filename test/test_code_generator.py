@@ -488,9 +488,9 @@ class TestBitwiseAndOrXorCodeGen:
     @pytest.mark.parametrize(
         ("op", "src1", "src2", "expected"),
         [
-            (asm.And(), 3, 5, "  movl $3, %r11d\n  andl $5, %r11d"),
-            (asm.Or(), 4, 2, "  movl $4, %r11d\n  orl $2, %r11d"),
-            (asm.Xor(), 6, 3, "  movl $6, %r11d\n  xorl $3, %r11d"),
+            (asm.And(), 3, 5, "      movl  $3, %r11d\n      andl  $5, %r11d"),
+            (asm.Or(), 4, 2, "      movl  $4, %r11d\n      orl   $2, %r11d"),
+            (asm.Xor(), 6, 3, "      movl  $6, %r11d\n      xorl  $3, %r11d"),
         ],
         ids=["and", "or", "xor"],
     )
@@ -553,8 +553,8 @@ class TestShiftCodeGen:
     @pytest.mark.parametrize(
         ("instr", "expected"),
         [
-            (asm.Shl(operand=asm.Register(asm.Registers.R11)), "  shll %cl, %r11d"),
-            (asm.Sar(operand=asm.Register(asm.Registers.R11)), "  sarl %cl, %r11d"),
+            (asm.Shl(operand=asm.Register(asm.Registers.R11)), "      shll  %cl, %r11d"),
+            (asm.Sar(operand=asm.Register(asm.Registers.R11)), "      sarl  %cl, %r11d"),
         ],
         ids=["shl", "sar"],
     )
@@ -572,7 +572,7 @@ class TestShiftCodeGen:
         """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` — memory operand is valid."""
         assert (
             asm.Shl(operand=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)).emit()
-            == "  shll %cl, -4(%rbp)"
+            == "      shll  %cl, -4(%rbp)"
         )
 
     def test_no_pseudo_operands_after_left_shift_code_gen(self) -> None:

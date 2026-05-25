@@ -33,6 +33,30 @@ from compiler.syntax.asm.operators import (
 from compiler.syntax.asm.values import AssemblyType, Byte, Double, Longword
 from compiler.utils.exceptions import CodeGenerationError
 
+_MNEMONIC_COL = 6
+_OPERAND_COL = 12
+
+
+def _asm_line(mnemonic: str, *operands: str) -> str:
+    """Format one assembly line: mnemonic at column 6, operands at column 12.
+
+    Args:
+        mnemonic: The instruction mnemonic or assembler directive (e.g. ``movl``, ``.globl``).
+        *operands: Zero or more operand strings joined by ``", "``.
+
+    Returns:
+        A string with six leading spaces, the mnemonic left-justified in a
+        six-character field, and the operands starting at column 12.  When the
+        mnemonic exceeds six characters exactly one space separates it from the
+        operands.
+    """
+    prefix = " " * _MNEMONIC_COL
+    if not operands:
+        return f"{prefix}{mnemonic}"
+    ops = ", ".join(operands)
+    pad = " " * max(1, _OPERAND_COL - _MNEMONIC_COL - len(mnemonic))
+    return f"{prefix}{mnemonic}{pad}{ops}"
+
 
 class CondCodes(StrEnum):
     """Condition codes which will be applied to the conditional set and jump commands"""
@@ -92,14 +116,14 @@ class Mov(Instruction):
             ``  movq <src>, <dst>``, or ``  movsd <src>, <dst>``.
         """
         if self.assembly_type == Double():
-            return f"  movsd {self.src.emit()}, {self.dst.emit()}"
+            return _asm_line("movsd", self.src.emit(), self.dst.emit())
         if self.assembly_type == Byte():
             suffix = "b"
         elif self.assembly_type == Longword():
             suffix = "l"
         else:
             suffix = "q"
-        return f"  mov{suffix} {self.src.emit()}, {self.dst.emit()}"
+        return _asm_line(f"mov{suffix}", self.src.emit(), self.dst.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +160,7 @@ class Movsx(Instruction):
             mnemonic = "movsbl" if self.dst_type == Longword() else "movsbq"
         else:
             mnemonic = "movslq"
-        return f"  {mnemonic} {self.src.emit()}, {self.dst.emit()}"
+        return _asm_line(mnemonic, self.src.emit(), self.dst.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +199,7 @@ class MoveZeroExtend(Instruction):
             mnemonic = "movzbl" if self.dst_type == Longword() else "movzbq"
         else:
             mnemonic = "movl"
-        return f"  {mnemonic} {self.src.emit()}, {self.dst.emit()}"
+        return _asm_line(mnemonic, self.src.emit(), self.dst.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +215,7 @@ class Ret(Instruction):
         Returns:
             The string ``  movq  %rbp, %rsp\\n  popq  %rbp\\n  ret``.
         """
-        return "  movq  %rbp, %rsp\n  popq  %rbp\n  ret"
+        return "\n".join([_asm_line("movq", "%rbp", "%rsp"), _asm_line("popq", "%rbp"), _asm_line("ret")])
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,7 +241,7 @@ class Unary(Instruction):
             A string of the form ``  <mnemonic> <operand>``,
             e.g. ``  negl %eax`` or ``  negq %rax``.
         """
-        return f"  {self.operator.emit(self.assembly_type)} {self.operand.emit()}"
+        return _asm_line(self.operator.emit(self.assembly_type), self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +265,7 @@ class AllocateStack(Instruction):
             A string of the form ``  subq $<size>, %rsp``,
             e.g. ``  subq $16, %rsp``.
         """
-        return f"  subq ${self.size}, %rsp"
+        return _asm_line("subq", f"${self.size}", "%rsp")
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +285,7 @@ class DeallocateStack(Instruction):
             A string of the form ``  addq $<size>, %rsp``,
             e.g. ``  addq $16, %rsp``.
         """
-        return f"  addq ${self.size}, %rsp"
+        return _asm_line("addq", f"${self.size}", "%rsp")
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,15 +332,15 @@ class Binary(Instruction):
                     suffix = "q"
                 return "\n".join(
                     [
-                        f"  mov{suffix} {self.src1.emit()}, {self.dst.emit()}",
-                        f"  {self.operator.emit(self.assembly_type)} {self.src2.emit()}, {self.dst.emit()}",
+                        _asm_line(f"mov{suffix}", self.src1.emit(), self.dst.emit()),
+                        _asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()),
                     ]
                 )
             case AddDouble() | SubDouble() | MultDouble() | DivDouble() | XorDouble():
                 return "\n".join(
                     [
-                        f"  movsd {self.src1.emit()}, {self.dst.emit()}",
-                        f"  {self.operator.emit(self.assembly_type)} {self.src2.emit()}, {self.dst.emit()}",
+                        _asm_line("movsd", self.src1.emit(), self.dst.emit()),
+                        _asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()),
                     ]
                 )
             case _:
@@ -344,7 +368,7 @@ class Cdq(Instruction):
         Returns:
             ``"  cdq"`` for Longword or ``"  cqo"`` for Quadword.
         """
-        return "  cdq" if self.assembly_type == Longword() else "  cqo"
+        return _asm_line("cdq" if self.assembly_type == Longword() else "cqo")
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,7 +402,7 @@ class Idiv(Instruction):
             suffix = "l"
         else:
             suffix = "q"
-        return f"  idiv{suffix} {self.operand.emit()}"
+        return _asm_line(f"idiv{suffix}", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,7 +437,7 @@ class Div(Instruction):
             suffix = "l"
         else:
             suffix = "q"
-        return f"  div{suffix} {self.operand.emit()}"
+        return _asm_line(f"div{suffix}", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,7 +468,7 @@ class Shl(Instruction):
             suffix = "l"
         else:
             suffix = "q"
-        return f"  shl{suffix} %cl, {self.operand.emit()}"
+        return _asm_line(f"shl{suffix}", "%cl", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,7 +499,7 @@ class Sar(Instruction):
             suffix = "l"
         else:
             suffix = "q"
-        return f"  sar{suffix} %cl, {self.operand.emit()}"
+        return _asm_line(f"sar{suffix}", "%cl", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,7 +531,7 @@ class Shr(Instruction):
             suffix = "l"
         else:
             suffix = "q"
-        return f"  shr{suffix} %cl, {self.operand.emit()}"
+        return _asm_line(f"shr{suffix}", "%cl", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,14 +561,14 @@ class Cmp(Instruction):
             ``"  cmpq <op1>, <op2>"``, or ``"  ucomisd <op1>, <op2>"``.
         """
         if self.assembly_type == Double():
-            return f"  ucomisd {self.op1.emit()}, {self.op2.emit()}"
+            return _asm_line("ucomisd", self.op1.emit(), self.op2.emit())
         if self.assembly_type == Byte():
             suffix = "b"
         elif self.assembly_type == Longword():
             suffix = "l"
         else:
             suffix = "q"
-        return f"  cmp{suffix} {self.op1.emit()}, {self.op2.emit()}"
+        return _asm_line(f"cmp{suffix}", self.op1.emit(), self.op2.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,7 +587,7 @@ class Jmp(Instruction):
         Returns:
             A string of the form ``"  jmp .L<label>"``.
         """
-        return f"  jmp .L{self.label}"
+        return _asm_line("jmp", f".L{self.label}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,7 +608,7 @@ class JmpCC(Instruction):
         Returns:
             A string of the form ``"  j<cond_code> .L<label>"``.
         """
-        return f"  j{self.cond_code.value} .L{self.label}"
+        return _asm_line(f"j{self.cond_code.value}", f".L{self.label}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -605,7 +629,7 @@ class SetCC(Instruction):
         Returns:
             A string of the form ``"  set<cond_code> <operand>"``.
         """
-        return f"  set{self.cond_code.value} {self.operand.emit()}"
+        return _asm_line(f"set{self.cond_code.value}", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,7 +671,7 @@ class Push(Instruction):
         Returns:
             A string of the form ``"  pushq <operand>"``.
         """
-        return f"  pushq {self.operand.emit()}"
+        return _asm_line("pushq", self.operand.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,7 +690,7 @@ class Call(Instruction):
         Returns:
             A string of the form ``"  call <name>"``.
         """
-        return f"  call {self.name}"
+        return _asm_line("call", self.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -688,7 +712,7 @@ class IndirectCall(Instruction):
         Returns:
             A string of the form ``"  call *<target>"``, e.g. ``"  call *%r10"``.
         """
-        return f"  call *{self.target.emit()}"
+        return _asm_line("call", f"*{self.target.emit()}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -716,7 +740,7 @@ class Cvttsd2si(Instruction):
             A string of the form ``"  cvttsd2sil <src>, <dst>"`` or ``"  cvttsd2siq <src>, <dst>"``.
         """
         suffix = "l" if self.assembly_type == Longword() else "q"
-        return f"  cvttsd2si{suffix} {self.src.emit()}, {self.dst.emit()}"
+        return _asm_line(f"cvttsd2si{suffix}", self.src.emit(), self.dst.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -744,7 +768,7 @@ class Cvtsi2sd(Instruction):
             A string of the form ``"  cvtsi2sdl <src>, <dst>"`` or ``"  cvtsi2sdq <src>, <dst>"``.
         """
         suffix = "l" if self.assembly_type == Longword() else "q"
-        return f"  cvtsi2sd{suffix} {self.src.emit()}, {self.dst.emit()}"
+        return _asm_line(f"cvtsi2sd{suffix}", self.src.emit(), self.dst.emit())
 
 
 @dataclass(frozen=True, slots=True)
@@ -770,4 +794,4 @@ class Lea(Instruction):
             A string of the form ``"  leaq <src>, <dst>"``,
             e.g. ``"  leaq -4(%rbp), %rax"``.
         """
-        return f"  leaq {self.src.emit()}, {self.dst.emit()}"
+        return _asm_line("leaq", self.src.emit(), self.dst.emit())

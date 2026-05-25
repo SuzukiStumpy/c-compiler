@@ -8,9 +8,37 @@ one form.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from compiler.syntax.asm.instructions import Instruction
+from compiler.syntax.asm.instructions import Instruction, _asm_line
 from compiler.syntax.asm.operands import Operand
 from compiler.syntax.asm.values import CharInit, DoubleInit, IntInit, LongInit, StaticInit, StringInit, ZeroInit
+
+
+def _string_comment(s: bytes, null_terminated: bool) -> str:
+    """Build an assembly comment showing the human-readable form of string bytes.
+
+    Non-printable bytes are rendered as escape sequences; printable ASCII is kept as-is.
+    A trailing ``\\0`` is appended when ``null_terminated`` is ``True``.
+
+    Args:
+        s: The raw string bytes (NUL terminator not included).
+        null_terminated: When ``True``, appends ``\\0`` to the comment text.
+
+    Returns:
+        A string of the form ``"      ; String: <content>"``, indented to match
+        the directive column used by ``_asm_line``.
+    """
+    _ESCAPE: dict[int, str] = {0: r"\0", 9: r"\t", 10: r"\n", 13: r"\r", 92: r"\\"}
+    parts: list[str] = []
+    for b in s:
+        if b in _ESCAPE:
+            parts.append(_ESCAPE[b])
+        elif 32 <= b < 127:
+            parts.append(chr(b))
+        else:
+            parts.append(f"\\x{b:02x}")
+    if null_terminated:
+        parts.append(r"\0")
+    return "      # String: " + "".join(parts)
 
 
 class TopLevel(ABC):
@@ -69,11 +97,11 @@ class Function(TopLevel):
                   ret
         """
         lines = [
-            f"  .globl {self.name}" if self.globl else "",
-            "   .text",
+            _asm_line(".globl", self.name) if self.globl else "",
+            _asm_line(".text"),
             f"{self.name}:",
-            "  pushq %rbp",
-            "  movq %rsp, %rbp",
+            _asm_line("pushq", "%rbp"),
+            _asm_line("movq", "%rsp", "%rbp"),
         ]
         for instr in self.instructions:
             lines.append(instr.emit())
@@ -113,37 +141,38 @@ class StaticVariable(TopLevel):
         lines = []
 
         if self.globl:
-            lines.append(f"   .globl {self.identifier}")
+            lines.append(_asm_line(".globl", self.identifier))
 
         in_bss = all(
             isinstance(i, ZeroInit) or (isinstance(i, (CharInit, IntInit, LongInit)) and i.value == 0)
             for i in self.init
         )
-        lines.append("   .bss" if in_bss else "   .data")
-        lines.append(f"   .balign {self.alignment}")
+        lines.append(_asm_line(".bss" if in_bss else ".data"))
+        lines.append(_asm_line(".balign", str(self.alignment)))
         lines.append(f"{self.identifier}:")
 
         for init in self.init:
             match init:
                 case CharInit(value=v):
-                    lines.append(f"   .byte {v}")
+                    lines.append(_asm_line(".byte", str(v)))
                 case ZeroInit(bytes=n):
-                    lines.append(f"   .zero {n}")
+                    lines.append(_asm_line(".zero", str(n)))
                 case IntInit(value=0):
-                    lines.append("   .zero 4")
+                    lines.append(_asm_line(".zero", "4"))
                 case IntInit(value=v):
-                    lines.append(f"   .long {v}")
+                    lines.append(_asm_line(".long", str(v)))
                 case LongInit(value=0):
-                    lines.append("   .zero 8")
+                    lines.append(_asm_line(".zero", "8"))
                 case LongInit(value=v):
-                    lines.append(f"   .quad {v}")
+                    lines.append(_asm_line(".quad", str(v)))
                 case DoubleInit(value=0.0):
-                    lines.append("   .zero 8")
+                    lines.append(_asm_line(".zero", "8"))
                 case DoubleInit() as d:
-                    lines.append(f"   .quad {d.as_bits()}")
+                    lines.append(_asm_line(".quad", str(d.as_bits())))
                 case StringInit(string=s, null_terminated=nt):
                     data = list(s) + ([0] if nt else [])
-                    lines.append(f"   .byte {', '.join(str(b) for b in data)}")
+                    lines.append(_string_comment(s, nt))
+                    lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
 
         return "\n".join(lines)
 
@@ -178,20 +207,21 @@ class StaticConstant(TopLevel):
             directive, label, and data directive.
         """
         lines = [
-            f"   .section {self.section}",
-            f"   .balign {self.alignment}",
+            _asm_line(".section", self.section),
+            _asm_line(".balign", str(self.alignment)),
             f"{self.identifier}:",
         ]
         match self.init:
             case DoubleInit() as d:
-                lines.append(f"   .quad {d.as_bits()}")
+                lines.append(_asm_line(".quad", str(d.as_bits())))
             case IntInit(value=v):
-                lines.append(f"   .long {v}")
+                lines.append(_asm_line(".long", str(v)))
             case LongInit(value=v):
-                lines.append(f"   .quad {v}")
+                lines.append(_asm_line(".quad", str(v)))
             case StringInit(string=s, null_terminated=nt):
                 data = list(s) + ([0] if nt else [])
-                lines.append(f"   .byte {', '.join(str(b) for b in data)}")
+                lines.append(_string_comment(s, nt))
+                lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
         return "\n".join(lines)
 
 
