@@ -32,7 +32,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
     exp                  = Constant(const)
-                         | String(string)
+                         | String(bytes string)
                          | Var(identifier)
                          | Cast(type target_type, exp)
                          | Unary(unary_operator, exp)

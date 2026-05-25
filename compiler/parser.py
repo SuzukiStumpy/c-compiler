@@ -91,6 +91,7 @@ from compiler.syntax.ast import (
     Break,
     Case,
     Cast,
+    Char,
     Complement,
     Compound,
     CompoundInit,
@@ -148,13 +149,16 @@ from compiler.syntax.ast import (
     Return,
     RightShift,
     S,
+    SChar,
     SingleInit,
     Statement,
     StorageClass,
+    String,
     Subscript,
     Subtract,
     Switch,
     Type,
+    UChar,
     UIntType,
     ULongType,
     Unary,
@@ -211,6 +215,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.SIGNED,
         TokenType.UNSIGNED,
         TokenType.DOUBLE,
+        TokenType.CHAR,
     }
 )
 
@@ -501,8 +506,9 @@ class Parser:
 
         Raises:
             ParseError: If ``seen`` is empty, if ``double`` is combined with
-                any other specifier, or if ``signed`` and ``unsigned`` appear
-                together.
+                any other specifier, if ``signed`` and ``unsigned`` appear
+                together, or if ``char`` is combined with specifiers other than
+                ``signed`` / ``unsigned``.
         """
         if not seen:
             tok = self._peek()
@@ -517,6 +523,15 @@ class Parser:
         assert last_tok is not None
         if TokenType.SIGNED in seen and TokenType.UNSIGNED in seen:
             raise self._token_error("invalid type specifier: can't have both 'signed' and 'unsigned'", last_tok)
+        if TokenType.CHAR in seen:
+            invalid = seen - {TokenType.CHAR, TokenType.SIGNED, TokenType.UNSIGNED}
+            if invalid:
+                raise self._token_error("'char' may only be combined with 'signed' or 'unsigned'", last_tok)
+            if TokenType.UNSIGNED in seen:
+                return UChar()
+            if TokenType.SIGNED in seen:
+                return SChar()
+            return Char()
         if TokenType.LONG in seen and TokenType.UNSIGNED in seen:
             return ULongType()
         if TokenType.UNSIGNED in seen:
@@ -1280,8 +1295,17 @@ class Parser:
                 return AddrOf(self._parse_factor())
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
                 return Unary(self._parse_unaryop(), self._parse_factor())
-            case TokenType.NUMBER | TokenType.LONGINT | TokenType.UINT | TokenType.ULONG | TokenType.FPDOUBLE:
+            case (
+                TokenType.NUMBER
+                | TokenType.LONGINT
+                | TokenType.UINT
+                | TokenType.ULONG
+                | TokenType.FPDOUBLE
+                | TokenType.CONSTCHAR
+            ):
                 primary: Exp = self._parse_constant()
+            case TokenType.STRING:
+                primary = self._parse_string_literal()
             case TokenType.IDENTIFIER:
                 self._consume()
                 if self._match(TokenType.LPAREN):
@@ -1360,10 +1384,26 @@ class Parser:
         self._expect(TokenType.RPAREN)
         return FunctionCall(callee=Var(name=name), args=args)
 
-    def _parse_constant(self) -> Constant:
-        """Parse an integer, long or double constant expression.
+    # Maps single-character escape letter to its ASCII value.
+    _ESCAPE_VALUES: dict[str, int] = {
+        "'": 39,
+        '"': 34,
+        "?": 63,
+        "\\": 92,
+        "a": 7,
+        "b": 8,
+        "f": 12,
+        "n": 10,
+        "r": 13,
+        "t": 9,
+        "v": 11,
+    }
 
-        Follows C11 §6.4.4.1:
+    def _parse_constant(self) -> Constant:
+        """Parse an integer, long, double, or character constant expression.
+
+        Follows C11 §6.4.4.1 for numeric constants and §6.4.4.4 for character
+        constants.
 
         - An unsuffixed decimal constant has the type of the first of ``int``,
           ``long`` in which its value can be represented.
@@ -1373,14 +1413,17 @@ class Parser:
           represented.
         - A constant with both ``u``/``U`` and ``l``/``L`` suffixes is always
           ``unsigned long``.
+        - A character constant (e.g. ``'a'``, ``'\\n'``) is converted to the
+          ``int`` value of its ASCII code.
 
         Returns:
             A ``Constant`` node wrapping a ``ConstInt``, ``ConstLong``,
             ``ConstUInt``, ``ConstULong``, or ``ConstDouble``.
 
         Raises:
-            ParseError: If the next token is not a numeric constant, or if the
-                value exceeds the range of the largest supported type.
+            ParseError: If the next token is not a numeric or character
+                constant, or if the value exceeds the range of the largest
+                supported type.
         """
         token = self._peek()
         if token is None:
@@ -1424,7 +1467,76 @@ class Parser:
                     f"integer constant {val} is too large for type 'unsigned long' (max 18446744073709551615)", token
                 )
             return Constant(value=ConstULong(val), exp_type=ULongType())
+        if token.type == TokenType.CONSTCHAR:
+            self._consume()
+            inner = token.value[1:-1]  # strip surrounding single quotes
+            if inner.startswith("\\"):
+                char_val = self._ESCAPE_VALUES[inner[1]]
+            else:
+                char_val = ord(inner)
+            return Constant(value=ConstInt(char_val), exp_type=IntType())
         raise self._token_error(f"expected a constant, got {token.type.name} '{token.value}'", token)
+
+    @staticmethod
+    def _unescape_string(raw: str) -> bytes:
+        """Convert the raw source text of a string literal to a byte sequence.
+
+        Args:
+            raw: The token value including surrounding double-quote characters,
+                e.g. ``'"hello\\\\n"'``.
+
+        Returns:
+            A ``bytes`` object containing the unescaped content, without the
+            NUL terminator.
+        """
+        _ESC: dict[str, int] = {
+            "'": 39,
+            '"': 34,
+            "?": 63,
+            "\\": 92,
+            "a": 7,
+            "b": 8,
+            "f": 12,
+            "n": 10,
+            "r": 13,
+            "t": 9,
+            "v": 11,
+        }
+        content = raw[1:-1]  # strip surrounding double quotes
+        result: list[int] = []
+        i = 0
+        while i < len(content):
+            ch = content[i]
+            if ch == "\\":
+                result.append(_ESC[content[i + 1]])
+                i += 2
+            else:
+                result.append(ord(ch))
+                i += 1
+        return bytes(result)
+
+    def _parse_string_literal(self) -> String:
+        """Parse one or more adjacent string-literal tokens into a single ``String`` node.
+
+        C allows adjacent string literals to be concatenated at compile time,
+        e.g. ``"hello " "world"`` is equivalent to ``"hello world"``.
+
+        Returns:
+            A ``String`` node whose ``string`` field holds the concatenated,
+            unescaped byte content of all adjacent tokens (NUL not included).
+
+        Raises:
+            ParseError: If the current token is not a ``STRING`` token.
+        """
+        token = self._peek()
+        if token is None or token.type != TokenType.STRING:
+            msg = "expected a string literal"
+            raise self._eof_error(msg) if token is None else self._token_error(msg, token)
+        buf = bytearray()
+        while (tok := self._peek()) is not None and tok.type == TokenType.STRING:
+            self._consume()
+            buf.extend(self._unescape_string(tok.value))
+        return String(string=bytes(buf))
 
     def _parse_type(self) -> Type:
         """Parse a C type annotation from one or more type-specifier tokens.
@@ -1432,10 +1544,13 @@ class Parser:
         Grammar::
 
             type-specifier ::= "int" | "long" | "signed" | "unsigned" | "double"
+                              | "char" | "signed" "char" | "unsigned" "char"
 
         Consumes a run of specifier tokens in any order.  ``unsigned`` or
         ``signed`` alone are treated as shorthand for ``unsigned int`` /
-        ``signed int`` respectively.
+        ``signed int`` respectively.  ``char`` may only be combined with
+        ``signed`` or ``unsigned``; pairing it with ``int``, ``long``, or
+        ``double`` is a parse error.
 
         Returns:
             A ``Type`` node.

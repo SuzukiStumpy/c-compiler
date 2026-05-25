@@ -181,14 +181,19 @@ class Subscript(Exp):
 
 @dataclass(frozen=True, slots=True)
 class String(Exp):
-    """Represents a string literal within the C code of the for:
-    ```"hello world!"```
+    """Represents a string literal in C source code, e.g. ``"hello world!"``.
+
+    The value is stored as a ``bytes`` sequence so that each element is a
+    single byte — matching C's ``char``-per-element model.  Escape sequences
+    have already been resolved and adjacent string tokens have been
+    concatenated before this node is constructed.
 
     Attributes:
-        string: The string that this literal represents
+        string: The unescaped byte content of the literal (NUL terminator
+            not included — the emitter is responsible for appending it).
     """
 
-    string: str
+    string: bytes
 
 
 class Initializer(ABC):
