@@ -35,6 +35,7 @@ class TokenType(Enum):
     UNSIGNED = auto()
     DOUBLE = auto()
     CHAR = auto()
+    SIZEOF = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
