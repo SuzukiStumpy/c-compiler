@@ -18,7 +18,7 @@ stage.
 
 TAC → pseudo-asm mapping:
 
-    tac.Return(val)                           → Mov(val, Register(AX)), Ret()
+    tac.Return(val)                           → Mov(val, Register(AX)), Ret()  [val=None → Ret() only]
     tac.Unary(op, src, dst)                   → Mov(src, dst), Unary(op, dst)
     tac.Binary(Add|Sub|Mul, src1, src2, dst)         → Binary(op, src1, src2, Register(R11)),
                                                         Mov(Register(R11), dst)
@@ -592,6 +592,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
     """
     match instr:
         case tac.Return(val=val):
+            if val is None:
+                return [asm.Ret()]
             at = _asm_type(val, symbol_table)
             val_asm = _translate_val(val, constants, symbol_table)
             if at == asm.Double():
@@ -704,7 +706,7 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         case tac.Binary(operator=op, src1=src1, src2=src2, dst=dst):
             return _translate_binary(op, src1, src2, dst, symbol_table, constants)
         case tac.FunCall(fun_val=fun_val, args=args, dst=dst):
-            dst_asm = _translate_val(dst, None, symbol_table)
+            dst_asm = _translate_val(dst, None, symbol_table) if dst is not None else None
             return _translate_funcall(fun_val, list(args), dst_asm, symbol_table, constants)
         case tac.SignExtend(src=src, dst=dst):
             return [
@@ -1015,7 +1017,7 @@ def _translate_double_to_uint(
 def _translate_funcall(
     fun_val: tac.Val,
     args: list[tac.Val],
-    dst: asm.Operand,
+    dst: asm.Operand | None,
     symbol_table: SymbolTable | None = None,
     constants: list[asm.TopLevel] | None = None,
 ) -> list[asm.Instruction]:
@@ -1035,7 +1037,7 @@ def _translate_funcall(
             symbol table entry carries ``FunAttr`` a direct ``call`` is emitted; otherwise
             the pointer value is loaded into ``%r10`` and an indirect ``call *%r10`` is used.
         args: The ordered list of TAC argument values.
-        dst: The assembly operand that receives the return value.
+        dst: The assembly operand that receives the return value, or ``None`` for a void call.
         symbol_table: Used to derive assembly types for variable arguments.
         constants: Accumulator for ``StaticConstant`` entries emitted for double literals.
 
@@ -1142,12 +1144,13 @@ def _translate_funcall(
     if bytes_to_free:
         instrs.append(asm.DeallocateStack(bytes_to_free))
 
-    # Return value: doubles in %xmm0, integers in %eax/%rax.
-    at = _asm_type(tac.Var(dst.name) if isinstance(dst, asm.Pseudo) else tac.Constant(ConstInt(0)), symbol_table)
-    if at == asm.Double():
-        instrs.append(asm.Mov(src=asm.Register(asm.Registers.XMM0, asm.Width.QWORD), dst=dst, assembly_type=at))
-    else:
-        instrs.append(asm.Mov(src=asm.Register(asm.Registers.AX, _reg_width(at)), dst=dst, assembly_type=at))
+    # Return value: doubles in %xmm0, integers in %eax/%rax.  Void calls have no dst.
+    if dst is not None:
+        at = _asm_type(tac.Var(dst.name) if isinstance(dst, asm.Pseudo) else tac.Constant(ConstInt(0)), symbol_table)
+        if at == asm.Double():
+            instrs.append(asm.Mov(src=asm.Register(asm.Registers.XMM0, asm.Width.QWORD), dst=dst, assembly_type=at))
+        else:
+            instrs.append(asm.Mov(src=asm.Register(asm.Registers.AX, _reg_width(at)), dst=dst, assembly_type=at))
 
     return instrs
 

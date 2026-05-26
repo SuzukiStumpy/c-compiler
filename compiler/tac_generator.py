@@ -715,6 +715,8 @@ class _TacGenerator:
             CodeGenerationError: If the statement variant is not supported.
         """
         match stmt:
+            case ast.Return(exp=None):
+                return [tac.Return()]
             case ast.Return(exp=exp):
                 val, extra = self.translate_exp(exp)
                 return [*extra, tac.Return(val=val)]
@@ -970,6 +972,9 @@ class _TacGenerator:
             CodeGenerationError: If the expression variant is not supported.
         """
         match exp:
+            case ast.Cast(target_type=ast.VoidType(), exp=inner):
+                _, inner_instrs = self.translate_exp(inner)
+                return tac.Var(value="DUMMY"), inner_instrs
             case ast.Cast(target_type=t, exp=inner):
                 result, inner_instrs = self.translate_exp(inner)
                 inner_type = inner.exp_type
@@ -998,6 +1003,10 @@ class _TacGenerator:
                     else:
                         conv = tac.ZeroExtend(src=result, dst=dst)
                 return dst, [*inner_instrs, conv]
+            case ast.SizeOf(exp=inner):
+                return tac.Constant(ast.ConstULong(_type_size(inner.exp_type or ast.IntType()))), []
+            case ast.SizeOfT(t=t):
+                return tac.Constant(ast.ConstULong(_type_size(t))), []
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
             case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
@@ -1167,6 +1176,18 @@ class _TacGenerator:
                 cond_val, cond_instrs = self.translate_exp(cond)
                 label_false = self._make_label("cond_false")
                 label_end = self._make_label("cond_end")
+                if isinstance(exp.exp_type, ast.VoidType):
+                    _, e1_instrs = self.translate_exp(exp_true)
+                    _, e2_instrs = self.translate_exp(exp_false)
+                    return tac.Var(value="DUMMY"), [
+                        *cond_instrs,
+                        tac.JumpIfZero(condition=cond_val, target=label_false.name),
+                        *e1_instrs,
+                        tac.Jump(target=label_end.name),
+                        label_false,
+                        *e2_instrs,
+                        label_end,
+                    ]
                 dst = self._make_temp(exp.exp_type or ast.IntType())
                 e1_val, e1_instrs = self.translate_exp(exp_true)
                 e2_val, e2_instrs = self.translate_exp(exp_false)

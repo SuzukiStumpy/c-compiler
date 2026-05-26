@@ -6,7 +6,7 @@ subclass of ``Instruction``.
 """
 
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from compiler.syntax.tac.operators import BinaryOperator, UnaryOperator
 from compiler.syntax.tac.values import Val
@@ -23,13 +23,13 @@ class Instruction(ABC):
 
 @dataclass(frozen=True, slots=True)
 class Return(Instruction):
-    """Represents a return value from a function.
+    """Represents a return from a function.
 
     Attributes:
-        val:  The value (of val type) being returned.
+        val: The value being returned, or ``None`` for a void return.
     """
 
-    val: Val
+    val: Val | None = field(default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,12 +175,12 @@ class FunCall(Instruction):
         fun_val: Value that identifies the callable — a ``Var`` naming a function for a
             direct call, or a ``Var`` holding a function pointer for an indirect call.
         args: Ordered sequence of arguments to pass to the function.
-        dst: The destination that the function will return to.
+        dst: The destination that receives the return value, or ``None`` for a void call.
     """
 
     fun_val: Val
     args: tuple[Val]
-    dst: Val
+    dst: Val | None = field(default=None)
 
 
 @dataclass(frozen=True, slots=True)
