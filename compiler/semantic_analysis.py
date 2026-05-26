@@ -80,6 +80,7 @@ from compiler.syntax.ast.types import (
     UChar,
     UIntType,
     ULongType,
+    VoidType,
 )
 from compiler.types.symbols import (
     CharInit,
@@ -155,8 +156,10 @@ def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
     """Return the common pointer type for two expressions where at least one operand is a pointer.
 
     Implements C's pointer-compatibility rules (C11 §6.5.15, §6.3.2.3): two pointer operands are
-    compatible when they share the same type, or when one of them is a null pointer constant (an
-    integer constant expression with value zero), in which case the other operand's type is used.
+    compatible when they share the same type, when one of them is a null pointer constant (an
+    integer constant expression with value zero) in which case the other operand's type is used,
+    or when one operand is ``void *`` and the other is any pointer type, in which case the common
+    type is ``void *``.
 
     Args:
         e1: The first operand expression, already resolved and typed by the semantic analysis pass.
@@ -167,7 +170,7 @@ def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
 
     Raises:
         SemanticError: If the two expressions have incompatible pointer types and neither is a null
-            pointer constant.
+            pointer constant nor a ``void *``.
     """
     e1_t = e1.exp_type
     e2_t = e2.exp_type
@@ -178,16 +181,20 @@ def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
         return e2_t
     if _is_null_pointer_constant(e2):
         return e1_t
+    if isinstance(e1_t, Pointer) and isinstance(e2_t, Pointer):
+        if isinstance(e1_t.referenced, VoidType) or isinstance(e2_t.referenced, VoidType):
+            return Pointer(VoidType())
     raise SemanticError("Expressions have incompatible types")
 
 
 def _convert_by_assignment(e: ast.Exp, target_type: Type) -> ast.Exp:
     """Convert an expression to a target type using the rules for assignment compatibility (C11 §6.5.16.1).
 
-    The three legal cases are: the expression already has the target type; both the expression
-    and the target are arithmetic types (usual arithmetic conversions apply); or the expression
-    is a null pointer constant and the target is a pointer type.  All other combinations are
-    rejected as incompatible.
+    The legal cases are: the expression already has the target type; both the expression and the
+    target are arithmetic types (usual arithmetic conversions apply); the expression is a null
+    pointer constant and the target is a pointer type; or one side is ``void *`` and the other is
+    any pointer type (C11 §6.3.2.3p1) — the non-``void *`` operand is converted to the target type.
+    All other combinations are rejected as incompatible.
 
     Args:
         e: The source expression, already typed by the semantic analysis pass.
@@ -208,6 +215,9 @@ def _convert_by_assignment(e: ast.Exp, target_type: Type) -> ast.Exp:
         return ast.Cast(target_type, e, exp_type=target_type)
     if _is_null_pointer_constant(e) and isinstance(target_type, Pointer):
         return ast.Cast(target_type, e, exp_type=target_type)
+    if isinstance(e_type, Pointer) and isinstance(target_type, Pointer):
+        if isinstance(e_type.referenced, VoidType) or isinstance(target_type.referenced, VoidType):
+            return ast.Cast(target_type, e, exp_type=target_type)
     if isinstance(e_type, Pointer) or isinstance(target_type, Pointer):
         raise SemanticError("Cannot implicitly convert between pointer and non-pointer types in assignment.")
     raise SemanticError(f"Cannot convert expression of type '{e_type}' to '{target_type}' in assignment.")
@@ -295,6 +305,117 @@ def _is_null_pointer_constant(e: ast.Exp) -> bool:
                     return False
         case _:
             return False
+
+
+def is_scalar(t: Type | None) -> bool:
+    """Return True when ``t`` is a scalar type (arithmetic or pointer).
+
+    Void, array, and function types are not scalar per C11 §6.2.5.
+
+    Args:
+        t: The C type to test, or ``None`` if the type is not yet known.
+
+    Returns:
+        ``True`` for arithmetic types and pointer types; ``False`` for
+        ``VoidType``, ``Array``, ``FunType``, and ``None``.
+    """
+    match t:
+        case None | VoidType() | Array() | FunType():
+            return False
+        case _:
+            return True
+
+
+def is_arithmetic(t: Type | None) -> bool:
+    """Return True when ``t`` is an arithmetic type (integer or floating-point).
+
+    Arithmetic types are the numeric types recognised by this compiler: all
+    integer types (``IntType``, ``UIntType``, ``LongType``, ``ULongType``,
+    ``Char``, ``SChar``, ``UChar``) and the floating-point type (``DoubleType``).
+    Pointer, array, function, and void types are not arithmetic.
+
+    Args:
+        t: The C type to test, or ``None`` if the type is not yet known.
+
+    Returns:
+        ``True`` for all types recorded in ``_TYPE_SIZE``; ``False`` otherwise.
+    """
+    return t is not None and type(t) in _TYPE_SIZE
+
+
+def is_integer(t: Type | None) -> bool:
+    """Return True when ``t`` is an integer type (arithmetic and not floating-point).
+
+    Integer types are the arithmetic types that are not ``DoubleType``:
+    ``IntType``, ``UIntType``, ``LongType``, ``ULongType``, ``Char``, ``SChar``,
+    and ``UChar``.  Only integer types are valid operands for bitwise operators,
+    shift operators, and the modulus operator.
+
+    Args:
+        t: The C type to test, or ``None`` if the type is not yet known.
+
+    Returns:
+        ``True`` when ``t`` is in ``_TYPE_SIZE`` and is not ``DoubleType``;
+        ``False`` otherwise.
+    """
+    return is_arithmetic(t) and not isinstance(t, DoubleType)
+
+
+def is_complete(t: Type) -> bool:
+    """Return True when ``t`` is a complete type (i.e. not ``void``).
+
+    Args:
+        t: The C type to test.
+
+    Returns:
+        ``False`` for ``VoidType``; ``True`` for all other types.
+    """
+    return not isinstance(t, VoidType)
+
+
+def is_pointer_to_complete(t: Type | None) -> bool:
+    """Return True when ``t`` is a pointer to a complete (non-void) type.
+
+    Args:
+        t: The C type to test, or ``None`` if the type is not yet known.
+
+    Returns:
+        ``True`` when ``t`` is a ``Pointer`` whose referenced type satisfies
+        ``is_complete``; ``False`` otherwise.
+    """
+    match t:
+        case Pointer(referenced=inner):
+            return is_complete(inner)
+        case _:
+            return False
+
+
+def validate_type_specifier(t: Type) -> None:
+    """Recursively validate a type specifier for structural correctness.
+
+    Checks that no array element type is incomplete (C11 §6.7.6.2p1 — arrays
+    of incomplete type are not allowed), and recurses into pointer, array, and
+    function component types.
+
+    Args:
+        t: The C type to validate.
+
+    Raises:
+        SemanticError: If an array element type is incomplete.
+    """
+    match t:
+        case Array(element=elem_t):
+            if not is_complete(elem_t):
+                raise SemanticError("Illegal array of incomplete type")
+            validate_type_specifier(elem_t)
+        case Pointer(referenced=referenced_t):
+            validate_type_specifier(referenced_t)
+        case FunType(params=param_ts, ret=ret_t):
+            for param_t in param_ts:
+                validate_type_specifier(param_t)
+            validate_type_specifier(ret_t)
+        case _:
+            return
 
 
 def _zero_initializer(t: Type) -> ast.Initializer:
@@ -815,12 +936,16 @@ class SemanticAnalyser:
             ``init``) for all other declarations.
 
         Raises:
-            SemanticError: If ``var_decl`` is an ``extern`` declaration with an
-                initialiser; if the same name was declared with conflicting
-                linkage in the same block; if the same name was already declared
-                in this block; or if a non-``extern`` name conflicts with a
-                same-scope function declaration.
+            SemanticError: If ``var_decl.var_type`` is ``VoidType`` (variables
+                may not be declared with type ``void``); if ``var_decl`` is an
+                ``extern`` declaration with an initialiser; if the same name was
+                declared with conflicting linkage in the same block; if the same
+                name was already declared in this block; or if a non-``extern``
+                name conflicts with a same-scope function declaration.
         """
+        validate_type_specifier(var_decl.var_type)
+        if isinstance(var_decl.var_type, VoidType):
+            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
         binding = self._variable_map.get(var_decl.name)
         if var_decl.storage_class == StorageClass.Extern:
             if var_decl.init is not None:
@@ -954,13 +1079,18 @@ class SemanticAnalyser:
             ``var_decl`` unchanged — file-scope variables are not renamed.
 
         Raises:
-            SemanticError: If ``var_decl.name`` was previously declared as a
-                function (conflicting entity kind on the same external name); if
-                the initialiser is not a constant expression (file-scope variables
-                have static storage duration and must be initialised at compile
-                time); if a prior declaration of the same name carried a different
-                C type; or if linkage conflicts with a prior declaration.
+            SemanticError: If ``var_decl.var_type`` is ``VoidType`` (variables
+                may not be declared with type ``void``); if ``var_decl.name``
+                was previously declared as a function (conflicting entity kind on
+                the same external name); if the initialiser is not a constant
+                expression (file-scope variables have static storage duration and
+                must be initialised at compile time); if a prior declaration of
+                the same name carried a different C type; or if linkage conflicts
+                with a prior declaration.
         """
+        validate_type_specifier(var_decl.var_type)
+        if isinstance(var_decl.var_type, VoidType):
+            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
         if var_decl.name in self._function_map:
             raise SemanticError(
                 f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
@@ -1103,23 +1233,25 @@ class SemanticAnalyser:
         Args:
             fun: The ``Function`` node whose name is to be registered.
 
-        Raises:
         Returns:
             The (possibly adjusted) ``Function`` node, with any ``Array``-typed
             parameters replaced by their equivalent ``Pointer`` types.
 
         Raises:
             SemanticError: If the function's declared return type is an ``Array``
-                (functions may not return arrays in C); if ``fun`` is a definition
-                and a definition for the same name has already been registered;
-                if the parameter types of this declaration conflict with a prior
-                declaration of the same name; if ``fun.name`` was already declared
-                as a variable in the current block scope; or if ``fun.name`` was
-                previously declared as an ``extern`` variable at any scope level
-                (conflicting entity kind on the same external name).
+                (functions may not return arrays in C); if any parameter has type
+                ``void`` (parameters may not be declared with type ``void``);
+                if ``fun`` is a definition and a definition for the same name has
+                already been registered; if the parameter types of this
+                declaration conflict with a prior declaration of the same name;
+                if ``fun.name`` was already declared as a variable in the current
+                block scope; or if ``fun.name`` was previously declared as an
+                ``extern`` variable at any scope level (conflicting entity kind on
+                the same external name).
         """
         if isinstance(fun.fun_type, FunType) and isinstance(fun.fun_type.ret, Array):
             raise SemanticError(f"Function '{fun.name}' cannot return an array type.")
+        validate_type_specifier(fun.fun_type)
         adjusted_params: list[ast.Parameter] = []
         any_adjusted = False
         for param in fun.params:
@@ -1145,6 +1277,9 @@ class SemanticAnalyser:
                 source_file=fun.source_file,
                 source_line=fun.source_line,
             )
+        for param in fun.params:
+            if isinstance(param.param_type, VoidType):
+                raise SemanticError(f"Parameter '{param.name}' of '{fun.name}' has type 'void'.")
         var_binding = self._variable_map.get(fun.name)
         if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
             raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
@@ -1325,14 +1460,16 @@ class SemanticAnalyser:
                 return ast.Constant(e.value, exp_type=IntType())
             case ast.Unary(operator=op, exp=exp):
                 typed_exp = self._typecheck_and_convert(exp)
-                if isinstance(typed_exp.exp_type, DoubleType) and isinstance(op, ast.Complement):
-                    raise SemanticError("Can't take the bitwise complement of a double")
-                if isinstance(typed_exp.exp_type, Pointer) and isinstance(op, (ast.Complement, ast.Negate)):
-                    raise SemanticError("Cannot apply bitwise complement or arithmetic negation to a pointer type.")
+                if isinstance(op, ast.Complement) and not is_integer(typed_exp.exp_type):
+                    raise SemanticError("Bitwise complement requires an integer operand.")
+                if isinstance(op, ast.Negate) and not is_arithmetic(typed_exp.exp_type):
+                    raise SemanticError("Arithmetic negation requires an arithmetic operand.")
                 if isinstance(typed_exp.exp_type, (Char, SChar, UChar)) and isinstance(
                     op, (ast.Negate, ast.Complement)
                 ):
                     typed_exp = ast.Cast(IntType(), typed_exp, exp_type=IntType())
+                if isinstance(op, Not) and not is_scalar(typed_exp.exp_type):
+                    raise SemanticError("Logical operators only apply to scalar expressions")
                 exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
                 return ast.Unary(op, typed_exp, exp_type=exp_type)
             case ast.Binary(operator=op, left=left, right=right):
@@ -1341,13 +1478,9 @@ class SemanticAnalyser:
                 left_is_ptr = isinstance(typed_left.exp_type, Pointer)
                 right_is_ptr = isinstance(typed_right.exp_type, Pointer)
                 either_is_ptr = left_is_ptr or right_is_ptr
-                if (
-                    isinstance(typed_left.exp_type, DoubleType) or isinstance(typed_right.exp_type, DoubleType)
-                ) and isinstance(op, ast.Remainder):
-                    raise SemanticError("Can't take the modulus of a double")
-                if either_is_ptr and isinstance(op, (ast.Multiply, ast.Divide, ast.Remainder)):
-                    raise SemanticError("Cannot apply multiplication, division, or remainder to a pointer type.")
                 if isinstance(op, (And, Or)):
+                    if not is_scalar(typed_left.exp_type) or not is_scalar(typed_right.exp_type):
+                        raise SemanticError("Logical operators only apply to scalar expressions")
                     bin_type: Type | None = IntType()
                 elif isinstance(op, (Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual)):
                     bin_type = IntType()
@@ -1367,16 +1500,16 @@ class SemanticAnalyser:
                                         "pointer types are not implicitly convertible to or from arithmetic types."
                                     )
                         else:
+                            if not is_arithmetic(typed_left.exp_type) or not is_arithmetic(typed_right.exp_type):
+                                raise SemanticError("Comparison operators require arithmetic operands.")
                             common = get_common_type(typed_left.exp_type, typed_right.exp_type)
                             if typed_left.exp_type != common:
                                 typed_left = ast.Cast(common, typed_left, exp_type=common)
                             if typed_right.exp_type != common:
                                 typed_right = ast.Cast(common, typed_right, exp_type=common)
                 elif isinstance(op, (LeftShift, RightShift)):
-                    if isinstance(typed_left.exp_type, DoubleType) or isinstance(typed_right.exp_type, DoubleType):
-                        raise SemanticError("Can't apply shift operators to a double")
-                    if either_is_ptr:
-                        raise SemanticError("Cannot apply shift operators to a pointer type.")
+                    if not is_integer(typed_left.exp_type) or not is_integer(typed_right.exp_type):
+                        raise SemanticError("Shift operands must be integer types.")
                     # C §6.5.7: type of a shift is the type of the promoted left operand.
                     # The right operand is evaluated independently and not cast to a common type.
                     bin_type = typed_left.exp_type
@@ -1386,6 +1519,10 @@ class SemanticAnalyser:
                             right_is_ptr and isinstance(typed_right.exp_type.referenced, FunType)
                         ):
                             raise SemanticError("Cannot perform arithmetic on a function pointer type.")
+                        if (left_is_ptr and not is_pointer_to_complete(typed_left.exp_type)) or (
+                            right_is_ptr and not is_pointer_to_complete(typed_right.exp_type)
+                        ):
+                            raise SemanticError("Cannot perform pointer arithmetic on a pointer to an incomplete type.")
                         if isinstance(op, ast.Add):
                             if left_is_ptr and right_is_ptr:
                                 raise SemanticError("Cannot add two pointers.")
@@ -1423,15 +1560,18 @@ class SemanticAnalyser:
                         else:
                             raise SemanticError("Cannot apply this operator to a pointer type.")
                     else:
-                        if typed_left.exp_type is not None and typed_right.exp_type is not None:
-                            bin_type = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                        if isinstance(op, (ast.Remainder, ast.BitwiseAnd, ast.BitwiseOr, ast.BitwiseXor)):
+                            if not is_integer(typed_left.exp_type) or not is_integer(typed_right.exp_type):
+                                raise SemanticError("Operator requires integer operands.")
                         else:
-                            bin_type = typed_left.exp_type
-                        if bin_type is not None:
-                            if typed_left.exp_type != bin_type:
-                                typed_left = ast.Cast(bin_type, typed_left, exp_type=bin_type)
-                            if typed_right.exp_type != bin_type:
-                                typed_right = ast.Cast(bin_type, typed_right, exp_type=bin_type)
+                            if not is_arithmetic(typed_left.exp_type) or not is_arithmetic(typed_right.exp_type):
+                                raise SemanticError("Operator requires arithmetic operands.")
+                        assert typed_left.exp_type is not None and typed_right.exp_type is not None
+                        bin_type = get_common_type(typed_left.exp_type, typed_right.exp_type)
+                        if typed_left.exp_type != bin_type:
+                            typed_left = ast.Cast(bin_type, typed_left, exp_type=bin_type)
+                        if typed_right.exp_type != bin_type:
+                            typed_right = ast.Cast(bin_type, typed_right, exp_type=bin_type)
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
@@ -1448,16 +1588,29 @@ class SemanticAnalyser:
                 typed_cond = self._typecheck_and_convert(cond)
                 typed_true = self._typecheck_and_convert(exp_true)
                 typed_false = self._typecheck_and_convert(exp_false)
+                if not is_scalar(typed_cond.exp_type):
+                    raise SemanticError("Condition in conditional operator must be scalar")
                 if typed_true.exp_type is not None and typed_false.exp_type is not None:
-                    if isinstance(typed_true.exp_type, Pointer) or isinstance(typed_false.exp_type, Pointer):
+                    t1 = typed_true.exp_type
+                    t2 = typed_false.exp_type
+                    if isinstance(t1, VoidType) and isinstance(t2, VoidType):
+                        cond_type: Type | None = VoidType()
+                    elif isinstance(t1, Pointer) or isinstance(t2, Pointer):
                         common_cond = get_common_pointer_type(typed_true, typed_false)
+                        cond_type = common_cond
+                        if t1 != common_cond:
+                            typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
+                        if t2 != common_cond:
+                            typed_false = ast.Cast(common_cond, typed_false, exp_type=common_cond)
+                    elif is_scalar(t1) and is_scalar(t2):
+                        common_cond = get_common_type(t1, t2)
+                        cond_type = common_cond
+                        if t1 != common_cond:
+                            typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
+                        if t2 != common_cond:
+                            typed_false = ast.Cast(common_cond, typed_false, exp_type=common_cond)
                     else:
-                        common_cond = get_common_type(typed_true.exp_type, typed_false.exp_type)
-                    cond_type: Type | None = common_cond
-                    if typed_true.exp_type != common_cond:
-                        typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
-                    if typed_false.exp_type != common_cond:
-                        typed_false = ast.Cast(common_cond, typed_false, exp_type=common_cond)
+                        raise SemanticError("Cannot convert branches of conditional to a common type")
                 else:
                     cond_type = typed_true.exp_type
                 return ast.Conditional(typed_cond, typed_true, typed_false, exp_type=cond_type)
@@ -1493,9 +1646,14 @@ class SemanticAnalyser:
                 ]
                 return ast.FunctionCall(typed_callee, typed_args, exp_type=fn_ret_type)
             case ast.Cast(target_type=target_type, exp=exp):
-                if isinstance(target_type, Array):
-                    raise SemanticError("Cannot cast an expression to an array type.")
+                validate_type_specifier(target_type)
                 typed_inner = self._typecheck_and_convert(exp)
+                if isinstance(target_type, VoidType):
+                    return ast.Cast(target_type, typed_inner, exp_type=target_type)
+                if not is_scalar(target_type):
+                    raise SemanticError("Can only cast to scalar type or void")
+                if not is_scalar(typed_inner.exp_type):
+                    raise SemanticError("Cannot cast non-scalar expression to scalar type")
                 if isinstance(target_type, Pointer) and isinstance(typed_inner.exp_type, DoubleType):
                     raise SemanticError("Cannot cast a double to a pointer type.")
                 if isinstance(target_type, DoubleType) and isinstance(typed_inner.exp_type, Pointer):
@@ -1505,6 +1663,8 @@ class SemanticAnalyser:
                 typed_exp = self._typecheck_and_convert(exp)
                 if not isinstance(typed_exp.exp_type, Pointer):
                     raise SemanticError("Cannot dereference a non-pointer type.")
+                if isinstance(typed_exp.exp_type.referenced, VoidType):
+                    raise SemanticError("Cannot dereference a pointer to void.")
                 return ast.Dereference(typed_exp, exp_type=typed_exp.exp_type.referenced)
             case ast.AddrOf(exp=exp):
                 typed_exp = self._type_check_exp(exp)
@@ -1520,10 +1680,14 @@ class SemanticAnalyser:
                 t2 = typed_e2.exp_type
                 _int_types = (IntType, LongType, UIntType, ULongType, Char, SChar, UChar)
                 if isinstance(t1, Pointer) and isinstance(t2, _int_types):
+                    if not is_pointer_to_complete(t1):
+                        raise SemanticError("Cannot subscript a pointer to an incomplete type.")
                     if not isinstance(t2, LongType):
                         typed_e2 = ast.Cast(LongType(), typed_e2, exp_type=LongType())
                     subscript_type: Type = t1.referenced
                 elif isinstance(t1, _int_types) and isinstance(t2, Pointer):
+                    if not is_pointer_to_complete(t2):
+                        raise SemanticError("Cannot subscript a pointer to an incomplete type.")
                     if not isinstance(t1, LongType):
                         typed_e1 = ast.Cast(LongType(), typed_e1, exp_type=LongType())
                     subscript_type = t2.referenced
@@ -1532,6 +1696,22 @@ class SemanticAnalyser:
                 return ast.Subscript(typed_e1, typed_e2, exp_type=subscript_type)
             case ast.String(string=s):
                 return ast.String(s, exp_type=Array(element=Char(), size=len(s) + 1))
+            case ast.SizeOfT(t=t):
+                validate_type_specifier(t)
+                if not is_complete(t):
+                    raise SemanticError("Cannot get the size of an incomplete type")
+                return ast.SizeOfT(t, exp_type=ULongType())
+            case ast.SizeOf(exp=exp):
+                typed_inner = self._type_check_exp(exp)
+                if (
+                    isinstance(typed_inner, ast.Var)
+                    and isinstance(self._symbol_table.get(typed_inner.name), SymbolTableEntry)
+                    and isinstance(self._symbol_table[typed_inner.name].attrs, FunAttr)
+                ):
+                    raise SemanticError("Cannot apply sizeof to a function type")
+                if typed_inner.exp_type is not None and not is_complete(typed_inner.exp_type):
+                    raise SemanticError("Cannot get the size of an incomplete type")
+                return ast.SizeOf(typed_inner, exp_type=ULongType())
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -1718,6 +1898,10 @@ class SemanticAnalyser:
                 return self._type_check_exp(ast.Subscript(self.resolve_exp(exp1), self.resolve_exp(exp2)))
             case ast.String():
                 return self._type_check_exp(e)
+            case ast.SizeOfT():
+                return self._type_check_exp(e)
+            case ast.SizeOf(exp=exp):
+                return self._type_check_exp(ast.SizeOf(self.resolve_exp(exp)))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -1757,9 +1941,16 @@ class SemanticAnalyser:
             case ast.Compound(body=block):
                 return ast.Compound(self._resolve_block(block))
             case ast.Return(exp=exp):
+                return_type = self._current_return_type
+                if isinstance(return_type, VoidType):
+                    if exp is not None:
+                        raise SemanticError("void function must not return a value.")
+                    return ast.Return(None)
+                if exp is None:
+                    raise SemanticError("non-void function must return a value.")
                 resolved = self._typecheck_and_convert(self.resolve_exp(exp))
-                if self._current_return_type is not None and resolved.exp_type is not None:
-                    resolved = _convert_by_assignment(resolved, self._current_return_type)
+                if return_type is not None and resolved.exp_type is not None:
+                    resolved = _convert_by_assignment(resolved, return_type)
                 return ast.Return(resolved)
             case ast.Expression(exp=exp):
                 return ast.Expression(self._typecheck_and_convert(self.resolve_exp(exp)))
@@ -1774,12 +1965,10 @@ class SemanticAnalyser:
                     raise SemanticError("'continue' statement not within a loop.")
                 return ast.Continue(self._loop_stack[-1])
             case ast.If(condition=cond, then=then_stmt, else_=None):
-                return ast.If(
-                    self._typecheck_and_convert(self.resolve_exp(cond)), self._resolve_statement(then_stmt), None
-                )
+                return ast.If(self._resolve_condition(cond), self._resolve_statement(then_stmt), None)
             case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
                 return ast.If(
-                    self._typecheck_and_convert(self.resolve_exp(cond)),
+                    self._resolve_condition(cond),
                     self._resolve_statement(then_stmt),
                     self._resolve_statement(else_stmt),
                 )
@@ -1787,9 +1976,7 @@ class SemanticAnalyser:
                 label = self._make_loop_label("while")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
-                result = ast.While(
-                    self._typecheck_and_convert(self.resolve_exp(condition)), self._resolve_statement(body), label
-                )
+                result = ast.While(self._resolve_condition(condition), self._resolve_statement(body), label)
                 self._loop_stack.pop()
                 self._break_stack.pop()
                 return result
@@ -1797,9 +1984,7 @@ class SemanticAnalyser:
                 label = self._make_loop_label("do")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
-                result = ast.DoWhile(
-                    self._resolve_statement(body), self._typecheck_and_convert(self.resolve_exp(condition)), label
-                )
+                result = ast.DoWhile(self._resolve_statement(body), self._resolve_condition(condition), label)
                 self._loop_stack.pop()
                 self._break_stack.pop()
                 return result
@@ -1810,6 +1995,8 @@ class SemanticAnalyser:
                 self._break_stack.append(label)
                 init = self._resolve_for_init(init)
                 condition = self._resolve_optional_exp(condition)
+                if condition is not None and not is_scalar(condition.exp_type):
+                    raise SemanticError("Controlling expression must be scalar; void expression is not permitted here.")
                 post = self._resolve_optional_exp(post)
                 body = self._resolve_statement(body)
                 self._loop_stack.pop()
@@ -1893,6 +2080,27 @@ class SemanticAnalyser:
                 return ast.InitDecl(ast.VarDecl(self.resolve_variable_declaration(var_decl)))
             case _:
                 raise SemanticError("Unhandled for-init type in semantic analyser")
+
+    def _resolve_condition(self, cond: ast.Exp) -> ast.Exp:
+        """Resolve a controlling condition expression and verify it is scalar.
+
+        Conditions in ``if``, ``while``, ``do``/``while``, and ``for`` statements must be scalar
+        expressions (C11 §6.8.4.1, §6.8.5).  ``void`` expressions are non-scalar and are
+        therefore illegal as controlling conditions.
+
+        Args:
+            cond: The condition expression to resolve.
+
+        Returns:
+            The fully resolved and type-converted condition expression.
+
+        Raises:
+            SemanticError: If the resolved condition has a non-scalar type (e.g. ``void``).
+        """
+        resolved = self._typecheck_and_convert(self.resolve_exp(cond))
+        if not is_scalar(resolved.exp_type):
+            raise SemanticError("Controlling expression must be scalar; void expression is not permitted here.")
+        return resolved
 
     def _resolve_optional_exp(self, exp: ast.Exp | None) -> ast.Exp | None:
         """Resolve an optional expression, returning ``None`` when absent.

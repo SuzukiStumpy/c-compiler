@@ -46,43 +46,43 @@ class TestDoubleOperatorRestrictions:
     def test_bitwise_complement_of_double_raises(self) -> None:
         """Applying ``~`` to a ``double`` operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Unary(ast.Complement(), _double_const())))
-        with pytest.raises(SemanticError, match="bitwise complement"):
+        with pytest.raises(SemanticError, match="integer operand"):
             resolve(prog)
 
     def test_remainder_with_double_left_raises(self) -> None:
         """Applying ``%`` with a ``double`` left operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Binary(ast.Remainder(), _double_const(), _int_const())))
-        with pytest.raises(SemanticError, match="modulus"):
+        with pytest.raises(SemanticError, match="integer operands"):
             resolve(prog)
 
     def test_remainder_with_double_right_raises(self) -> None:
         """Applying ``%`` with a ``double`` right operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Binary(ast.Remainder(), _int_const(), _double_const())))
-        with pytest.raises(SemanticError, match="modulus"):
+        with pytest.raises(SemanticError, match="integer operands"):
             resolve(prog)
 
     def test_left_shift_with_double_left_raises(self) -> None:
         """Applying ``<<`` with a ``double`` left operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Binary(ast.LeftShift(), _double_const(), _int_const())))
-        with pytest.raises(SemanticError, match="shift"):
+        with pytest.raises(SemanticError, match="integer types"):
             resolve(prog)
 
     def test_left_shift_with_double_right_raises(self) -> None:
         """Applying ``<<`` with a ``double`` right operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Binary(ast.LeftShift(), _int_const(), _double_const())))
-        with pytest.raises(SemanticError, match="shift"):
+        with pytest.raises(SemanticError, match="integer types"):
             resolve(prog)
 
     def test_right_shift_with_double_left_raises(self) -> None:
         """Applying ``>>`` with a ``double`` left operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Binary(ast.RightShift(), _double_const(), _int_const())))
-        with pytest.raises(SemanticError, match="shift"):
+        with pytest.raises(SemanticError, match="integer types"):
             resolve(prog)
 
     def test_right_shift_with_double_right_raises(self) -> None:
         """Applying ``>>`` with a ``double`` right operand raises ``SemanticError``."""
         prog = _program(_return_exp(ast.Binary(ast.RightShift(), _int_const(), _double_const())))
-        with pytest.raises(SemanticError, match="shift"):
+        with pytest.raises(SemanticError, match="integer types"):
             resolve(prog)
 
 
@@ -115,37 +115,37 @@ class TestPointerOperatorRestrictions:
     def test_multiply_pointer_raises(self) -> None:
         """Multiplying a pointer operand raises ``SemanticError``."""
         body = _ptr_var("p") + _return_exp(ast.Binary(ast.Multiply(), ast.Var("p"), _int_const()))
-        with pytest.raises(SemanticError, match="multiplication"):
+        with pytest.raises(SemanticError, match="pointer"):
             resolve(_program(body))
 
     def test_divide_pointer_raises(self) -> None:
         """Dividing a pointer operand raises ``SemanticError``."""
         body = _ptr_var("p") + _return_exp(ast.Binary(ast.Divide(), _int_const(), ast.Var("p")))
-        with pytest.raises(SemanticError, match="division"):
+        with pytest.raises(SemanticError, match="pointer"):
             resolve(_program(body))
 
     def test_remainder_pointer_raises(self) -> None:
         """Applying ``%`` to a pointer operand raises ``SemanticError``."""
         body = _ptr_var("p") + _return_exp(ast.Binary(ast.Remainder(), ast.Var("p"), _int_const()))
-        with pytest.raises(SemanticError, match="remainder"):
+        with pytest.raises(SemanticError, match="pointer"):
             resolve(_program(body))
 
     def test_complement_pointer_raises(self) -> None:
         """Applying ``~`` to a pointer operand raises ``SemanticError``."""
         body = _ptr_var("p") + _return_exp(ast.Unary(ast.Complement(), ast.Var("p")))
-        with pytest.raises(SemanticError, match="pointer type"):
+        with pytest.raises(SemanticError, match="integer operand"):
             resolve(_program(body))
 
     def test_negate_pointer_raises(self) -> None:
         """Applying unary ``-`` to a pointer operand raises ``SemanticError``."""
         body = _ptr_var("p") + _return_exp(ast.Unary(ast.Negate(), ast.Var("p")))
-        with pytest.raises(SemanticError, match="pointer type"):
+        with pytest.raises(SemanticError, match="arithmetic operand"):
             resolve(_program(body))
 
     def test_shift_pointer_raises(self) -> None:
         """Applying ``<<`` with a pointer operand raises ``SemanticError``."""
         body = _ptr_var("p") + _return_exp(ast.Binary(ast.LeftShift(), ast.Var("p"), _int_const()))
-        with pytest.raises(SemanticError, match="pointer type"):
+        with pytest.raises(SemanticError, match="integer types"):
             resolve(_program(body))
 
     def test_logical_not_pointer_succeeds(self) -> None:
@@ -412,3 +412,40 @@ class TestCharTypeChecking:
         """Assigning a ``char`` value to an ``int`` variable is a valid implicit conversion."""
         body = _char_var("c") + (_vd("x"),) + (ast.S(ast.Expression(ast.Assignment(ast.Var("x"), ast.Var("c")))),)
         resolve(_program(body + _return_exp(_int_const())))
+
+
+class TestSizeOfTypeChecking:
+    """``SizeOf`` and ``SizeOfT`` expressions are correctly typed and validated."""
+
+    def test_sizeof_t_complete_type_has_ulong_type(self) -> None:
+        """``sizeof(int)`` yields an expression of type ``ULongType``."""
+        body = _expr_stmt(ast.SizeOfT(ast.IntType())) + _return_exp(_int_const())
+        resolved = resolve(_program(body))
+        stmt = resolved.declarations[0].function_declaration.body[0].statement
+        assert isinstance(stmt, ast.Expression)
+        assert stmt.exp.exp_type == ast.ULongType()
+
+    def test_sizeof_t_void_raises(self) -> None:
+        """``sizeof(void)`` raises ``SemanticError`` because ``void`` is an incomplete type."""
+        prog = _program(_return_exp(ast.SizeOfT(ast.VoidType())))
+        with pytest.raises(SemanticError, match="incomplete"):
+            resolve(prog)
+
+    def test_sizeof_expression_has_ulong_type(self) -> None:
+        """``sizeof(x)`` for an ``int`` variable yields an expression of type ``ULongType``."""
+        body = (
+            (_vd("x", ast.Constant(ast.ConstInt(1))),)
+            + _expr_stmt(ast.SizeOf(ast.Var("x")))
+            + _return_exp(_int_const())
+        )
+        resolved = resolve(_program(body))
+        stmt = resolved.declarations[0].function_declaration.body[1].statement
+        assert isinstance(stmt, ast.Expression)
+        assert stmt.exp.exp_type == ast.ULongType()
+
+    def test_sizeof_void_expression_raises(self) -> None:
+        """``sizeof`` applied to an expression of ``void`` type raises ``SemanticError``."""
+        void_cast = ast.Cast(ast.VoidType(), _int_const())
+        prog = _program(_return_exp(ast.SizeOf(void_cast)))
+        with pytest.raises(SemanticError, match="incomplete"):
+            resolve(prog)
