@@ -5,7 +5,7 @@ parser and consumed by later compiler phases. The hierarchy mirrors the Zephyr
 Abstract Syntax Description Language (ASDL) grammar for the supported subset of C:
 
     program              = Program(declaration*)
-    statement            = Return(exp)
+    statement            = Return(exp?)
                          | Expression(exp)
                          | If(exp condition, statement then, statement? else_)
                          | Goto(identifier target)
@@ -24,7 +24,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     variable_declaration = (identifier name, initializer? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
     initializer          = SingleInit(exp) | CompoundInit(intializer*)
-    type                 = Int | Long | UInt | ULong | Double | Char | SChar | UChar
+    type                 = Int | Long | UInt | ULong | Double | Char | SChar | UChar | Void
                          | FunType(type* params, type ret)
                          | Pointer(type referenced)
                          | Array(type element, int size)
@@ -43,6 +43,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Dereference(exp)
                          | AddrOf(exp)
                          | Subscript(exp, exp)
+                         | SizeOf(exp)
+                         | SizeOfT(type)
     unary_operator       = Complement | Negate | Not
                          | PreIncrement | PreDecrement
                          | PostIncrement | PostDecrement
@@ -50,7 +52,6 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | LeftShift | RightShift | BitwiseAnd | BitwiseXor | BitwiseOr
                          | And | Or | Equal | NotEqual | LessThan | LessOrEqual
                          | GreaterThan | GreaterOrEqual
-    type                 = IntType
     linkage              = Linkage(NONE | EXTERNAL)
     block                = Block(block_item*)
     block_item           = S(statement) | D(declaration)
@@ -64,9 +65,9 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
 
 Nodes are organised into submodules by logical role:
 
-    types        — C type nodes (Type, IntType)
+    types        — C type nodes (Type, IntType, VoidType, …)
     expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment,
-                   Conditional, FunctionCall)
+                   Conditional, FunctionCall, SizeOf, SizeOfT)
     statements   — Statement nodes (Statement, Return, Expression, If, Null,
                    Goto, Label, Break, Continue, While, DoWhile)
     declarations — Program structure nodes (VariableDeclaration, Declaration,
@@ -133,6 +134,8 @@ from compiler.syntax.ast.expressions import (
     FunctionCall,
     Initializer,
     SingleInit,
+    SizeOf,
+    SizeOfT,
     String,
     Subscript,
     Unary,
@@ -198,9 +201,13 @@ from compiler.syntax.ast.types import (
     UChar,
     UIntType,
     ULongType,
+    VoidType,
 )
 
 __all__ = [
+    "SizeOf",
+    "SizeOfT",
+    "VoidType",
     "String",
     "ConstChar",
     "ConstUChar",

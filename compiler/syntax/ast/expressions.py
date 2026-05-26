@@ -196,6 +196,29 @@ class String(Exp):
     string: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class SizeOf(Exp):
+    """Expression returning the size of the type of the given expression.  Note that the
+    expression is _not_ evaluated
+
+    Attributes:
+        exp: The expression we wish to know the size of
+    """
+
+    exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class SizeOfT(Exp):
+    """Expression returning the size of the specified type.
+
+    Attributes:
+        t: The type whose size we wish to return
+    """
+
+    t: Type
+
+
 class Initializer(ABC):
     """Abstract base for initializer objects.  Wraps the SingleInit and CompoundInit
     AST Nodes

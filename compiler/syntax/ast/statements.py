@@ -26,10 +26,10 @@ class Return(Statement):
     """A ``return`` statement.
 
     Attributes:
-        exp: The expression whose value is returned to the caller.
+        exp: The (optional) expression whose value is returned to the caller.
     """
 
-    exp: Exp
+    exp: Exp | None
 
 
 @dataclass(frozen=True, slots=True)

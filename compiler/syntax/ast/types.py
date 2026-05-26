@@ -69,6 +69,15 @@ class DoubleType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class VoidType(Type):
+    """Represents the C ``void`` type.
+
+    Used wherever ``void`` appears as a return type or parameter type in the
+    source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class Pointer(Type):
     """Represents a pointer within the C code
 
