@@ -16,12 +16,12 @@ which are handled by precedence climbing.  The grammar is:
     param                ::= {type-specifier}+ declarator
                            | {type-specifier}+ abstract-declarator
                            | {type-specifier}+
-    type-specifier       ::= "int" | "long" | "unsigned" | "signed" | "double"
+    type-specifier       ::= "int" | "long" | "unsigned" | "signed" | "double" | "char" | "void"
     specifier            ::= type-specifier | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
     for_init             ::= variable-declaration | [exp] ";"
-    statement            ::= "return" exp ";"
+    statement            ::= "return" [exp] ";"
                            | exp ";"
                            | "if" "(" exp ")" statement ["else" statement]
                            | "goto" identifier ";"
@@ -36,14 +36,19 @@ which are handled by precedence climbing.  The grammar is:
                            | "case" int ":" statement
                            | "default" ":" statement
                            | ";"
-    exp                  ::= factor | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
-    factor               ::= prefix_unop factor
+    exp                  ::= cast-exp | exp binop exp | exp "=" exp | exp assignop exp | exp "?" exp ":" exp
+    cast-exp             ::= "(" type-name ")" cast-exp
+                           | factor
+    factor               ::= prefix_unop cast-exp
+                           | "sizeof" unary-exp
+                           | "sizeof" "(" type-name ")"
                            | primary postfix_unop?
     primary              ::= const
                            | identifier
                            | "(" {type-specifier}+ [abstract-declarator] ")" factor
                            | "(" exp ")"
                            | identifier "(" [argument-list] ")"
+    type-name            ::= {type-specifier} + [abstract-declarator]
     postfix-exp          ::= primary {"[" exp "]"}
     argument-list        ::= exp {"," exp}
     abstract-declarator  ::= "*" [abstract-declarator]
@@ -151,6 +156,8 @@ from compiler.syntax.ast import (
     S,
     SChar,
     SingleInit,
+    SizeOf,
+    SizeOfT,
     Statement,
     StorageClass,
     String,
@@ -166,6 +173,7 @@ from compiler.syntax.ast import (
     Var,
     VarDecl,
     VariableDeclaration,
+    VoidType,
     While,
 )
 from compiler.types.tokens import Token, TokenType
@@ -216,6 +224,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.UNSIGNED,
         TokenType.DOUBLE,
         TokenType.CHAR,
+        TokenType.VOID,
     }
 )
 
@@ -515,6 +524,11 @@ class Parser:
             if tok is None:
                 raise self._eof_error("expected a type specifier, got end of input")
             raise self._token_error(f"expected a type, got {tok.type.name} '{tok.value}'", tok)
+        if TokenType.VOID in seen:
+            assert last_tok is not None
+            if len(seen) > 1:
+                raise self._token_error("'void' cannot be combined with other type specifiers", last_tok)
+            return VoidType()
         if TokenType.DOUBLE in seen:
             if len(seen) > 1:
                 assert last_tok is not None
@@ -627,7 +641,7 @@ class Parser:
         token = self._peek()
         if token is None or token.type == TokenType.RPAREN:
             return ()
-        if token.type == TokenType.VOID:
+        if token.type == TokenType.VOID and self._peek(1) is not None and self._peek(1).type == TokenType.RPAREN:  # type: ignore[union-attr]
             self._consume()
             return ()
         params: list[Parameter] = [self._parse_param()]
@@ -1115,17 +1129,20 @@ class Parser:
                 return Expression(exp=exp)
 
     def _parse_return(self) -> Return:
-        """Parse a ``return <exp>;`` statement.
+        """Parse a ``return [exp];`` statement.
+
+        The return expression is optional; a bare ``return;`` is valid for
+        void functions.
 
         Returns:
-            A ``Return`` node wrapping the parsed expression.
+            A ``Return`` node whose ``exp`` field is ``None`` when no expression
+            was present.
 
         Raises:
-            ParseError: If the expression or trailing semicolon is missing.
+            ParseError: If the trailing semicolon is missing.
         """
         self._expect(TokenType.RETURN)
-        exp = self._parse_exp()
-        self._expect(TokenType.SEMICOLON)
+        exp = self._parse_optional_exp(TokenType.SEMICOLON)
         return Return(exp=exp)
 
     def _parse_unaryop(self) -> UnaryOperator:
@@ -1219,7 +1236,7 @@ class Parser:
         Returns:
             An ``Exp`` node.
         """
-        left: Exp = self._parse_factor()
+        left: Exp = self._parse_cast_exp()
         prec = self._get_precedence()
         while prec is not None and prec >= min_prec:
             if self._match(TokenType.ASSIGNMENT):
@@ -1261,18 +1278,56 @@ class Parser:
         self._expect(TokenType.COLON)
         return exp
 
-    def _parse_factor(self) -> Exp:
-        """Parse a factor: a primary expression optionally wrapped in prefix/postfix operators.
-
-        Prefix unary operators (``-``, ``~``, ``!``, ``++``, ``--``) are parsed
-        recursively and returned immediately. Primary expressions (constants,
-        identifiers, function calls, parenthesised expressions) are then
-        checked for a trailing postfix ``++`` or ``--`` before returning.
+    def _parse_cast_exp(self) -> Exp:
+        """Parse a cast expression or fall through to a factor.
 
         Grammar::
 
-            factor        ::= prefix_unop factor | primary postfix_unop?
-            primary       ::= int | identifier | "(" exp ")"
+            cast-exp ::= "(" type-name ")" cast-exp | factor
+
+        When the next token is ``(`` followed by a type-specifier, the sequence
+        is consumed as a C-style cast; otherwise control falls through to
+        ``_parse_factor``.
+
+        Returns:
+            A ``Cast`` node when a cast was present, otherwise whatever
+            ``_parse_factor`` returns.
+
+        Raises:
+            ParseError: If the cast type or the operand expression is malformed.
+        """
+        if self._match(TokenType.LPAREN):
+            next_tok = self._peek(1)
+            if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
+                self._consume()  # consume "("
+                base_cast_type = self._parse_type()
+                if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
+                    target_type: Type = self._parse_abstract_declarator()(base_cast_type)
+                else:
+                    target_type = base_cast_type
+                self._expect(TokenType.RPAREN)
+                return Cast(target_type=target_type, exp=self._parse_cast_exp())
+        return self._parse_factor()
+
+    def _parse_factor(self) -> Exp:
+        """Parse a factor: a primary expression optionally wrapped in prefix/postfix operators.
+
+        Prefix unary operators (``-``, ``~``, ``!``, ``++``, ``--``, ``*``, ``&``)
+        apply to a ``cast-exp`` so that ``(int)-x`` parses correctly.  ``sizeof``
+        may be followed by a type name in parentheses (``SizeOfT``) or by an
+        arbitrary expression (``SizeOf``). Primary expressions (constants,
+        identifiers, function calls, parenthesised expressions) are then checked for
+        trailing postfix ``++``, ``--``, or ``[`` subscript operators before returning.
+
+        Grammar::
+
+            factor        ::= prefix_unop cast-exp
+                            | "sizeof" "(" type-name ")"
+                            | "sizeof" cast-exp
+                            | primary postfix_unop?
+            primary       ::= const
+                            | identifier
+                            | "(" exp ")"
                             | identifier "(" [argument-list] ")"
             argument-list ::= exp {"," exp}
             prefix_unop   ::= "-" | "~" | "!" | "++" | "--" | "*" | "&"
@@ -1292,12 +1347,30 @@ class Parser:
         match token.type:
             case TokenType.ASTERISK:
                 self._consume()
-                return Dereference(self._parse_factor())
+                return Dereference(self._parse_cast_exp())
             case TokenType.AMPERSAND:
                 self._consume()
-                return AddrOf(self._parse_factor())
+                return AddrOf(self._parse_cast_exp())
             case TokenType.BITWISE_NOT | TokenType.MINUS | TokenType.NOT | TokenType.INCREMENT | TokenType.DECREMENT:
-                return Unary(self._parse_unaryop(), self._parse_factor())
+                return Unary(self._parse_unaryop(), self._parse_cast_exp())
+            case TokenType.SIZEOF:
+                self._consume()
+                if self._match(TokenType.LPAREN):
+                    next_tok = self._peek(1)
+                    if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
+                        self._consume()  # consume "("
+                        base_type = self._parse_type()
+                        if (
+                            self._match(TokenType.ASTERISK)
+                            or self._match(TokenType.LPAREN)
+                            or self._match(TokenType.LBRACKET)
+                        ):
+                            sizeof_type: Type = self._parse_abstract_declarator()(base_type)
+                        else:
+                            sizeof_type = base_type
+                        self._expect(TokenType.RPAREN)
+                        return SizeOfT(t=sizeof_type)
+                return SizeOf(exp=self._parse_cast_exp())
             case (
                 TokenType.NUMBER
                 | TokenType.LONGINT
@@ -1316,24 +1389,9 @@ class Parser:
                 else:
                     primary = Var(name=token.value)
             case TokenType.LPAREN:
-                next_tok = self._peek(1)
-                if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
-                    self._consume()  # consume "("
-                    base_cast_type = self._parse_type()
-                    if (
-                        self._match(TokenType.ASTERISK)
-                        or self._match(TokenType.LPAREN)
-                        or self._match(TokenType.LBRACKET)
-                    ):
-                        target_type: Type = self._parse_abstract_declarator()(base_cast_type)
-                    else:
-                        target_type = base_cast_type
-                    self._expect(TokenType.RPAREN)
-                    primary = Cast(target_type=target_type, exp=self._parse_factor())
-                else:
-                    self._consume()
-                    primary = self._parse_exp()
-                    self._expect(TokenType.RPAREN)
+                self._consume()
+                primary = self._parse_exp()
+                self._expect(TokenType.RPAREN)
             case _:
                 raise self._token_error("Syntax error: Malformed expression.", token)
 

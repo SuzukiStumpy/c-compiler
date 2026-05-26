@@ -219,24 +219,6 @@ class TestParseErrors:
         with pytest.raises(ParseError, match="expected SEMICOLON"):
             parse(tokens)
 
-    def test_non_int_return_type(self) -> None:
-        """``void main(void) { ... }`` — VOID is not a valid return type in the grammar."""
-        _VOID_tok = _tok(TokenType.VOID, "void")
-        tokens = [
-            _VOID_tok,
-            _ident("main"),
-            _LPAREN,
-            _VOID,
-            _RPAREN,
-            _LBRACE,
-            _RETURN,
-            _number("0"),
-            _SEMICOLON,
-            _RBRACE,
-        ]
-        with pytest.raises(ParseError, match="expected a type"):
-            parse(tokens)
-
     def test_non_number_expression(self) -> None:
         """``return );`` — RPAREN is not a valid expression start."""
         tokens = [_INT, _ident("main"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _RPAREN, _SEMICOLON, _RBRACE]
