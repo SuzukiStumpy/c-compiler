@@ -30,6 +30,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("DOUBLE", r"double\b"),
     ("CHAR", r"char\b"),
     ("SIZEOF", r"sizeof\b"),
+    ("STRUCT", r"struct\b"),
     # Identifiers and literals
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("FPDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)(?![\w.])"),
@@ -48,6 +49,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("RBRACKET", r"]"),
     ("SEMICOLON", r";"),
     ("COMMA", r","),
+    ("ARROW", r"->"),
+    ("PERIOD", r"\.(?!\d)"),
     # Multi-char tokens containing '=' must precede the single '=' ASSIGNMENT token
     ("PLUS_ASSIGN", r"\+="),
     ("MINUS_ASSIGN", r"-="),

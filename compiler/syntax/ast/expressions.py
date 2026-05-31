@@ -245,3 +245,29 @@ class CompoundInit(Initializer):
     """
 
     initializers: list[Initializer]
+
+
+@dataclass(frozen=True, slots=True)
+class Dot(Exp):
+    """Member access on a structure value: ``structure.member``.
+
+    Attributes:
+        structure: The expression yielding the structure object.
+        member: The name of the member being accessed.
+    """
+
+    structure: Exp
+    member: str
+
+
+@dataclass(frozen=True, slots=True)
+class Arrow(Exp):
+    """Member access through a pointer to a structure: ``pointer->member``.
+
+    Attributes:
+        pointer: The expression yielding the pointer to the structure.
+        member: The name of the member being accessed.
+    """
+
+    pointer: Exp
+    member: str

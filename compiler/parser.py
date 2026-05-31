@@ -4,7 +4,9 @@ The parser uses recursive descent for all constructs except binary expressions,
 which are handled by precedence climbing.  The grammar is:
 
     program              ::= {declaration}
-    declaration          ::= variable-declaration | function-declaration
+    declaration          ::= variable-declaration | function-declaration | struct-declaration
+    struct-declaration   ::= "struct" identifier ["{" member-declaration}+ "}"]
+    member-declaration   ::= {type-specifier}+ declarator ";"
     function-declaration ::= {specifier}+ declarator "(" param-list ")" (block | ";")
     variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
     declarator           ::= "*" declarator | direct-declarator
@@ -16,7 +18,7 @@ which are handled by precedence climbing.  The grammar is:
     param                ::= {type-specifier}+ declarator
                            | {type-specifier}+ abstract-declarator
                            | {type-specifier}+
-    type-specifier       ::= "int" | "long" | "unsigned" | "signed" | "double" | "char" | "void"
+    type-specifier       ::= "int" | "long" | "unsigned" | "signed" | "double" | "char" | "void" | "struct" identifier
     specifier            ::= type-specifier | "static" | "extern"
     block                ::= "{" {block_item} "}"
     block_item           ::= statement | declaration
@@ -49,7 +51,10 @@ which are handled by precedence climbing.  The grammar is:
                            | "(" exp ")"
                            | identifier "(" [argument-list] ")"
     type-name            ::= {type-specifier} + [abstract-declarator]
-    postfix-exp          ::= primary {"[" exp "]"}
+    postfix-exp          ::= primary {postfix-op}
+    postfix-op           ::= "[" exp "]"
+                           | "." identifier
+                           | "->" identifier
     argument-list        ::= exp {"," exp}
     abstract-declarator  ::= "*" [abstract-declarator]
                            | direct-abstract-declarator
@@ -85,6 +90,7 @@ from compiler.syntax.ast import (
     AddrOf,
     And,
     Array,
+    Arrow,
     Assignment,
     Binary,
     BinaryOperator,
@@ -113,6 +119,7 @@ from compiler.syntax.ast import (
     Default,
     Dereference,
     Divide,
+    Dot,
     DoubleType,
     DoWhile,
     Equal,
@@ -137,6 +144,7 @@ from compiler.syntax.ast import (
     LessOrEqual,
     LessThan,
     LongType,
+    MemberDeclaration,
     Multiply,
     Negate,
     Not,
@@ -161,6 +169,9 @@ from compiler.syntax.ast import (
     Statement,
     StorageClass,
     String,
+    StructDecl,
+    StructDeclaration,
+    Structure,
     Subscript,
     Subtract,
     Switch,
@@ -216,6 +227,8 @@ _BINARY_PRECEDENCE: dict[TokenType, int] = {
 }
 
 # All token types that may appear as part of a C type specifier.
+# TokenType.STRUCT is included because "struct identifier" is a two-token type
+# specifier; callers that look ahead for a type (cast, sizeof) rely on this set.
 _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
     {
         TokenType.INT,
@@ -225,6 +238,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.DOUBLE,
         TokenType.CHAR,
         TokenType.VOID,
+        TokenType.STRUCT,
     }
 )
 
@@ -475,32 +489,52 @@ class Parser:
     # Type-specifier helpers
     # ------------------------------------------------------------------
 
-    def _consume_type_specifiers(self) -> tuple[frozenset[TokenType], Token | None]:
+    def _consume_type_specifiers(self) -> tuple[frozenset[TokenType], Token | None, str | None]:
         """Consume a run of type-specifier tokens and return the set seen.
 
         Reads tokens from the stream as long as they belong to
         ``_TYPE_SPECIFIER_TOKENS``.  Raises immediately on a duplicate specifier.
+        When a ``struct`` keyword is encountered the following identifier token is
+        consumed immediately as the struct tag; ``struct`` cannot be combined with
+        any other type specifier.
 
         Returns:
-            A ``(seen, last_tok)`` pair.  ``seen`` is the frozen set of token
-            types consumed; ``last_tok`` is the final token consumed, used to
-            anchor subsequent error messages.  ``last_tok`` is ``None`` only
-            when ``seen`` is empty.
+            A ``(seen, last_tok, struct_tag)`` triple.  ``seen`` is the frozen set
+            of non-struct token types consumed; ``last_tok`` is the final token
+            consumed, used to anchor error messages (``None`` only when ``seen`` is
+            empty and ``struct_tag`` is ``None``); ``struct_tag`` is the struct tag
+            name when a ``struct identifier`` pair was consumed, otherwise ``None``.
 
         Raises:
-            ParseError: If the same specifier token appears more than once.
+            ParseError: If the same specifier token appears more than once, if
+                ``struct`` is combined with other type specifiers, or if the
+                identifier following ``struct`` is absent.
         """
         seen: set[TokenType] = set()
         last_tok: Token | None = None
+        struct_tag: str | None = None
         while (peek := self._peek()) is not None and peek.type in _TYPE_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
+            if peek.type == TokenType.STRUCT:
+                if seen:
+                    raise self._token_error("'struct' cannot be combined with other type specifiers", peek)
+                self._consume()  # consume 'struct'
+                tag_token = self._expect(TokenType.IDENTIFIER)
+                struct_tag = tag_token.value
+                last_tok = tag_token
+                break  # struct tag exhausts the type-specifier sequence
             tok = self._consume()
             if tok.type in seen:
                 raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
             seen.add(tok.type)
             last_tok = tok
-        return frozenset(seen), last_tok
+        return frozenset(seen), last_tok, struct_tag
 
-    def _resolve_type(self, seen: frozenset[TokenType], last_tok: Token | None) -> Type:
+    def _resolve_type(
+        self,
+        seen: frozenset[TokenType],
+        last_tok: Token | None,
+        struct_tag: str | None = None,
+    ) -> Type:
         """Map a set of consumed type-specifier token types to a ``Type`` node.
 
         Args:
@@ -508,17 +542,21 @@ class Parser:
                 ``_consume_type_specifiers``.
             last_tok: The final token consumed from the stream, used as the
                 error anchor when a conflict is detected.  Non-``None``
-                whenever ``seen`` is non-empty.
+                whenever ``seen`` is non-empty or ``struct_tag`` is set.
+            struct_tag: When a ``struct identifier`` pair was consumed this
+                is the tag name; in that case ``seen`` must be empty.
 
         Returns:
             The ``Type`` node corresponding to the combination of specifiers.
 
         Raises:
-            ParseError: If ``seen`` is empty, if ``double`` is combined with
-                any other specifier, if ``signed`` and ``unsigned`` appear
-                together, or if ``char`` is combined with specifiers other than
-                ``signed`` / ``unsigned``.
+            ParseError: If ``seen`` is empty and ``struct_tag`` is ``None``,
+                if ``double`` is combined with any other specifier, if ``signed``
+                and ``unsigned`` appear together, or if ``char`` is combined with
+                specifiers other than ``signed`` / ``unsigned``.
         """
+        if struct_tag is not None:
+            return Structure(tag=struct_tag)
         if not seen:
             tok = self._peek()
             if tok is None:
@@ -584,12 +622,17 @@ class Parser:
         Grammar::
 
             type-specifier ::= "int" | "long" | "signed" | "unsigned" | "double"
+                              | "struct" identifier
             specifier      ::= type-specifier | "static" | "extern"
 
         Consumes a run of specifier tokens in any order.  At least one type
         specifier must appear; ``unsigned`` or ``signed`` alone are treated as
         shorthand for ``unsigned int`` / ``signed int``; at most one
         storage-class specifier (``static`` or ``extern``) may appear.
+        When ``struct`` is encountered the following identifier is consumed
+        immediately as the tag; ``struct`` cannot be combined with other type
+        specifiers (though a storage-class specifier preceding it is fine,
+        e.g. ``static struct Foo``).
 
         Returns:
             A ``(type, storage_class)`` pair where ``storage_class`` is
@@ -599,13 +642,23 @@ class Parser:
             ParseError: If no type specifier is present, if a type specifier
                 appears more than once, if both ``signed`` and ``unsigned``
                 appear, if ``double`` is combined with another type specifier,
-                or if two storage-class specifiers conflict.
+                if ``struct`` is combined with other type specifiers, or if two
+                storage-class specifiers conflict.
         """
         type_seen: set[TokenType] = set()
         last_type_tok: Token | None = None
         storage: StorageClass | None = None
+        struct_tag: str | None = None
 
         while (peek := self._peek()) is not None and peek.type in _DECLARATION_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
+            if peek.type == TokenType.STRUCT:
+                if type_seen:
+                    raise self._token_error("'struct' cannot be combined with other type specifiers", peek)
+                self._consume()  # consume 'struct'
+                tag_token = self._expect(TokenType.IDENTIFIER)
+                struct_tag = tag_token.value
+                last_type_tok = tag_token
+                break  # struct tag exhausts the type-specifier sequence
             tok = self._consume()
             if tok.type in {TokenType.STATIC, TokenType.EXTERN}:
                 if storage is not None:
@@ -617,7 +670,7 @@ class Parser:
                 type_seen.add(tok.type)
                 last_type_tok = tok
 
-        return self._resolve_type(frozenset(type_seen), last_type_tok), storage
+        return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag), storage
 
     def _parse_params(self) -> tuple[Parameter, ...]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -832,11 +885,13 @@ class Parser:
         return S(statement=self._parse_statement())
 
     def _parse_declaration(self) -> Declaration:
-        """Parse a variable or function declaration with optional storage class.
+        """Parse a variable, function, or struct declaration.
 
         Grammar::
 
             declaration          ::= variable-declaration | function-declaration
+                                   | struct-declaration
+            struct-declaration   ::= "struct" identifier ["{" member-declaration}+ "}"] ";"
             function-declaration ::= {specifier}+ declarator (block | ";")
             variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
             declarator           ::= "*" declarator | direct-declarator
@@ -845,17 +900,31 @@ class Parser:
             simple-declarator    ::= identifier | "(" declarator ")"
             specifier            ::= type-specifier | "static" | "extern"
 
-        Parses the leading specifier list, then the declarator (which handles pointer
-        prefixes and parameter lists), and dispatches to produce a ``FunDecl`` or
-        ``VarDecl`` accordingly.
+        A struct declaration is distinguished from a variable/function declaration
+        that uses a struct type by one token of extra lookahead: ``struct Tag ;``
+        and ``struct Tag {`` are struct declarations; ``struct Tag *``, ``struct Tag
+        identifier``, and similar are variable/function declarations.
 
         Returns:
-            A ``VarDecl`` or ``FunDecl`` node.
+            A ``VarDecl``, ``FunDecl``, or ``StructDecl`` node.
 
         Raises:
             ParseError: If no type specifier is present, the declarator is malformed,
                 or the initialiser expression or function body is malformed.
         """
+        # Two-token lookahead to distinguish "struct Tag { ... };" / "struct Tag ;"
+        # (a StructDecl) from "struct Tag varname;" (a VarDecl using a struct type).
+        if self._match(TokenType.STRUCT):
+            next1 = self._peek(1)
+            next2 = self._peek(2)
+            if (
+                next1 is not None
+                and next1.type == TokenType.IDENTIFIER
+                and next2 is not None
+                and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
+            ):
+                return self._parse_struct_declaration()
+
         first_token = self._peek()
         base_type, storage = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
@@ -890,6 +959,72 @@ class Parser:
         return VarDecl(
             variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
         )
+
+    def _parse_struct_declaration(self) -> StructDecl:
+        """Parse a struct type declaration or definition.
+
+        Grammar::
+
+            struct-declaration ::= "struct" identifier ["{" member-declaration}+ "}"] ";"
+
+        The member list is optional (a bare ``struct Tag;`` is a forward
+        declaration), but when braces are present at least one member must appear
+        inside them.
+
+        Returns:
+            A ``StructDecl`` node wrapping the ``StructDeclaration``.
+
+        Raises:
+            ParseError: If the tag identifier is missing, if the brace-enclosed
+                member list is empty, if any member declaration is malformed, or
+                if the trailing semicolon is absent.
+        """
+        self._expect(TokenType.STRUCT)
+        tag_token = self._expect(TokenType.IDENTIFIER)
+        members: tuple[MemberDeclaration, ...] = ()
+        if self._match(TokenType.LBRACE):
+            self._consume()
+            if self._match(TokenType.RBRACE):
+                tok = self._peek()
+                msg = "struct definition must contain at least one member"
+                raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+            members_list: list[MemberDeclaration] = []
+            while not self._match(TokenType.RBRACE):
+                if self._peek() is None:
+                    raise self._eof_error("expected '}', got end of input")
+                members_list.append(self._parse_member_declaration())
+            self._consume()  # consume '}'
+            members = tuple(members_list)
+        self._expect(TokenType.SEMICOLON)
+        return StructDecl(struct_declaration=StructDeclaration(tag=tag_token.value, members=members))
+
+    def _parse_member_declaration(self) -> MemberDeclaration:
+        """Parse a single struct member declaration.
+
+        Grammar::
+
+            member-declaration ::= {type-specifier}+ declarator ";"
+
+        Unlike a variable declaration, no storage-class specifier is permitted
+        and no initialiser may follow the declarator.  Function-type declarators
+        (e.g. ``int (*fn)(void)``) are also rejected.
+
+        Returns:
+            A ``MemberDeclaration`` node.
+
+        Raises:
+            ParseError: If the type specifier is absent, if a function-type
+                declarator is present, or if the trailing semicolon is missing.
+        """
+        base_type = self._parse_type()
+        name, transform, _params = self._parse_declarator()
+        full_type = transform(base_type)
+        if isinstance(full_type, FunType):
+            err_tok = self._last
+            msg = "function type declarators are not permitted in struct members"
+            raise self._token_error(msg, err_tok) if err_tok is not None else self._eof_error(msg)
+        self._expect(TokenType.SEMICOLON)
+        return MemberDeclaration(member_name=name, member_type=full_type)
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
         """Parse an optional expression and consume its terminating token.
@@ -1317,21 +1452,22 @@ class Parser:
         may be followed by a type name in parentheses (``SizeOfT``) or by an
         arbitrary expression (``SizeOf``). Primary expressions (constants,
         identifiers, function calls, parenthesised expressions) are then checked for
-        trailing postfix ``++``, ``--``, or ``[`` subscript operators before returning.
+        trailing postfix operators before returning: ``++``, ``--``, ``[`` subscript,
+        ``.`` member access, and ``->`` pointer-member access.
 
         Grammar::
 
             factor        ::= prefix_unop cast-exp
                             | "sizeof" "(" type-name ")"
                             | "sizeof" cast-exp
-                            | primary postfix_unop?
+                            | primary {postfix-op}
             primary       ::= const
                             | identifier
                             | "(" exp ")"
                             | identifier "(" [argument-list] ")"
             argument-list ::= exp {"," exp}
             prefix_unop   ::= "-" | "~" | "!" | "++" | "--" | "*" | "&"
-            postfix_unop  ::= "++" | "--"
+            postfix-op    ::= "++" | "--" | "[" exp "]" | "." identifier | "->" identifier
 
         Returns:
             An ``Exp`` node.
@@ -1407,6 +1543,14 @@ class Parser:
                 index = self._parse_exp()
                 self._expect(TokenType.RBRACKET)
                 primary = Subscript(exp1=primary, exp2=index)
+            elif self._match(TokenType.PERIOD):
+                self._consume()
+                member_token = self._expect(TokenType.IDENTIFIER)
+                primary = Dot(structure=primary, member=member_token.value)
+            elif self._match(TokenType.ARROW):
+                self._consume()
+                member_token = self._expect(TokenType.IDENTIFIER)
+                primary = Arrow(pointer=primary, member=member_token.value)
             else:
                 return primary
 
@@ -1606,12 +1750,14 @@ class Parser:
 
             type-specifier ::= "int" | "long" | "signed" | "unsigned" | "double"
                               | "char" | "signed" "char" | "unsigned" "char"
+                              | "struct" identifier
 
         Consumes a run of specifier tokens in any order.  ``unsigned`` or
         ``signed`` alone are treated as shorthand for ``unsigned int`` /
         ``signed int`` respectively.  ``char`` may only be combined with
         ``signed`` or ``unsigned``; pairing it with ``int``, ``long``, or
-        ``double`` is a parse error.
+        ``double`` is a parse error.  ``struct identifier`` is consumed as a
+        two-token unit and may not be combined with any other specifier.
 
         Returns:
             A ``Type`` node.
@@ -1621,8 +1767,8 @@ class Parser:
                 specifier appears more than once, or if ``double`` is combined
                 with another type specifier.
         """
-        seen, last_tok = self._consume_type_specifiers()
-        return self._resolve_type(seen, last_tok)
+        seen, last_tok, struct_tag = self._consume_type_specifiers()
+        return self._resolve_type(seen, last_tok, struct_tag)
 
     def _parse_abstract_declarator(self) -> Callable[[Type], Type]:
         """Parse an abstract declarator (no identifier) for use in cast expressions.

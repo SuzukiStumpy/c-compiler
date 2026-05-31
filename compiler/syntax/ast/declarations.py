@@ -1,11 +1,12 @@
 """Program structure nodes for the AST.
 
 Defines the top-level constructs of a C translation unit: the ``VariableDeclaration``
-node, the ``Declaration`` sum type (``FunDecl`` and ``VarDecl``), the ``BlockItem``
-sum type (``S`` and ``D``) that composes statements and declarations into a block,
-the ``Block`` type alias, the ``Compound`` statement node, the ``ForInit`` sum type
-(``InitDecl`` and ``InitExp``) for ``for``-loop initialisers, the ``For`` statement
-node, and the ``Parameter``, ``Function``, and ``Program`` nodes.
+node, the ``Declaration`` sum type (``FunDecl``, ``VarDecl``, and ``StructDecl``),
+the ``BlockItem`` sum type (``S`` and ``D``) that composes statements and declarations
+into a block, the ``Block`` type alias, the ``Compound`` statement node, the
+``ForInit`` sum type (``InitDecl`` and ``InitExp``) for ``for``-loop initialisers,
+the ``For`` statement node, the ``MemberDeclaration`` and ``StructDeclaration`` nodes
+for struct type definitions, and the ``Parameter``, ``Function``, and ``Program`` nodes.
 """
 
 from abc import ABC
@@ -185,6 +186,45 @@ class VarDecl(Declaration):
     """
 
     variable_declaration: VariableDeclaration
+
+
+@dataclass(frozen=True, slots=True)
+class MemberDeclaration:
+    """A single field declaration within a struct body.
+
+    Attributes:
+        member_name: The name of the struct member as it appears in the source.
+        member_type: The declared C type of the member.
+    """
+
+    member_name: str
+    member_type: Type
+
+
+@dataclass(frozen=True, slots=True)
+class StructDeclaration:
+    """A ``struct`` type definition, binding a tag to an ordered list of members.
+
+    Attributes:
+        tag: The struct tag name as it appears after the ``struct`` keyword.
+        members: The ordered sequence of field declarations.  Empty only for an
+            incomplete (forward) struct declaration.
+    """
+
+    tag: str
+    members: tuple[MemberDeclaration, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StructDecl(Declaration):
+    """A struct definition wrapped as a top-level declaration node.
+
+    Attributes:
+        struct_declaration: The underlying ``StructDeclaration`` node carrying
+            the tag name and member list.
+    """
+
+    struct_declaration: StructDeclaration
 
 
 @dataclass(frozen=True, slots=True)

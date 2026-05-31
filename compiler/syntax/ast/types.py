@@ -141,6 +141,23 @@ class Array(Type):
     size: int
 
 
+@dataclass(frozen=True, slots=True)
+class Structure(Type):
+    """Represents a ``struct`` type referred to by its tag name.
+
+    This node appears wherever a ``struct Tag`` type is used as a variable
+    type, parameter type, or return type.  The actual member layout is
+    carried by the corresponding ``StructDeclaration`` node looked up via
+    the tag.
+
+    Attributes:
+        tag: The struct tag name as it appears after the ``struct`` keyword
+            in the source.
+    """
+
+    tag: str
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 §6.2.2).
 

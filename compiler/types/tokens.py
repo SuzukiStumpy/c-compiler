@@ -36,6 +36,7 @@ class TokenType(Enum):
     DOUBLE = auto()
     CHAR = auto()
     SIZEOF = auto()
+    STRUCT = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()
@@ -46,15 +47,17 @@ class TokenType(Enum):
     CONSTCHAR = auto()
     STRING = auto()
     # Punctuation
-    LPAREN = auto()
-    RPAREN = auto()
-    LBRACE = auto()
-    RBRACE = auto()
+    LPAREN = auto()  # (
+    RPAREN = auto()  # )
+    LBRACE = auto()  # {
+    RBRACE = auto()  # }
     LBRACKET = auto()  # [
     RBRACKET = auto()  # ]
-    SEMICOLON = auto()
+    SEMICOLON = auto()  # ;
+    PERIOD = auto()  # .
+    ARROW = auto()  # ->
     # Boolean Operators
-    BITWISE_NOT = auto()
+    BITWISE_NOT = auto()  # ~
     # Compound Assignment Operators
     PLUS_ASSIGN = auto()  # +=
     MINUS_ASSIGN = auto()  # -=
@@ -68,13 +71,13 @@ class TokenType(Enum):
     RSHIFT_ASSIGN = auto()  # >>=
     # Unary Operators
     MINUS = auto()  # This is also a binary operator, which we disambiguate in the parser
-    DECREMENT = auto()
-    INCREMENT = auto()
+    DECREMENT = auto()  # --
+    INCREMENT = auto()  # ++
     # Binary Operators
-    PLUS = auto()
-    ASTERISK = auto()
-    DIVIDE = auto()
-    PERCENT = auto()  # Modulo operator
+    PLUS = auto()  # +
+    ASTERISK = auto()  # *
+    DIVIDE = auto()  # /
+    PERCENT = auto()  # % Modulo operator
     LSHIFT = auto()  # <<
     RSHIFT = auto()  # >>
     AMPERSAND = auto()  # &

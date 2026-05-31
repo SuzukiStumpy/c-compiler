@@ -20,7 +20,11 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Case(exp value, statement body, identifier)
                          | Default(statement body, identifier)
                          | Null
-    declaration          = FunDecl(function_declaration) | VarDecl(variable_declaration)
+    declaration          = FunDecl(function_declaration)
+                         | VarDecl(variable_declaration)
+                         | StructDecl(struct_declaration)
+    struct_declaration   = (identifier tag, member_declaration* members)
+    member_declaration   = (identifier member_name, type member_type)
     variable_declaration = (identifier name, initializer? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
     initializer          = SingleInit(exp) | CompoundInit(intializer*)
@@ -28,6 +32,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | FunType(type* params, type ret)
                          | Pointer(type referenced)
                          | Array(type element, int size)
+                         | Structure(identifier tag)
     storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
@@ -45,6 +50,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Subscript(exp, exp)
                          | SizeOf(exp)
                          | SizeOfT(type)
+                         | Dot(exp structure, identifier member)
+                         | Arrow(exp pointer, identifier member)
     unary_operator       = Complement | Negate | Not
                          | PreIncrement | PreDecrement
                          | PostIncrement | PostDecrement
@@ -67,11 +74,12 @@ Nodes are organised into submodules by logical role:
 
     types        — C type nodes (Type, IntType, VoidType, …)
     expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment,
-                   Conditional, FunctionCall, SizeOf, SizeOfT)
+                   Conditional, FunctionCall, SizeOf, SizeOfT, Dot, Arrow)
     statements   — Statement nodes (Statement, Return, Expression, If, Null,
                    Goto, Label, Break, Continue, While, DoWhile)
     declarations — Program structure nodes (VariableDeclaration, Declaration,
-                   FunDecl, VarDecl, BlockItem, S, D, Block, Compound, ForInit,
+                   FunDecl, VarDecl, StructDecl, MemberDeclaration,
+                   StructDeclaration, BlockItem, S, D, Block, Compound, ForInit,
                    InitDecl, InitExp, For, Parameter, Function, Program)
     operators    — Operators which act upon expressions
                    (Complement, Negate, Not,
@@ -114,15 +122,19 @@ from compiler.syntax.ast.declarations import (
     FunDecl,
     InitDecl,
     InitExp,
+    MemberDeclaration,
     Parameter,
     Program,
     S,
     StorageClass,
+    StructDecl,
+    StructDeclaration,
     VarDecl,
     VariableDeclaration,
 )
 from compiler.syntax.ast.expressions import (
     AddrOf,
+    Arrow,
     Assignment,
     Binary,
     Cast,
@@ -130,6 +142,7 @@ from compiler.syntax.ast.expressions import (
     Conditional,
     Constant,
     Dereference,
+    Dot,
     Exp,
     FunctionCall,
     Initializer,
@@ -197,6 +210,7 @@ from compiler.syntax.ast.types import (
     LongType,
     Pointer,
     SChar,
+    Structure,
     Type,
     UChar,
     UIntType,
@@ -205,6 +219,12 @@ from compiler.syntax.ast.types import (
 )
 
 __all__ = [
+    "Arrow",
+    "Dot",
+    "MemberDeclaration",
+    "Structure",
+    "StructDecl",
+    "StructDeclaration",
     "SizeOf",
     "SizeOfT",
     "VoidType",
