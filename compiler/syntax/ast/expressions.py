@@ -242,9 +242,14 @@ class CompoundInit(Initializer):
 
     Attributes:
         initializers: An ordered list of initializations (could be empty)
+        init_type: The C type this compound initializer targets, or ``None`` for
+            array initializers.  Set to ``Structure(tag)`` by ``_typecheck_init``
+            when the target type is a struct so that ``_flatten_helper`` can emit
+            inter-member and trailing padding when building the static-init list.
     """
 
     initializers: list[Initializer]
+    init_type: Type | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -52,7 +52,7 @@ from itertools import count
 from typing import NamedTuple
 
 import compiler.syntax.ast as ast
-from compiler.syntax.ast.declarations import StorageClass
+from compiler.syntax.ast.declarations import MemberDeclaration, StorageClass, StructDeclaration
 from compiler.syntax.ast.operators import (
     And,
     Equal,
@@ -76,6 +76,7 @@ from compiler.syntax.ast.types import (
     LongType,
     Pointer,
     SChar,
+    Structure,
     Type,
     UChar,
     UIntType,
@@ -92,11 +93,14 @@ from compiler.types.symbols import (
     IntInit,
     LocalAttr,
     LongInit,
+    MemberEntry,
     NoInitializer,
     PointerInit,
     StaticAttr,
     StaticInit,
     StringInit,
+    StructEntry,
+    StructTypeTable,
     SymbolTable,
     SymbolTableEntry,
     Tentative,
@@ -118,6 +122,89 @@ _TYPE_SIZE: dict[type, int] = {
 }
 _SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType})
 _CHAR_TYPES: tuple[type, ...] = (Char, SChar, UChar)
+
+
+def _round_up(n: int, align: int) -> int:
+    """Round ``n`` up to the nearest multiple of ``align``.
+
+    Args:
+        n: The value to round up.
+        align: The alignment boundary (must be positive).
+
+    Returns:
+        The smallest integer ``>= n`` that is a multiple of ``align``.
+    """
+    return (n + align - 1) // align * align
+
+
+def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
+    """Return the required alignment in bytes for a C type.
+
+    Scalar and pointer types have fixed alignments (matching their sizes).
+    Array alignment equals element alignment.  Struct alignment is looked up
+    from ``struct_type_table``.
+
+    Args:
+        t: The resolved C type whose alignment is needed.
+        struct_type_table: Mapping from resolved struct tags to ``StructEntry``
+            layout records; used to determine struct alignment.
+
+    Returns:
+        The alignment requirement in bytes.
+
+    Raises:
+        SemanticError: If ``t`` is a ``Structure`` type not yet present in
+            ``struct_type_table`` (incomplete struct type).
+    """
+    match t:
+        case IntType() | UIntType():
+            return 4
+        case LongType() | ULongType() | DoubleType() | Pointer():
+            return 8
+        case Char() | SChar() | UChar():
+            return 1
+        case Array(element=elem_t):
+            return type_alignment(elem_t, struct_type_table)
+        case Structure(tag=tag):
+            entry = struct_type_table.get(tag)
+            if entry is None:
+                raise SemanticError(f"Cannot determine alignment of incomplete struct type '{tag}'")
+            return entry.alignment
+        case _:
+            raise SemanticError(f"Cannot determine alignment of type '{t}'")
+
+
+def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
+    """Return the size in bytes of a C type.
+
+    Args:
+        t: The resolved C type whose size is needed.
+        struct_type_table: Mapping from resolved struct tags to ``StructEntry``
+            layout records; used to determine struct size.
+
+    Returns:
+        The size in bytes.
+
+    Raises:
+        SemanticError: If ``t`` is a ``Structure`` type not yet present in
+            ``struct_type_table`` (incomplete struct type).
+    """
+    match t:
+        case IntType() | UIntType():
+            return 4
+        case LongType() | ULongType() | DoubleType() | Pointer():
+            return 8
+        case Char() | SChar() | UChar():
+            return 1
+        case Array(element=elem_t, size=n):
+            return type_size(elem_t, struct_type_table) * n
+        case Structure(tag=tag):
+            entry = struct_type_table.get(tag)
+            if entry is None:
+                raise SemanticError(f"Cannot determine size of incomplete struct type '{tag}'")
+            return entry.size
+        case _:
+            raise SemanticError(f"Cannot determine size of type '{t}'")
 
 
 def get_common_type(type1: Type, type2: Type) -> Type:
@@ -190,11 +277,13 @@ def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
 def _convert_by_assignment(e: ast.Exp, target_type: Type) -> ast.Exp:
     """Convert an expression to a target type using the rules for assignment compatibility (C11 §6.5.16.1).
 
-    The legal cases are: the expression already has the target type; both the expression and the
-    target are arithmetic types (usual arithmetic conversions apply); the expression is a null
-    pointer constant and the target is a pointer type; or one side is ``void *`` and the other is
-    any pointer type (C11 §6.3.2.3p1) — the non-``void *`` operand is converted to the target type.
-    All other combinations are rejected as incompatible.
+    The legal cases are: the expression already has the target type (covers struct-to-same-struct
+    assignment — no ``Cast`` node is inserted); both the expression and the target are arithmetic
+    types (usual arithmetic conversions apply); the expression is a null pointer constant and the
+    target is a pointer type; or one side is ``void *`` and the other is any pointer type
+    (C11 §6.3.2.3p1) — the non-``void *`` operand is converted to the target type.
+    All other combinations are rejected as incompatible, including assignments between two struct
+    types that do not share the same resolved tag.
 
     Args:
         e: The source expression, already typed by the semantic analysis pass.
@@ -317,10 +406,10 @@ def is_scalar(t: Type | None) -> bool:
 
     Returns:
         ``True`` for arithmetic types and pointer types; ``False`` for
-        ``VoidType``, ``Array``, ``FunType``, and ``None``.
+        ``VoidType``, ``Array``, ``FunType``, ``Structure``, and ``None``.
     """
     match t:
-        case None | VoidType() | Array() | FunType():
+        case None | VoidType() | Array() | FunType() | Structure():
             return False
         case _:
             return True
@@ -361,23 +450,69 @@ def is_integer(t: Type | None) -> bool:
     return is_arithmetic(t) and not isinstance(t, DoubleType)
 
 
-def is_complete(t: Type) -> bool:
-    """Return True when ``t`` is a complete type (i.e. not ``void``).
+def is_lvalue(e: ast.Exp) -> bool:
+    """Return True when ``e`` is an lvalue expression.
+
+    An lvalue is an expression that designates a memory location and may appear
+    on the left-hand side of an assignment or as the operand of ``&``.
+
+    * ``Var``, ``Dereference``, ``Subscript``, and ``String`` are unconditionally
+      lvalues.
+    * ``Arrow`` (``ptr->member``) is always an lvalue because ``->`` implicitly
+      dereferences a pointer.
+    * ``Dot`` (``s.member``) is an lvalue only when its left operand is itself an
+      lvalue — the check recurses until a non-lvalue or a base lvalue is found.
+    * All other expression forms are rvalues.
+
+    Args:
+        e: The typed expression to test.
+
+    Returns:
+        ``True`` when ``e`` designates a modifiable memory location.
+    """
+    match e:
+        case ast.Var() | ast.Dereference() | ast.Subscript() | ast.String():
+            return True
+        case ast.Arrow():
+            return True
+        case ast.Dot(structure=structure):
+            return is_lvalue(structure)
+        case _:
+            return False
+
+
+def is_complete(t: Type, struct_type_table: StructTypeTable) -> bool:
+    """Return True when ``t`` is a complete type.
+
+    ``VoidType`` is always incomplete.  A ``Structure`` type is complete only
+    when its tag has an entry in ``struct_type_table`` (i.e. a definition with
+    a member list has been seen).  All other types are complete.
 
     Args:
         t: The C type to test.
+        struct_type_table: Mapping from resolved struct tags to ``StructEntry``
+            layout records, used to decide whether a struct type is complete.
 
     Returns:
-        ``False`` for ``VoidType``; ``True`` for all other types.
+        ``False`` for ``VoidType`` and for ``Structure`` types whose tag is not
+        yet in ``struct_type_table``; ``True`` for all other types.
     """
-    return not isinstance(t, VoidType)
+    match t:
+        case VoidType():
+            return False
+        case Structure(tag=tag):
+            return tag in struct_type_table
+        case _:
+            return True
 
 
-def is_pointer_to_complete(t: Type | None) -> bool:
-    """Return True when ``t`` is a pointer to a complete (non-void) type.
+def is_pointer_to_complete(t: Type | None, struct_type_table: StructTypeTable) -> bool:
+    """Return True when ``t`` is a pointer to a complete type.
 
     Args:
         t: The C type to test, or ``None`` if the type is not yet known.
+        struct_type_table: Forwarded to ``is_complete`` for struct completeness
+            checks.
 
     Returns:
         ``True`` when ``t`` is a ``Pointer`` whose referenced type satisfies
@@ -385,12 +520,12 @@ def is_pointer_to_complete(t: Type | None) -> bool:
     """
     match t:
         case Pointer(referenced=inner):
-            return is_complete(inner)
+            return is_complete(inner, struct_type_table)
         case _:
             return False
 
 
-def validate_type_specifier(t: Type) -> None:
+def validate_type_specifier(t: Type, struct_type_table: StructTypeTable) -> None:
     """Recursively validate a type specifier for structural correctness.
 
     Checks that no array element type is incomplete (C11 §6.7.6.2p1 — arrays
@@ -399,26 +534,28 @@ def validate_type_specifier(t: Type) -> None:
 
     Args:
         t: The C type to validate.
+        struct_type_table: Forwarded to ``is_complete`` for struct completeness
+            checks on array element types.
 
     Raises:
         SemanticError: If an array element type is incomplete.
     """
     match t:
         case Array(element=elem_t):
-            if not is_complete(elem_t):
+            if not is_complete(elem_t, struct_type_table):
                 raise SemanticError("Illegal array of incomplete type")
-            validate_type_specifier(elem_t)
+            validate_type_specifier(elem_t, struct_type_table)
         case Pointer(referenced=referenced_t):
-            validate_type_specifier(referenced_t)
+            validate_type_specifier(referenced_t, struct_type_table)
         case FunType(params=param_ts, ret=ret_t):
             for param_t in param_ts:
-                validate_type_specifier(param_t)
-            validate_type_specifier(ret_t)
+                validate_type_specifier(param_t, struct_type_table)
+            validate_type_specifier(ret_t, struct_type_table)
         case _:
             return
 
 
-def _zero_initializer(t: Type) -> ast.Initializer:
+def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initializer:
     """Create a zero-valued, fully type-annotated ``Initializer`` for the given type.
 
     Used to pad aggregate initialisers that are shorter than their declared size
@@ -426,11 +563,14 @@ def _zero_initializer(t: Type) -> ast.Initializer:
 
     Args:
         t: The C type for which a zero initializer is needed.
+        struct_type_table: Mapping from resolved struct tags to ``StructEntry`` layout
+            records; required to enumerate members when zero-initialising a struct.
 
     Returns:
         A ``SingleInit`` wrapping a zero-valued ``Constant`` (or ``Cast`` for pointers)
-        for scalar types, or a ``CompoundInit`` recursively filled with zero initialisers
-        for ``Array`` types.
+        for scalar types, a ``CompoundInit`` recursively filled with zero initialisers
+        for ``Array`` types, or a ``CompoundInit`` of per-member zero initialisers for
+        ``Structure`` types.
 
     Raises:
         SemanticError: If ``t`` is a ``FunType`` or otherwise uninitializable type.
@@ -454,7 +594,10 @@ def _zero_initializer(t: Type) -> ast.Initializer:
             null = ast.Constant(ast.ConstULong(0), exp_type=ULongType())
             return ast.SingleInit(ast.Cast(t, null, exp_type=t))
         case Array(element=elem_t, size=size):
-            return ast.CompoundInit([_zero_initializer(elem_t) for _ in range(size)])
+            return ast.CompoundInit([_zero_initializer(elem_t, struct_type_table) for _ in range(size)])
+        case Structure(tag=tag):
+            struct_def = struct_type_table[tag]
+            return ast.CompoundInit([_zero_initializer(m.member_type, struct_type_table) for m in struct_def.members])
         case _:
             raise SemanticError(f"Cannot create a zero initializer for type '{t}'.")
 
@@ -518,93 +661,17 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
             return ZeroInit(4) if int(v) == 0 else IntInit(int(v))
 
 
-def _exp_to_static_init(e: ast.Exp) -> StaticInit:
-    """Convert a type-annotated constant expression to its ``StaticInit`` equivalent.
-
-    Handles the expression forms that appear as leaves after ``_typecheck_init``
-    has processed a static-storage initialiser:
-
-    * ``Constant`` nodes with any numeric ``Const`` variant.
-    * ``Cast(Pointer, Constant)`` — the null-pointer form produced by
-      ``_zero_initializer`` for pointer-typed array elements.
-    * ``Cast(scalar_type, Constant)`` — widening casts inserted by
-      ``_convert_by_assignment`` when an integer literal is used to initialise
-      a wider type (e.g. ``long arr[2] = {1, 2}``).
-
-    Zero-valued scalars are encoded as ``ZeroInit``; adjacent ``ZeroInit`` nodes
-    are coalesced by ``_flatten_static_init``.
+def _append_zero_pad(result: list[StaticInit], n: int) -> None:
+    """Append ``n`` zero bytes to ``result``, coalescing with a trailing ``ZeroInit`` if present.
 
     Args:
-        e: A fully type-annotated scalar expression produced by ``_typecheck_init``.
-
-    Returns:
-        The corresponding ``StaticInit`` element.
-
-    Raises:
-        SemanticError: If ``e`` is not a recognised constant form.
+        result: The accumulator list being built by ``_flatten_helper``.
+        n: Number of zero bytes to append.
     """
-    match e:
-        case ast.Cast(target_type=Pointer()):
-            return ZeroInit(8)
-        case ast.Cast(target_type=target, exp=ast.Constant(value=const)):
-            return _make_static_init(target, const.val)
-        case ast.Constant(value=const):
-            return _make_static_init(e.exp_type, const.val)
-        case _:
-            raise SemanticError(f"Cannot convert expression to a static initialiser element: {type(e).__name__}")
-
-
-def _flatten_static_init(init: ast.Initializer) -> list[StaticInit]:
-    """Flatten a fully type-checked ``Initializer`` tree into a list of ``StaticInit`` elements.
-
-    Recursively traverses ``CompoundInit`` nodes and converts each leaf
-    ``SingleInit`` to its ``StaticInit`` equivalent.  Adjacent ``ZeroInit``
-    nodes are coalesced into a single ``ZeroInit`` with the combined byte count
-    so that sparse array regions are represented compactly.
-
-    Args:
-        init: A fully type-checked (and zero-padded) ``Initializer`` node, as
-            returned by ``_typecheck_init``.
-
-    Returns:
-        A flat list of ``StaticInit`` elements with consecutive zero regions merged.
-
-    Raises:
-        SemanticError: If any leaf expression cannot be converted to a static
-            initialiser element.
-    """
-    result: list[StaticInit] = []
-    _flatten_helper(init, result)
-    return result
-
-
-def _flatten_helper(init: ast.Initializer, result: list[StaticInit]) -> None:
-    """Recursive worker for ``_flatten_static_init``.
-
-    Traverses the ``Initializer`` tree depth-first and appends ``StaticInit``
-    elements to ``result``, merging any ``ZeroInit`` that is adjacent to a
-    trailing ``ZeroInit`` already in the list.
-
-    Args:
-        init: The current ``Initializer`` node being processed.
-        result: Accumulator list modified in place.
-    """
-    match init:
-        case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))):
-            for elem in _string_array_static_init(s, size):
-                if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
-                    result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
-                else:
-                    result.append(elem)
-        case ast.SingleInit(exp=e):
-            elem = _exp_to_static_init(e)
-            if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
-                result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
-            else:
-                result.append(elem)
-        case ast.CompoundInit(initializers=sub_inits):
-            for sub_init in sub_inits:
-                _flatten_helper(sub_init, result)
+    if result and isinstance(result[-1], ZeroInit):
+        result[-1:] = [ZeroInit(result[-1].bytes + n)]
+    else:
+        result.append(ZeroInit(n))
 
 
 def _string_array_static_init(s: bytes, array_size: int) -> list[StaticInit]:
@@ -683,6 +750,22 @@ class FunctionBinding(NamedTuple):
     param_types: tuple[ast.Type, ...]
     ret_type: ast.Type
     linkage: Linkage = Linkage.EXTERNAL
+
+
+class StructureBinding(NamedTuple):
+    """A single entry in the structure map, recording a resolved tag and its scope origin.
+
+    Attributes:
+        new_tag: The unique internal identifier assigned to the source-level struct tag
+            (e.g. ``".Sfoo.0"``).
+        from_current_scope: ``True`` if this binding was declared in the block currently
+            being analysed; ``False`` if it was inherited from an enclosing scope or the
+            file scope.  Used to distinguish same-scope redeclarations (permitted, reuse
+            existing ``new_tag``) from shadowing declarations in a nested scope.
+    """
+
+    new_tag: str
+    from_current_scope: bool
 
 
 class SemanticAnalyser:
@@ -781,6 +864,29 @@ class SemanticAnalyser:
             seen.  A second definition of the same name is a constraint violation
             in C.  Tentative definitions (declarations without initialisers) do
             not add entries here and are always permitted to repeat.
+        _all_unique_struct_tags: Program-wide set of every unique internal struct tag
+            ever generated by ``_make_struct_tag`` (e.g. ``".Souter.1"``).  Used by
+            ``_resolve_type`` to detect types that have already been resolved so that
+            double-resolution (which occurs when ``_register_fun_declaration`` resolves
+            param types and ``_resolve_function`` then passes those resolved types back
+            through ``resolve_variable_declaration``) is treated as a no-op rather than
+            an error.  Never cleared between scopes.
+        _struct_type_table: Program-wide mapping from resolved struct tags to
+            ``StructEntry`` layout records.  Populated by ``_typecheck_struct_declaration``
+            whenever a struct definition with a non-empty member list is encountered.
+            Consulted by ``type_size`` and ``type_alignment`` to compute the
+            layout of struct-typed members and variables.  Consumed by downstream
+            stages (TAC generation, code generation) via ``resolve_with_symbols``.
+        _structure_map: Mapping from source-level struct tag names to
+            ``StructureBinding`` values.  Each binding records the unique internal
+            tag (e.g. ``".Sfoo.0"``) and whether the struct was declared in the
+            current scope.  File-scope struct declarations are stored with
+            ``from_current_scope=False``; block-scope declarations with ``True``.
+            When a new scope is entered (``_enter_scope``) all existing bindings
+            are marked ``from_current_scope=False`` so that inner scopes may shadow
+            them.  When a declaration is seen for a tag that is already bound in
+            the current scope the existing ``new_tag`` is reused (compatible
+            redeclaration); otherwise a fresh unique tag is generated.
     """
 
     def __init__(self) -> None:
@@ -789,8 +895,11 @@ class SemanticAnalyser:
         self._loop_counter: count[int] = count()
         self._variable_map: dict[str, VariableBinding] = {}
         self._function_map: dict[str, FunctionBinding] = {}
+        self._structure_map: dict[str, StructureBinding] = {}
         self._symbol_table: SymbolTable = {}
         self._type_table: dict[str, Type] = {}
+        self._struct_type_table: StructTypeTable = {}
+        self._all_unique_struct_tags: set[str] = set()
         self._file_scope_linkage: dict[str, Linkage] = {}
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
@@ -849,6 +958,158 @@ class SemanticAnalyser:
             drawn from ``_counter``.
         """
         return f".Lstr.{next(self._counter)}"
+
+    def _make_struct_tag(self, tag: str) -> str:
+        """Generate a unique internal tag name for a source-level struct tag.
+
+        Produces identifiers of the form ``.Sfoo.0``, ``.Sfoo.1``, etc.  The
+        leading ``.S`` prefix ensures the name cannot collide with any valid C
+        identifier.
+
+        Args:
+            tag: The source-level struct tag to uniquify.
+
+        Returns:
+            A string of the form ``".S<tag>.<n>"`` where ``<n>`` is the next
+            value drawn from ``_counter``.
+        """
+        new_tag = f".S{tag}.{next(self._counter)}"
+        self._all_unique_struct_tags.add(new_tag)
+        return new_tag
+
+    def _resolve_type(self, t: Type) -> Type:
+        """Recursively resolve a type specifier, replacing struct tags with their unique internal tags.
+
+        ``Structure`` nodes whose tag is present in ``_structure_map`` are replaced
+        by ``Structure(unique_tag)``; a tag absent from the map raises ``SemanticError``.
+        ``Pointer``, ``Array``, and ``FunType`` nodes are resolved recursively.
+        All other types are returned unchanged.
+
+        Args:
+            t: The raw C type as produced by the parser (possibly containing
+                source-level struct tags), or an already-resolved type (idempotent
+                when the tag is a previously generated unique internal tag).
+
+        Returns:
+            A new ``Type`` node with every ``Structure`` tag replaced by its
+            unique internal identifier, or ``t`` unchanged when ``t`` contains
+            only already-resolved unique tags.
+
+        Raises:
+            SemanticError: If a ``Structure`` tag has not been declared before
+                use and is not a known unique internal tag (❷ in the algorithm).
+        """
+        match t:
+            case Structure(tag=tag):
+                binding = self._structure_map.get(tag)
+                if binding is not None:
+                    return Structure(binding.new_tag)
+                if tag in self._all_unique_struct_tags:
+                    return t  # already resolved — idempotent
+                raise SemanticError(f"Use of undeclared struct tag '{tag}'")
+            case Pointer(referenced=ref_t):
+                return Pointer(self._resolve_type(ref_t))
+            case Array(element=elem_t, size=size):
+                return Array(self._resolve_type(elem_t), size)
+            case FunType(params=param_ts, ret=ret_t):
+                return FunType(tuple(self._resolve_type(pt) for pt in param_ts), self._resolve_type(ret_t))
+            case _:
+                return t
+
+    def _is_member_type_complete(self, t: Type) -> bool:
+        """Return ``True`` when ``t`` is a type that may be used as a struct member.
+
+        A type is eligible when it is not void, not a function type, not an
+        incomplete struct type (not yet in ``_struct_type_table``), and — for
+        array types — when the element type is recursively eligible.
+
+        Args:
+            t: The resolved C type to test.
+
+        Returns:
+            ``False`` for ``VoidType``, ``FunType``, incomplete ``Structure``,
+            or arrays thereof; ``True`` for all other types.
+        """
+        match t:
+            case VoidType() | FunType():
+                return False
+            case Structure(tag=tag):
+                return tag in self._struct_type_table
+            case Array(element=elem_t):
+                return self._is_member_type_complete(elem_t)
+            case _:
+                return True
+
+    def _validate_struct_definition(self, struct_decl: StructDeclaration) -> None:
+        """Validate the member list of a struct definition.
+
+        Checks that no two members share the same name and that every
+        member's type is eligible (complete, not void, not a function type).
+
+        Args:
+            struct_decl: The resolved ``StructDeclaration`` whose members are
+                to be validated.  ``struct_decl.members`` must be non-empty.
+
+        Raises:
+            SemanticError: If any member name is duplicated within the struct,
+                or if any member has an incomplete or invalid type.
+        """
+        seen: set[str] = set()
+        for member in struct_decl.members:
+            if member.member_name in seen:
+                raise SemanticError(f"Duplicate member '{member.member_name}' in struct '{struct_decl.tag}'")
+            seen.add(member.member_name)
+            if not self._is_member_type_complete(member.member_type):
+                raise SemanticError(
+                    f"Member '{member.member_name}' of struct '{struct_decl.tag}' has an incomplete or invalid type"
+                )
+            validate_type_specifier(member.member_type, self._struct_type_table)
+
+    def _typecheck_struct_declaration(self, struct_decl: StructDeclaration) -> None:
+        """Validate a struct definition and record its layout in ``_struct_type_table``.
+
+        Implements the type-checking algorithm for struct declarations:
+
+        * ❶ Declarations without a member list are silently ignored — they either
+          forward-declare an incomplete type or redundantly name a type that was
+          already defined.
+        * ❷ ``_validate_struct_definition`` checks for duplicate member names and
+          incomplete member types.
+        * ❸–❺ Member offsets are computed by rounding the running size up to the
+          member's alignment before placing each member.
+        * ❻ The final struct size is rounded up to the struct's own alignment
+          (C11 §6.7.2.1p15 — trailing padding).
+        * ❼ The completed ``StructEntry`` is stored in ``_struct_type_table``
+          keyed by the unique internal tag.
+
+        Args:
+            struct_decl: The resolved ``StructDeclaration`` (tag is a unique
+                internal identifier; member types are fully resolved).
+
+        Raises:
+            SemanticError: If the struct tag already has a complete definition in
+                the current scope; if ``_validate_struct_definition`` finds a
+                violation; or if any member has a type whose size or alignment
+                cannot be determined (e.g. an incomplete struct type used as a
+                value member).
+        """
+        if not struct_decl.members:  # ❶ forward declaration — nothing to do
+            return
+        if struct_decl.tag in self._struct_type_table:
+            raise SemanticError(f"Redefinition of struct '{struct_decl.tag}'.")
+        self._validate_struct_definition(struct_decl)  # ❷
+        member_entries: list[MemberEntry] = []  # ❸
+        struct_size = 0
+        struct_alignment = 1
+        for member in struct_decl.members:
+            member_align = type_alignment(member.member_type, self._struct_type_table)
+            member_offset = _round_up(struct_size, member_align)  # ❹
+            member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))  # ❺
+            struct_alignment = max(struct_alignment, member_align)
+            struct_size = member_offset + type_size(member.member_type, self._struct_type_table)
+        struct_size = _round_up(struct_size, struct_alignment)  # ❻
+        struct_def = StructEntry(alignment=struct_alignment, size=struct_size, members=tuple(member_entries))
+        self._struct_type_table[struct_decl.tag] = struct_def  # ❼
 
     def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
         """Recursively collect label names from a statement into ``_label_set``.
@@ -943,9 +1204,18 @@ class SemanticAnalyser:
                 name was already declared in this block; or if a non-``extern``
                 name conflicts with a same-scope function declaration.
         """
-        validate_type_specifier(var_decl.var_type)
+        var_decl = ast.VariableDeclaration(
+            var_decl.name, var_decl.init, self._resolve_type(var_decl.var_type), var_decl.storage_class
+        )
+        validate_type_specifier(var_decl.var_type, self._struct_type_table)
         if isinstance(var_decl.var_type, VoidType):
             raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
+        if (
+            var_decl.storage_class != StorageClass.Extern
+            and isinstance(var_decl.var_type, Structure)
+            and not is_complete(var_decl.var_type, self._struct_type_table)
+        ):
+            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete struct type.")
         binding = self._variable_map.get(var_decl.name)
         if var_decl.storage_class == StorageClass.Extern:
             if var_decl.init is not None:
@@ -1022,6 +1292,11 @@ class SemanticAnalyser:
                         raise SemanticError(
                             f"Initialiser of static array '{var_decl.name}' must consist of constant expressions."
                         )
+                elif isinstance(var_decl.var_type, Structure):
+                    if not _is_constant_init(var_decl.init):
+                        raise SemanticError(
+                            f"Initialiser of static struct '{var_decl.name}' must consist of constant expressions."
+                        )
                 elif not isinstance(raw_init_exp, ast.Constant):
                     raise SemanticError(
                         f"Initialiser of 'static' variable '{var_decl.name}' must be a constant expression."
@@ -1048,10 +1323,13 @@ class SemanticAnalyser:
                         static_init = Initial(tuple(_string_array_static_init(init.exp.string, var_decl.var_type.size)))
                     else:
                         assert isinstance(init, ast.CompoundInit)
-                        static_init = Initial(tuple(_flatten_static_init(init)))
+                        static_init = Initial(tuple(self._flatten_static_init(init)))
+                elif isinstance(var_decl.var_type, Structure):
+                    assert isinstance(init, ast.CompoundInit)
+                    static_init = Initial(tuple(self._flatten_static_init(init)))
                 else:
                     assert isinstance(init, ast.SingleInit)
-                    static_init = Initial((_exp_to_static_init(init.exp),))
+                    static_init = Initial((self._exp_to_static_init(init.exp),))
                 self._symbol_table[unique_name] = SymbolTableEntry(
                     t=var_decl.var_type, attrs=StaticAttr(init=static_init, globl=False)
                 )
@@ -1088,9 +1366,18 @@ class SemanticAnalyser:
                 the same name carried a different C type; or if linkage conflicts
                 with a prior declaration.
         """
-        validate_type_specifier(var_decl.var_type)
+        var_decl = ast.VariableDeclaration(
+            var_decl.name, var_decl.init, self._resolve_type(var_decl.var_type), var_decl.storage_class
+        )
+        validate_type_specifier(var_decl.var_type, self._struct_type_table)
         if isinstance(var_decl.var_type, VoidType):
             raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
+        if (
+            var_decl.storage_class != StorageClass.Extern
+            and isinstance(var_decl.var_type, Structure)
+            and not is_complete(var_decl.var_type, self._struct_type_table)
+        ):
+            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete struct type.")
         if var_decl.name in self._function_map:
             raise SemanticError(
                 f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
@@ -1116,6 +1403,11 @@ class SemanticAnalyser:
                 if not _is_constant_init(var_decl.init):
                     raise SemanticError(
                         f"Initialiser of file-scope array '{var_decl.name}' must consist of constant expressions."
+                    )
+            elif isinstance(var_decl.var_type, Structure):
+                if not _is_constant_init(var_decl.init):
+                    raise SemanticError(
+                        f"Initialiser of file-scope struct '{var_decl.name}' must consist of constant expressions."
                     )
             elif not isinstance(file_raw_exp, ast.Constant):
                 raise SemanticError(
@@ -1173,11 +1465,15 @@ class SemanticAnalyser:
                     )
                 else:
                     assert isinstance(file_typed_init, ast.CompoundInit)
-                    file_init = Initial(tuple(_flatten_static_init(file_typed_init)))
+                    file_init = Initial(tuple(self._flatten_static_init(file_typed_init)))
+            elif isinstance(var_decl.var_type, Structure):
+                file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
+                assert isinstance(file_typed_init, ast.CompoundInit)
+                file_init = Initial(tuple(self._flatten_static_init(file_typed_init)))
             else:
                 file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
                 assert isinstance(file_typed_init, ast.SingleInit)
-                file_init = Initial((_exp_to_static_init(file_typed_init.exp),))
+                file_init = Initial((self._exp_to_static_init(file_typed_init.exp),))
             self._symbol_table[var_decl.name] = SymbolTableEntry(
                 t=var_decl.var_type,
                 attrs=StaticAttr(init=file_init, globl=globl),
@@ -1249,9 +1545,19 @@ class SemanticAnalyser:
                 ``extern`` variable at any scope level (conflicting entity kind on
                 the same external name).
         """
+        fun = ast.Function(
+            name=fun.name,
+            params=tuple(ast.Parameter(self._resolve_type(p.param_type), p.name) for p in fun.params),
+            body=fun.body,
+            fun_type=self._resolve_type(fun.fun_type),
+            globl=fun.globl,
+            storage_class=fun.storage_class,
+            source_file=fun.source_file,
+            source_line=fun.source_line,
+        )
         if isinstance(fun.fun_type, FunType) and isinstance(fun.fun_type.ret, Array):
             raise SemanticError(f"Function '{fun.name}' cannot return an array type.")
-        validate_type_specifier(fun.fun_type)
+        validate_type_specifier(fun.fun_type, self._struct_type_table)
         adjusted_params: list[ast.Parameter] = []
         any_adjusted = False
         for param in fun.params:
@@ -1280,6 +1586,17 @@ class SemanticAnalyser:
         for param in fun.params:
             if isinstance(param.param_type, VoidType):
                 raise SemanticError(f"Parameter '{param.name}' of '{fun.name}' has type 'void'.")
+        if fun.body is not None:
+            fn_ret = fun.fun_type.ret if isinstance(fun.fun_type, FunType) else IntType()
+            if isinstance(fn_ret, Structure) and not is_complete(fn_ret, self._struct_type_table):
+                raise SemanticError(f"Function '{fun.name}' cannot be defined with incomplete struct return type.")
+            for param in fun.params:
+                if isinstance(param.param_type, Structure) and not is_complete(
+                    param.param_type, self._struct_type_table
+                ):
+                    raise SemanticError(
+                        f"Parameter '{param.name}' of '{fun.name}' cannot be defined with incomplete struct type."
+                    )
         var_binding = self._variable_map.get(fun.name)
         if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
             raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
@@ -1335,24 +1652,26 @@ class SemanticAnalyser:
         self._current_block_funs.add(fun.name)
         return fun
 
-    def _enter_scope(self) -> tuple[dict[str, VariableBinding], set[str]]:
+    def _enter_scope(self) -> tuple[dict[str, VariableBinding], set[str], dict[str, StructureBinding]]:
         """Open a new nested scope and return snapshots of the current block state.
 
-        Saves a copy of ``_variable_map`` and ``_current_block_funs``, then
-        marks every existing variable binding as ``from_current_block=False``
-        and clears ``_current_block_funs`` so that the new scope starts with no
-        locally-declared names of either kind.
+        Saves a copy of ``_variable_map``, ``_current_block_funs``, and ``_structure_map``,
+        then marks every existing variable and structure binding as not-from-the-current-scope
+        and clears ``_current_block_funs`` so that the new scope starts with no locally-declared
+        names of either kind.
 
         Returns:
-            A ``(saved_variable_map, saved_block_funs)`` pair.  Assign both
-            values back to the corresponding attributes once the nested scope
-            has been fully processed to restore the enclosing bindings.
+            A ``(saved_variable_map, saved_block_funs, saved_structure_map)`` triple.  Assign
+            all three values back to the corresponding attributes once the nested scope has been
+            fully processed to restore the enclosing bindings.
         """
         saved_vars = dict(self._variable_map)
         saved_funs = self._current_block_funs
+        saved_structs = dict(self._structure_map)
         self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
         self._current_block_funs = set()
-        return saved_vars, saved_funs
+        self._structure_map = {k: v._replace(from_current_scope=False) for k, v in self._structure_map.items()}
+        return saved_vars, saved_funs, saved_structs
 
     def _resolve_block(self, body: ast.Block) -> ast.Block:
         """Resolve a sequence of block items in a new nested scope.
@@ -1372,10 +1691,11 @@ class SemanticAnalyser:
             SemanticError: If any block item within ``body`` contains a
                 semantic violation.
         """
-        saved_vars, saved_funs = self._enter_scope()
+        saved_vars, saved_funs, saved_structs = self._enter_scope()
         result = tuple(self._resolve_block_item(item) for item in body)
         self._variable_map = saved_vars
         self._current_block_funs = saved_funs
+        self._structure_map = saved_structs
         return result
 
     def _type_check_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
@@ -1519,8 +1839,9 @@ class SemanticAnalyser:
                             right_is_ptr and isinstance(typed_right.exp_type.referenced, FunType)
                         ):
                             raise SemanticError("Cannot perform arithmetic on a function pointer type.")
-                        if (left_is_ptr and not is_pointer_to_complete(typed_left.exp_type)) or (
-                            right_is_ptr and not is_pointer_to_complete(typed_right.exp_type)
+                        tbl = self._struct_type_table
+                        if (left_is_ptr and not is_pointer_to_complete(typed_left.exp_type, tbl)) or (
+                            right_is_ptr and not is_pointer_to_complete(typed_right.exp_type, tbl)
                         ):
                             raise SemanticError("Cannot perform pointer arithmetic on a pointer to an incomplete type.")
                         if isinstance(op, ast.Add):
@@ -1575,10 +1896,14 @@ class SemanticAnalyser:
                 return ast.Binary(op, typed_left, typed_right, exp_type=bin_type)
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
                 typed_lv = self._type_check_exp(lvalue)
-                if not isinstance(typed_lv, (ast.Var, ast.Dereference, ast.Subscript, ast.String)):
+                if not is_lvalue(typed_lv):
                     raise SemanticError("Invalid lvalue in assignment expression.")
                 if isinstance(typed_lv.exp_type, Array):
                     raise SemanticError("Cannot assign to an expression of array type.")
+                if isinstance(typed_lv.exp_type, Structure) and not is_complete(
+                    typed_lv.exp_type, self._struct_type_table
+                ):
+                    raise SemanticError("Cannot assign to an expression of incomplete struct type.")
                 typed_rv = self._typecheck_and_convert(rvalue)
                 lv_type = typed_lv.exp_type
                 if lv_type is not None:
@@ -1609,6 +1934,10 @@ class SemanticAnalyser:
                             typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
                         if t2 != common_cond:
                             typed_false = ast.Cast(common_cond, typed_false, exp_type=common_cond)
+                    elif isinstance(t1, Structure) and isinstance(t2, Structure):
+                        if t1 != t2:
+                            raise SemanticError("Branches of conditional expression have incompatible struct types.")
+                        cond_type = t1
                     else:
                         raise SemanticError("Cannot convert branches of conditional to a common type")
                 else:
@@ -1646,7 +1975,8 @@ class SemanticAnalyser:
                 ]
                 return ast.FunctionCall(typed_callee, typed_args, exp_type=fn_ret_type)
             case ast.Cast(target_type=target_type, exp=exp):
-                validate_type_specifier(target_type)
+                target_type = self._resolve_type(target_type)
+                validate_type_specifier(target_type, self._struct_type_table)
                 typed_inner = self._typecheck_and_convert(exp)
                 if isinstance(target_type, VoidType):
                     return ast.Cast(target_type, typed_inner, exp_type=target_type)
@@ -1668,7 +1998,7 @@ class SemanticAnalyser:
                 return ast.Dereference(typed_exp, exp_type=typed_exp.exp_type.referenced)
             case ast.AddrOf(exp=exp):
                 typed_exp = self._type_check_exp(exp)
-                if not isinstance(typed_exp, (ast.Var, ast.Dereference, ast.Subscript, ast.String)):
+                if not is_lvalue(typed_exp):
                     raise SemanticError("Operand of '&' must be an lvalue.")
                 if typed_exp.exp_type is None:
                     raise SemanticError("Cannot take address of expression with unknown type.")
@@ -1680,13 +2010,13 @@ class SemanticAnalyser:
                 t2 = typed_e2.exp_type
                 _int_types = (IntType, LongType, UIntType, ULongType, Char, SChar, UChar)
                 if isinstance(t1, Pointer) and isinstance(t2, _int_types):
-                    if not is_pointer_to_complete(t1):
+                    if not is_pointer_to_complete(t1, self._struct_type_table):
                         raise SemanticError("Cannot subscript a pointer to an incomplete type.")
                     if not isinstance(t2, LongType):
                         typed_e2 = ast.Cast(LongType(), typed_e2, exp_type=LongType())
                     subscript_type: Type = t1.referenced
                 elif isinstance(t1, _int_types) and isinstance(t2, Pointer):
-                    if not is_pointer_to_complete(t2):
+                    if not is_pointer_to_complete(t2, self._struct_type_table):
                         raise SemanticError("Cannot subscript a pointer to an incomplete type.")
                     if not isinstance(t1, LongType):
                         typed_e1 = ast.Cast(LongType(), typed_e1, exp_type=LongType())
@@ -1697,8 +2027,9 @@ class SemanticAnalyser:
             case ast.String(string=s):
                 return ast.String(s, exp_type=Array(element=Char(), size=len(s) + 1))
             case ast.SizeOfT(t=t):
-                validate_type_specifier(t)
-                if not is_complete(t):
+                t = self._resolve_type(t)
+                validate_type_specifier(t, self._struct_type_table)
+                if not is_complete(t, self._struct_type_table):
                     raise SemanticError("Cannot get the size of an incomplete type")
                 return ast.SizeOfT(t, exp_type=ULongType())
             case ast.SizeOf(exp=exp):
@@ -1709,9 +2040,37 @@ class SemanticAnalyser:
                     and isinstance(self._symbol_table[typed_inner.name].attrs, FunAttr)
                 ):
                     raise SemanticError("Cannot apply sizeof to a function type")
-                if typed_inner.exp_type is not None and not is_complete(typed_inner.exp_type):
+                if typed_inner.exp_type is not None and not is_complete(typed_inner.exp_type, self._struct_type_table):
                     raise SemanticError("Cannot get the size of an incomplete type")
                 return ast.SizeOf(typed_inner, exp_type=ULongType())
+            case ast.Dot(structure=structure, member=member):
+                typed_structure = self._typecheck_and_convert(structure)  # ❶
+                match typed_structure.exp_type:
+                    case Structure(tag=tag):
+                        struct_def = self._struct_type_table.get(tag)  # ❷
+                        if struct_def is None:
+                            raise SemanticError("Cannot access member of incomplete struct type.")
+                        member_def = next(  # ❸
+                            (m for m in struct_def.members if m.name == member), None
+                        )
+                        if member_def is None:
+                            raise SemanticError(f"Structure has no member named '{member}'.")
+                        return ast.Dot(typed_structure, member, exp_type=member_def.member_type)  # ❹
+                    case _:
+                        raise SemanticError("Operand of '.' is not a structure.")
+            case ast.Arrow(pointer=pointer, member=member):
+                typed_pointer = self._typecheck_and_convert(pointer)
+                match typed_pointer.exp_type:
+                    case Pointer(referenced=Structure(tag=tag)):
+                        struct_def = self._struct_type_table.get(tag)
+                        if struct_def is None:
+                            raise SemanticError("Cannot access member through pointer to incomplete struct type.")
+                        member_def = next((m for m in struct_def.members if m.name == member), None)
+                        if member_def is None:
+                            raise SemanticError(f"Structure has no member named '{member}'.")
+                        return ast.Arrow(typed_pointer, member, exp_type=member_def.member_type)
+                    case _:
+                        raise SemanticError("Operand of '->' is not a pointer to a structure.")
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -1740,6 +2099,8 @@ class SemanticAnalyser:
         match typed_e.exp_type:
             case Array(element=elem_t):
                 return ast.AddrOf(typed_e, exp_type=Pointer(elem_t))
+            case Structure() as struct_t if not is_complete(struct_t, self._struct_type_table):
+                raise SemanticError("Expression has incomplete struct type; only its address may be taken.")
             case _:
                 return typed_e
 
@@ -1760,8 +2121,121 @@ class SemanticAnalyser:
             ``inits`` extended with zero initialisers so that ``len(inits) == size``.
         """
         while len(inits) < size:
-            inits.append(_zero_initializer(elem_t))
+            inits.append(_zero_initializer(elem_t, self._struct_type_table))
         return inits
+
+    def _exp_to_static_init(self, e: ast.Exp) -> StaticInit:
+        """Convert a type-annotated constant expression to its ``StaticInit`` equivalent.
+
+        Handles the expression forms that appear as leaves after ``_typecheck_init``
+        has processed a static-storage initialiser:
+
+        * ``Constant`` nodes with any numeric ``Const`` variant.
+        * ``Cast(Pointer, Constant)`` — the null-pointer form produced by
+          ``_zero_initializer`` for pointer-typed array elements.
+        * ``Cast(scalar_type, Constant)`` — widening casts inserted by
+          ``_convert_by_assignment`` when an integer literal is used to initialise
+          a wider type (e.g. ``long arr[2] = {1, 2}``).
+        * ``AddrOf(String(s))`` — a string literal decayed to a pointer, used to
+          initialise a ``char *`` (or compatible) struct member or array element.
+          Registers the string content as a hidden static constant in
+          ``_symbol_table`` and returns ``PointerInit(str_name)``.
+
+        Zero-valued scalars are encoded as ``ZeroInit``; adjacent ``ZeroInit`` nodes
+        are coalesced by ``_flatten_static_init``.
+
+        Args:
+            e: A fully type-annotated scalar expression produced by ``_typecheck_init``.
+
+        Returns:
+            The corresponding ``StaticInit`` element.
+
+        Raises:
+            SemanticError: If ``e`` is not a recognised constant form.
+        """
+        match e:
+            case ast.AddrOf(exp=ast.String(string=s)):
+                str_name = self._make_string_name()
+                self._symbol_table[str_name] = SymbolTableEntry(
+                    t=Array(element=Char(), size=len(s) + 1),
+                    attrs=ConstantAttr(StringInit(s, True)),
+                )
+                return PointerInit(str_name)
+            case ast.Cast(target_type=Pointer()):
+                return ZeroInit(8)
+            case ast.Cast(target_type=target, exp=ast.Constant(value=const)):
+                return _make_static_init(target, const.val)
+            case ast.Constant(value=const):
+                return _make_static_init(e.exp_type, const.val)
+            case _:
+                raise SemanticError(f"Cannot convert expression to a static initialiser element: {type(e).__name__}")
+
+    def _flatten_static_init(self, init: ast.Initializer) -> list[StaticInit]:
+        """Flatten a fully type-checked ``Initializer`` tree into a list of ``StaticInit`` elements.
+
+        Recursively traverses ``CompoundInit`` nodes and converts each leaf
+        ``SingleInit`` to its ``StaticInit`` equivalent.  Adjacent ``ZeroInit``
+        nodes are coalesced into a single ``ZeroInit`` with the combined byte count
+        so that sparse array regions are represented compactly.  Struct
+        ``CompoundInit`` nodes (identified by a non-``None`` ``init_type``) emit
+        inter-member padding and trailing padding according to the layout recorded
+        in ``_struct_type_table``.
+
+        Args:
+            init: A fully type-checked (and zero-padded) ``Initializer`` node, as
+                returned by ``_typecheck_init``.
+
+        Returns:
+            A flat list of ``StaticInit`` elements with consecutive zero regions merged.
+
+        Raises:
+            SemanticError: If any leaf expression cannot be converted to a static
+                initialiser element.
+        """
+        result: list[StaticInit] = []
+        self._flatten_helper(init, result)
+        return result
+
+    def _flatten_helper(self, init: ast.Initializer, result: list[StaticInit]) -> None:
+        """Recursive worker for ``_flatten_static_init``.
+
+        Traverses the ``Initializer`` tree depth-first and appends ``StaticInit``
+        elements to ``result``, merging any ``ZeroInit`` that is adjacent to a
+        trailing ``ZeroInit`` already in the list.  Struct ``CompoundInit`` nodes
+        (``init_type = Structure(tag)``) are expanded with the inter-member and
+        trailing padding dictated by the struct's layout in ``_struct_type_table``.
+
+        Args:
+            init: The current ``Initializer`` node being processed.
+            result: Accumulator list modified in place.
+        """
+        match init:
+            case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))):
+                for elem in _string_array_static_init(s, size):
+                    if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
+                        result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
+                    else:
+                        result.append(elem)
+            case ast.SingleInit(exp=e):
+                elem = self._exp_to_static_init(e)
+                if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
+                    result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
+                else:
+                    result.append(elem)
+            case ast.CompoundInit(initializers=sub_inits, init_type=Structure(tag=tag)):
+                struct_def = self._struct_type_table[tag]
+                current_offset = 0
+                for i, member in enumerate(struct_def.members):
+                    if member.offset > current_offset:
+                        _append_zero_pad(result, member.offset - current_offset)
+                    self._flatten_helper(sub_inits[i], result)
+                    current_offset = member.offset + type_size(member.member_type, self._struct_type_table)
+                trailing = struct_def.size - current_offset
+                if trailing > 0:
+                    _append_zero_pad(result, trailing)
+            case ast.CompoundInit(initializers=sub_inits):
+                for sub_init in sub_inits:
+                    self._flatten_helper(sub_init, result)
 
     def _typecheck_init(self, target_type: Type, init: ast.Initializer) -> ast.Initializer:
         """Type-check a variable initializer against its declared type, applying assignment conversion.
@@ -1783,11 +2257,11 @@ class SemanticAnalyser:
             declared size with zero initialisers.
 
         Raises:
-            SemanticError: If a ``CompoundInit`` is used with a non-array target type; if the
-                initializer list is longer than the declared array size; if a string literal is
-                used to initialise a non-character array or the string (including NUL terminator)
-                exceeds the declared array size; or if any sub-expression fails type-checking
-                or assignment conversion.
+            SemanticError: If a ``CompoundInit`` is used with a non-array, non-struct target
+                type; if the initializer list is longer than the declared array size or member
+                count; if a string literal is used to initialise a non-character array or the
+                string (including NUL terminator) exceeds the declared array size; or if any
+                sub-expression fails type-checking or assignment conversion.
         """
         match target_type, init:
             case Array(element=elem_t, size=size), ast.SingleInit(exp=ast.String(string=s)):
@@ -1811,6 +2285,23 @@ class SemanticAnalyser:
                     self._typecheck_init(elem_t, elem_init) for elem_init in init_list
                 ]
                 return ast.CompoundInit(self._pad_to_size(typechecked_list, elem_t, size))
+            case Structure(tag=tag), ast.CompoundInit(initializers=init_list):
+                struct_def = self._struct_type_table.get(tag)  # ❶
+                if struct_def is None:
+                    raise SemanticError("Cannot initialize an incomplete struct type.")
+                if len(init_list) > len(struct_def.members):  # ❷
+                    raise SemanticError(
+                        f"Too many elements in struct initializer: "
+                        f"expected at most {len(struct_def.members)}, got {len(init_list)}."
+                    )
+                typechecked_list = [  # ❸
+                    self._typecheck_init(struct_def.members[i].member_type, elem) for i, elem in enumerate(init_list)
+                ]
+                for i in range(len(init_list), len(struct_def.members)):  # ❹
+                    typechecked_list.append(
+                        _zero_initializer(struct_def.members[i].member_type, self._struct_type_table)
+                    )
+                return ast.CompoundInit(typechecked_list, init_type=target_type)
             case _:
                 raise SemanticError("Cannot initialize a scalar object with a compound initializer.")
 
@@ -1902,6 +2393,10 @@ class SemanticAnalyser:
                 return self._type_check_exp(e)
             case ast.SizeOf(exp=exp):
                 return self._type_check_exp(ast.SizeOf(self.resolve_exp(exp)))
+            case ast.Dot(structure=structure, member=member):
+                return self._type_check_exp(ast.Dot(self.resolve_exp(structure), member))
+            case ast.Arrow(pointer=pointer, member=member):
+                return self._type_check_exp(ast.Arrow(self.resolve_exp(pointer), member))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -1989,7 +2484,7 @@ class SemanticAnalyser:
                 self._break_stack.pop()
                 return result
             case ast.For(init=init, condition=condition, post=post, body=body):
-                saved_vars, saved_funs = self._enter_scope()
+                saved_vars, saved_funs, saved_structs = self._enter_scope()
                 label = self._make_loop_label("for")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
@@ -2003,6 +2498,7 @@ class SemanticAnalyser:
                 self._break_stack.pop()
                 self._variable_map = saved_vars
                 self._current_block_funs = saved_funs
+                self._structure_map = saved_structs
                 return ast.For(init, condition, post, body, label)
             case ast.Switch(control=control, body=body):
                 label = self._make_loop_label("switch")
@@ -2146,6 +2642,20 @@ class SemanticAnalyser:
         match item:
             case ast.D(declaration=ast.VarDecl(variable_declaration=var_decl)):
                 return ast.D(ast.VarDecl(self.resolve_variable_declaration(var_decl)))
+            case ast.D(declaration=ast.StructDecl(struct_declaration=struct_decl)):
+                tag = struct_decl.tag
+                existing = self._structure_map.get(tag)
+                if existing is not None and existing.from_current_scope:
+                    unique_tag = existing.new_tag
+                else:
+                    unique_tag = self._make_struct_tag(tag)
+                    self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
+                resolved_members = tuple(
+                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in struct_decl.members
+                )
+                resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
+                self._typecheck_struct_declaration(resolved_struct_decl)
+                return ast.D(ast.StructDecl(resolved_struct_decl))
             case ast.D(declaration=ast.FunDecl(function_declaration=fun)):
                 if fun.body is not None:
                     raise SemanticError(f"Nested function definition of '{fun.name}' is not permitted.")
@@ -2195,6 +2705,7 @@ class SemanticAnalyser:
             return function
 
         self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
+        self._structure_map = {k: v._replace(from_current_scope=False) for k, v in self._structure_map.items()}
         self._current_block_funs = set()
         self._label_set = set()
         self._loop_stack = []
@@ -2262,12 +2773,28 @@ class SemanticAnalyser:
             match decl:
                 case ast.FunDecl(function_declaration=fn):
                     file_scope_state = dict(self._variable_map)
+                    file_scope_struct_state = dict(self._structure_map)
                     fn = self._register_fun_declaration(fn)
                     resolved.append(ast.FunDecl(self._resolve_function(fn)))
                     self._variable_map = file_scope_state
+                    self._structure_map = file_scope_struct_state
                     self._current_block_funs = set()
                 case ast.VarDecl(variable_declaration=var_decl):
                     resolved.append(ast.VarDecl(self._resolve_file_scope_variable_declaration(var_decl)))
+                case ast.StructDecl(struct_declaration=struct_decl):
+                    tag = struct_decl.tag
+                    existing = self._structure_map.get(tag)
+                    if existing is not None and not existing.from_current_scope:
+                        unique_tag = existing.new_tag
+                    else:
+                        unique_tag = self._make_struct_tag(tag)
+                        self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
+                    resolved_members = tuple(
+                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in struct_decl.members
+                    )
+                    resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
+                    self._typecheck_struct_declaration(resolved_struct_decl)
+                    resolved.append(ast.StructDecl(resolved_struct_decl))
                 case _:
                     raise SemanticError("Unhandled top-level declaration type in semantic analyser")
         return ast.Program(declarations=tuple(resolved))
@@ -2297,25 +2824,27 @@ def resolve(program: ast.Program) -> ast.Program:
     return SemanticAnalyser()._resolve_program(program)
 
 
-def resolve_with_symbols(program: ast.Program) -> tuple[ast.Program, SymbolTable]:
-    """Semantic analysis stage entry point that also returns the populated symbol table.
+def resolve_with_symbols(program: ast.Program) -> tuple[ast.Program, SymbolTable, StructTypeTable]:
+    """Semantic analysis stage entry point that also returns the populated symbol and type tables.
 
-    Identical to ``resolve`` but additionally exposes the ``SymbolTable`` built
-    during analysis.  Downstream stages (TAC generation) require the symbol
-    table to emit ``StaticVariable`` constructs for variables with static
-    storage duration.
+    Identical to ``resolve`` but additionally exposes the ``SymbolTable`` and
+    ``StructTypeTable`` built during analysis.  Downstream stages (TAC generation,
+    code generation) require the symbol table to emit ``StaticVariable`` constructs
+    and the struct type table to determine member offsets and struct sizes.
 
     Args:
         program: The ``Program`` AST node produced by the parser.
 
     Returns:
-        A tuple ``(resolved_program, symbol_table)`` where ``resolved_program``
-        is the semantically validated AST and ``symbol_table`` maps every
-        resolved identifier to its ``SymbolTableEntry``.
+        A tuple ``(resolved_program, symbol_table, struct_type_table)`` where
+        ``resolved_program`` is the semantically validated AST, ``symbol_table``
+        maps every resolved identifier to its ``SymbolTableEntry``, and
+        ``struct_type_table`` maps every resolved struct tag to its
+        ``StructEntry`` layout record.
 
     Raises:
         SemanticError: If the program contains any semantic violation.
     """
     analyser = SemanticAnalyser()
     resolved = analyser._resolve_program(program)
-    return resolved, analyser._symbol_table
+    return resolved, analyser._symbol_table, analyser._struct_type_table

@@ -181,8 +181,12 @@ class ULongInit(InitialValue):
 
 
 @dataclass(frozen=True, slots=True)
-class PointerInit(InitialValue):
+class PointerInit(InitialValue, StaticInit):
     """Initialiser for a static pointer variable set to the address of a named static object.
+
+    Serves a dual role: as a top-level ``InitialValue`` for pointer-typed static variables
+    (e.g. ``int *p = &x;``) and as a scalar element within an aggregate ``StaticInit``
+    sequence (e.g. a struct member pointing to a string literal).
 
     Attributes:
         name: The resolved (unique) name of the static variable whose address is used as
@@ -276,3 +280,44 @@ class SymbolTableEntry:
 
 SymbolTable = dict[str, SymbolTableEntry]
 """Mapping from resolved identifier name to its symbol-table entry."""
+
+
+@dataclass(frozen=True, slots=True)
+class MemberEntry:
+    """Layout information for a single member within a struct type.
+
+    Attributes:
+        name: The member name as it appears in the source.
+        member_type: The resolved C type of the member.
+        offset: Byte offset of the member from the start of the enclosing struct.
+    """
+
+    name: str
+    member_type: Type
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class StructEntry:
+    """Layout information for a complete, defined struct type.
+
+    Populated by the semantic analyser when it encounters a struct definition
+    (a ``StructDeclaration`` with a non-empty member list).  Consumed by
+    downstream passes (TAC generation, code generation) to compute member
+    offsets and struct sizes without re-walking the AST.
+
+    Attributes:
+        alignment: Required alignment of the struct in bytes.  Equal to the
+            maximum alignment of any member.
+        size: Total padded size of the struct in bytes (rounded up to a multiple
+            of ``alignment`` to satisfy C11 §6.7.2.1p15).
+        members: Ordered tuple of ``MemberEntry`` values, one per declared field.
+    """
+
+    alignment: int
+    size: int
+    members: tuple[MemberEntry, ...]
+
+
+StructTypeTable = dict[str, StructEntry]
+"""Mapping from resolved struct tag to its layout entry."""

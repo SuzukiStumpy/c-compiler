@@ -31,7 +31,7 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_variable_with_init_produces_initial_entry(self) -> None:
         """A file-scope ``int x = 5;`` produces ``StaticAttr(Initial((IntInit(5),)), globl=True)``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(ConstInt(5)))))
+        _, symbols, _ = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(ConstInt(5)))))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -40,7 +40,7 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_static_variable_with_init_produces_internal_entry(self) -> None:
         """A ``static int x = 3;`` at file scope produces ``StaticAttr(Initial((IntInit(3),)), globl=False)``."""
-        _, symbols = resolve_with_symbols(
+        _, symbols, _ = resolve_with_symbols(
             _prog_with_decls(_file_var("x", ast.Constant(ConstInt(3)), sc=ast.StorageClass.Static))
         )
         entry = symbols["x"]
@@ -51,7 +51,7 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_tentative_variable_produces_tentative_entry(self) -> None:
         """A tentative definition ``int x;`` at file scope produces ``StaticAttr(Tentative, globl=True)``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x")))
+        _, symbols, _ = resolve_with_symbols(_prog_with_decls(_file_var("x")))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Tentative)
@@ -59,7 +59,7 @@ class TestSymbolTablePopulation:
 
     def test_file_scope_extern_without_init_produces_no_initializer_entry(self) -> None:
         """A non-defining ``extern int x;`` at file scope produces ``StaticAttr(NoInitializer, globl=True)``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", sc=ast.StorageClass.Extern)))
+        _, symbols, _ = resolve_with_symbols(_prog_with_decls(_file_var("x", sc=ast.StorageClass.Extern)))
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, NoInitializer)
@@ -67,7 +67,9 @@ class TestSymbolTablePopulation:
 
     def test_tentative_then_definition_yields_initial_value(self) -> None:
         """A tentative definition followed by a concrete definition resolves to ``Initial``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x"), _file_var("x", ast.Constant(ConstInt(7)))))
+        _, symbols, _ = resolve_with_symbols(
+            _prog_with_decls(_file_var("x"), _file_var("x", ast.Constant(ConstInt(7))))
+        )
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -75,7 +77,9 @@ class TestSymbolTablePopulation:
 
     def test_definition_then_tentative_preserves_initial_value(self) -> None:
         """An initial definition followed by a tentative definition keeps ``Initial``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", ast.Constant(ConstInt(9))), _file_var("x")))
+        _, symbols, _ = resolve_with_symbols(
+            _prog_with_decls(_file_var("x", ast.Constant(ConstInt(9))), _file_var("x"))
+        )
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -83,7 +87,9 @@ class TestSymbolTablePopulation:
 
     def test_extern_then_tentative_yields_tentative(self) -> None:
         """A non-defining ``extern`` followed by a tentative definition upgrades to ``Tentative``."""
-        _, symbols = resolve_with_symbols(_prog_with_decls(_file_var("x", sc=ast.StorageClass.Extern), _file_var("x")))
+        _, symbols, _ = resolve_with_symbols(
+            _prog_with_decls(_file_var("x", sc=ast.StorageClass.Extern), _file_var("x"))
+        )
         entry = symbols["x"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Tentative)
@@ -103,7 +109,7 @@ class TestSymbolTablePopulation:
             ),
             ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
-        _, symbols = resolve_with_symbols(_program(body))
+        _, symbols, _ = resolve_with_symbols(_program(body))
         static_entries = {
             name: e
             for name, e in symbols.items()
@@ -122,7 +128,7 @@ class TestSymbolTablePopulation:
             ast.D(ast.VarDecl(ast.VariableDeclaration("x", None, ast.IntType(), ast.StorageClass.Static))),
             ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
-        _, symbols = resolve_with_symbols(_program(body))
+        _, symbols, _ = resolve_with_symbols(_program(body))
         static_entries = {name: e for name, e in symbols.items() if isinstance(e.attrs, StaticAttr)}
         assert len(static_entries) == 1
         _, entry = next(iter(static_entries.items()))
@@ -136,7 +142,7 @@ class TestSymbolTablePopulation:
             ast.D(ast.VarDecl(ast.VariableDeclaration("g", None, ast.IntType(), ast.StorageClass.Extern))),
             ast.S(ast.Return(ast.Constant(ConstInt(0)))),
         )
-        _, symbols = resolve_with_symbols(_program(body))
+        _, symbols, _ = resolve_with_symbols(_program(body))
         entry = symbols.get("g")
         assert entry is not None
         assert isinstance(entry.attrs, StaticAttr)
@@ -156,7 +162,7 @@ class TestSymbolTablePopulation:
                 ast.Function(name="main", params=(), body=body, fun_type=ast.FunType(params=(), ret=ast.IntType()))
             ),
         )
-        _, symbols = resolve_with_symbols(program)
+        _, symbols, _ = resolve_with_symbols(program)
         entry = symbols["g"]
         assert isinstance(entry.attrs, StaticAttr)
         assert isinstance(entry.attrs.init, Initial)
@@ -181,7 +187,7 @@ class TestSymbolTablePopulation:
                 )
             ),
         )
-        _, symbols = resolve_with_symbols(program)
+        _, symbols, _ = resolve_with_symbols(program)
         entry = symbols["foo"]
         assert isinstance(entry.attrs, FunAttr)
         assert entry.attrs.defined is False
@@ -195,7 +201,7 @@ class TestSymbolTablePopulation:
             body=(ast.S(ast.Return(ast.Constant(ConstInt(0)))),),
             fun_type=ast.FunType(params=(), ret=ast.IntType()),
         )
-        _, symbols = resolve_with_symbols(_prog_with_decls(ast.FunDecl(fn)))
+        _, symbols, _ = resolve_with_symbols(_prog_with_decls(ast.FunDecl(fn)))
         entry = symbols["main"]
         assert isinstance(entry.attrs, FunAttr)
         assert entry.attrs.defined is True
@@ -222,7 +228,7 @@ class TestSymbolTablePopulation:
                 )
             ),
         )
-        _, symbols = resolve_with_symbols(program)
+        _, symbols, _ = resolve_with_symbols(program)
         entry = symbols["helper"]
         assert isinstance(entry.attrs, FunAttr)
         assert entry.attrs.defined is True
@@ -251,7 +257,7 @@ class TestSymbolTablePopulation:
                 )
             ),
         )
-        _, symbols = resolve_with_symbols(program)
+        _, symbols, _ = resolve_with_symbols(program)
         entry = symbols["foo"]
         assert isinstance(entry.attrs, FunAttr)
         assert entry.attrs.defined is True
@@ -272,7 +278,7 @@ class TestSymbolTablePopulation:
                 )
             )
         )
-        resolved, _ = resolve_with_symbols(program)
+        resolved, _, _ = resolve_with_symbols(program)
         fn = _get_fn(resolved)
         assert fn.globl is True
 
@@ -297,7 +303,7 @@ class TestSymbolTablePopulation:
                 )
             ),
         )
-        resolved, _ = resolve_with_symbols(program)
+        resolved, _, _ = resolve_with_symbols(program)
         helper_fn = _get_fn(resolved, index=0)
         assert helper_fn.globl is False
 
@@ -322,7 +328,7 @@ class TestStringLiteralConstantAttr:
         """
         decl = _file_var("s", ast.SingleInit(ast.String(string_bytes)), var_type=ast.Pointer(ast.Char()))
         program = _prog_with_decls(decl)
-        resolved, symbols = resolve_with_symbols(program)
+        resolved, symbols, _ = resolve_with_symbols(program)
         return resolved, symbols
 
     def test_file_scope_char_ptr_string_creates_constant_attr_entry(self) -> None:
@@ -359,7 +365,7 @@ class TestStringLiteralConstantAttr:
         decl_a = _file_var("a", ast.SingleInit(ast.String(b"foo")), var_type=ast.Pointer(ast.Char()))
         decl_b = _file_var("b", ast.SingleInit(ast.String(b"bar")), var_type=ast.Pointer(ast.Char()))
         program = _prog_with_decls(decl_a, decl_b)
-        _, symbols = resolve_with_symbols(program)
+        _, symbols, _ = resolve_with_symbols(program)
         hidden = [name for name, entry in symbols.items() if isinstance(entry.attrs, ConstantAttr)]
         assert len(hidden) == 2
         assert hidden[0] != hidden[1]

@@ -249,10 +249,10 @@ class TestFunctionParameters:
             resolve(_make_prog(fn))
 
     def test_declaration_body_is_none_skips_resolution(self) -> None:
-        """A ``Function`` node with ``body=None`` is returned unchanged — no resolution needed."""
+        """A ``Function`` node with ``body=None`` and no struct types produces an equal resolved function."""
         fn = ast.Function(name="foo", params=(), body=None, fun_type=ast.FunType(params=(), ret=ast.IntType()))
         resolved = resolve(_make_prog(fn))
-        assert _get_fn(resolved) is fn
+        assert _get_fn(resolved) == fn
 
     def test_duplicate_params_in_top_level_declaration_raises(self) -> None:
         """Duplicate parameter names in a top-level forward declaration raise ``SemanticError``.
