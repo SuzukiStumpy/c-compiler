@@ -312,3 +312,19 @@ class CopyToOffset(Instruction):
     src: Val
     dst: str
     offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class CopyFromOffset(Instruction):
+    """Copy an aggregate variable's member stored at ``offset`` into the
+    scalar variable stored at ``dst``.
+
+    Attributes:
+        src: Name of the structure/aggregate to copy from
+        offset: Byte offset to the value to extract.
+        dst: Destination for the value extracted.
+    """
+
+    src: str
+    offset: int
+    dst: Val

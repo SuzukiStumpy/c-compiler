@@ -102,6 +102,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs:
     tac_program: tac.Program | None = None
     asm_program: asm.Program | None = None
     symbol_table = {}
+    struct_type_table: dict = {}
 
     if Stage.LEX in stages:
         token_stream = lexer(source)
@@ -112,13 +113,13 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs:
             click.echo(pretty_print(program))
 
     if Stage.VALIDATE in stages:
-        program, symbol_table, _struct_type_table = resolve_with_symbols(program)  # type: ignore[bad-argument-type]
+        program, symbol_table, struct_type_table = resolve_with_symbols(program)  # type: ignore[bad-argument-type]
         if Stage.TACKY not in stages:
             click.echo(pretty_print(program))
 
     if Stage.TACKY in stages:
         assert program is not None
-        tac_program = tac_generate(program, symbol_table)
+        tac_program = tac_generate(program, symbol_table, struct_type_table)
         if Stage.CODEGEN not in stages:
             click.echo(pretty_print(tac_program))
 

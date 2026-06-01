@@ -54,6 +54,27 @@ The translation follows this mapping:
     ast.AddrOf(Subscript(ptr, idx))       → <ptr+idx AddPtr, no Load>  (&arr[i] ≡ arr+i)
     ast.AddrOf(Var(name))                 → [GetAddress(Var(name), tmp)]
                                             returns tmp (pointer-typed)
+    ast.AddrOf(Dot(structure, member))    → _addr_of_lvalue(structure)
+                                            + [AddPtr(base_ptr, member_offset, 1, tmp)]  (if offset > 0)
+                                            returns tmp (pointer-to-member-typed)
+    ast.AddrOf(Arrow(pointer, member))    → <emit(pointer)>   (&ptr->m ≡ ptr + offset)
+                                            + [AddPtr(ptr_val, member_offset, 1, tmp)]  (if offset > 0)
+                                            returns tmp (pointer-to-member-typed)
+    ast.Dot(structure, member)            → <emit(structure)>
+                                            + [CopyFromOffset(struct_var, member_offset, tmp)]
+                                            returns tmp
+    ast.Arrow(pointer, member)            → <emit(pointer)>
+                                            + [AddPtr(ptr_val, member_offset, 1, member_ptr)]  (if offset > 0)
+                                            + [Load(member_ptr, tmp)]
+                                            returns tmp
+    ast.Assignment(Dot(Var(n), member),   → <emit(rvalue)>
+                   rvalue)                  + [CopyToOffset(rval, n, member_offset)]
+    ast.Assignment(Dot(structure, member),→ <emit(rvalue)> + _addr_of_lvalue(structure)
+                   rvalue)                  + [AddPtr(base, member_offset, 1, ptr)]  (if offset > 0)
+                                            + [Store(rval, ptr)]
+    ast.Assignment(Arrow(ptr, member),    → <emit(rvalue)> + <emit(ptr)>
+                   rvalue)                  + [AddPtr(ptr_val, member_offset, 1, member_ptr)]  (if offset > 0)
+                                            + [Store(rval, member_ptr)]
     ast.Dereference(inner)                → <emit(inner)>
                                             + [Load(inner_val, tmp)]
                                             returns tmp
@@ -115,6 +136,7 @@ The resulting ``tac.Program`` is a complete TAC AST containing all ``TopLevel``
 definitions and is ready for the assembly code generation stage.
 """
 
+from dataclasses import dataclass
 from itertools import count
 
 import compiler.syntax.ast as ast
@@ -129,6 +151,7 @@ from compiler.types.symbols import (
     NoInitializer,
     PointerInit,
     StaticAttr,
+    StructTypeTable,
     SymbolTable,
     SymbolTableEntry,
     Tentative,
@@ -158,7 +181,11 @@ from compiler.types.symbols import (
 from compiler.utils.exceptions import CodeGenerationError
 
 
-def generate(program: ast.Program, symbol_table: SymbolTable) -> tac.Program:
+def generate(
+    program: ast.Program,
+    symbol_table: SymbolTable,
+    struct_type_table: StructTypeTable | None = None,
+) -> tac.Program:
     """Translate an AST ``Program`` into a TAC ``Program``.
 
     File-scope variable declarations and block-scope ``static``/``extern``
@@ -170,6 +197,9 @@ def generate(program: ast.Program, symbol_table: SymbolTable) -> tac.Program:
     Args:
         program: The ``Program`` node produced by the semantic analysis stage.
         symbol_table: The symbol table populated by the semantic analysis stage.
+        struct_type_table: Mapping from struct tag to layout, used to compute member
+            offsets for ``Dot`` and ``Arrow`` expressions.  Defaults to empty (safe
+            for programs that contain no struct member access).
 
     Returns:
         A ``tac.Program`` node representing the equivalent TAC program.
@@ -178,13 +208,13 @@ def generate(program: ast.Program, symbol_table: SymbolTable) -> tac.Program:
     Raises:
         CodeGenerationError: If any construct cannot be translated.
     """
-    gen = _TacGenerator(symbol_table)
+    gen = _TacGenerator(symbol_table, struct_type_table or {})
     functions = [
         gen.translate_function(decl.function_declaration)
         for decl in program.declarations
         if isinstance(decl, ast.FunDecl) and decl.function_declaration.body is not None
     ]
-    static_vars = _convert_symbols_to_tacky(symbol_table)
+    static_vars = _convert_symbols_to_tacky(symbol_table, struct_type_table or {})
     return tac.Program(top_level=tuple(static_vars) + tuple(functions))
 
 
@@ -221,7 +251,10 @@ def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
             raise CodeGenerationError(f"Cannot lower symbol StaticInit {sym_init!r} to TAC.")
 
 
-def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.TopLevel]:
+def _convert_symbols_to_tacky(
+    symbol_table: SymbolTable,
+    struct_type_table: StructTypeTable | None = None,
+) -> list[tac.TopLevel]:
     """Emit TAC top-level nodes for every static-storage symbol in the symbol table.
 
     Walks all entries in ``symbol_table``.  Entries that carry a ``StaticAttr``
@@ -233,6 +266,8 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.TopLevel]:
 
     Args:
         symbol_table: The symbol table returned by the semantic analysis stage.
+        struct_type_table: Mapping from struct tag to layout, used to compute the
+            zero-initialisation size of tentative struct-typed static variables.
 
     Returns:
         A list of ``tac.TopLevel`` nodes, in symbol-table insertion order.
@@ -265,16 +300,13 @@ def _convert_symbols_to_tacky(symbol_table: SymbolTable) -> list[tac.TopLevel]:
                 if not skip:
                     result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=tuple(static_inits)))
             case StaticAttr(init=Tentative(), globl=globl):
-                n_bytes = _type_size(entry.t)
+                n_bytes = _type_size(entry.t, struct_type_table)
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.ZeroInit(n_bytes),)))
             case StaticAttr(init=ULongInit(), globl=globl):
                 # Null pointer constant: pointer-sized (8-byte) zero.
                 result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.LongInit(0),)))
             case StaticAttr(init=PointerInit(name=target), globl=globl):
-                raise CodeGenerationError(
-                    f"Static pointer initialiser '&{target}' cannot yet be lowered to TAC: "
-                    "data-section pointer relocations are not yet implemented."
-                )
+                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.PointerInit(target),)))
             case StaticAttr(init=NoInitializer()):
                 pass
             case ConstantAttr(init=sym_init):
@@ -356,20 +388,24 @@ def _translate_unary_op(op: ast.UnaryOperator) -> tac.UnaryOperator:
             raise CodeGenerationError(f"unsupported unary operator: {type(op).__name__}")
 
 
-def _type_size(t: ast.Type) -> int:
+def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) -> int:
     """Return the size in bytes of a C type.
 
     Pointer types are treated as pointer-sized (8 bytes), identical to ``unsigned long``.
+    ``Structure`` types require ``struct_type_table`` to be supplied.
 
     Args:
         t: The C type whose size is required.
+        struct_type_table: Mapping from struct tag to layout.  Required when ``t`` is or
+            contains a ``Structure``; may be omitted for purely scalar/pointer types.
 
     Returns:
         1 for ``char``/``signed char``/``unsigned char``; 4 for ``int``/``unsigned int``;
-        8 for ``long``/``unsigned long``/any pointer type.
+        8 for ``long``/``unsigned long``/any pointer type; the padded struct size for
+        ``Structure``; ``element_size * count`` for ``Array``.
 
     Raises:
-        CodeGenerationError: If the type is not a scalar integer or pointer type.
+        CodeGenerationError: If the type is not recognised, or a struct tag is unknown.
     """
     if isinstance(t, (ast.Char, ast.SChar, ast.UChar)):
         return 1
@@ -378,7 +414,14 @@ def _type_size(t: ast.Type) -> int:
     if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer, ast.DoubleType)):
         return 8
     if isinstance(t, ast.Array):
-        return t.size * _type_size(t.element)
+        return t.size * _type_size(t.element, struct_type_table)
+    if isinstance(t, ast.Structure):
+        if struct_type_table is None:
+            raise CodeGenerationError(f"struct type table required to size struct '{t.tag}'")
+        entry = struct_type_table.get(t.tag)
+        if entry is None:
+            raise CodeGenerationError(f"unknown struct tag '{t.tag}' in size calculation")
+        return entry.size
     raise CodeGenerationError(f"unsupported type in size calculation: {type(t).__name__}")
 
 
@@ -404,6 +447,54 @@ def _is_signed(t: ast.Type) -> bool:
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 
 
+# ---------------------------------------------------------------------------
+# Abstract lvalue representation
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _PlainOperand:
+    """A concrete TAC value — a scalar variable or constant."""
+
+    val: tac.Val
+
+
+@dataclass(frozen=True, slots=True)
+class _SubObject:
+    """A sub-region of a named aggregate variable at a compile-time byte offset.
+
+    Produced by member-access on a ``Var``-based struct lvalue.  The offset
+    accumulates across nested ``Dot`` expressions so that ``s.a.b`` becomes a
+    single ``SubObject("s", offset_a + offset_b)`` without emitting any
+    intermediate ``CopyFromOffset``.
+
+    Attributes:
+        base: Name of the aggregate variable in the symbol table.
+        offset: Byte offset from the start of ``base`` to this sub-object.
+    """
+
+    base: str
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _DereferencedPointer:
+    """A value reached by dereferencing a pointer.
+
+    Produced by ``Arrow`` or ``Dot`` on a pointer-backed struct.  Writes become
+    ``Store``, reads become ``Load``, and taking the address cancels the
+    dereference.
+
+    Attributes:
+        ptr: TAC value that holds the address of the object.
+    """
+
+    ptr: tac.Val
+
+
+_AbstractObject = _PlainOperand | _SubObject | _DereferencedPointer
+
+
 class _TacGenerator:
     """Stateful TAC generator for a single function.
 
@@ -412,17 +503,20 @@ class _TacGenerator:
     function to ensure fresh temporaries and labels for each translation unit.
     """
 
-    def __init__(self, symbol_table: SymbolTable) -> None:
+    def __init__(self, symbol_table: SymbolTable, struct_type_table: StructTypeTable | None = None) -> None:
         """Initialise the generator with zeroed temporary-variable and label counters.
 
         Args:
             symbol_table: The program-wide symbol table, mutated in-place to record
                 compiler-generated temporaries (e.g. cast destinations).
+            struct_type_table: Mapping from struct tag to layout, used to compute member
+                offsets for ``Dot`` and ``Arrow`` expressions.  Defaults to empty.
         """
         self._counter = count()
         self._label_counter = count()
         self._function_name: str = ""
         self._symbol_table = symbol_table
+        self._struct_type_table: StructTypeTable = struct_type_table or {}
 
     def _make_temp(self, t: ast.Type = ast.IntType()) -> tac.Var:
         """Create a fresh temporary variable, register it in the symbol table, and advance the counter.
@@ -466,6 +560,193 @@ class _TacGenerator:
             ``_counter``.
         """
         return f".Lstr.{next(self._counter)}"
+
+    def _size_of(self, t: ast.Type) -> int:
+        """Return the byte size of ``t``, forwarding the struct type table for struct types.
+
+        Args:
+            t: The C type to measure.
+
+        Returns:
+            The size in bytes as reported by ``_type_size``.
+        """
+        return _type_size(t, self._struct_type_table)
+
+    def _get_member(self, tag: str, member_name: str) -> tuple[int, ast.Type]:
+        """Return the byte offset and declared type of a named member within a struct.
+
+        Args:
+            tag: The struct tag to look up in the struct type table.
+            member_name: The name of the member to locate.
+
+        Returns:
+            A ``(offset, member_type)`` tuple where ``offset`` is the byte offset from
+            the start of the struct and ``member_type`` is the C type of the member.
+
+        Raises:
+            CodeGenerationError: If ``tag`` is absent from the struct type table or
+                ``member_name`` is not declared on that struct.
+        """
+        entry = self._struct_type_table.get(tag)
+        if entry is None:
+            raise CodeGenerationError(f"unknown struct tag '{tag}'")
+        for m in entry.members:
+            if m.name == member_name:
+                return m.offset, m.member_type
+        raise CodeGenerationError(f"struct '{tag}' has no member '{member_name}'")
+
+    def _eval_exp(self, exp: ast.Exp) -> tuple[_AbstractObject, list[tac.Instruction]]:
+        """Lazily evaluate an expression into an abstract lvalue object.
+
+        Unlike ``translate_exp``, this method does not immediately materialise
+        struct-typed sub-expressions.  Consecutive ``Dot`` accesses accumulate
+        into a single ``_SubObject`` offset; pointer-based accesses fold into a
+        ``_DereferencedPointer``.  The caller converts the result to a concrete
+        TAC value with ``_force_val``, to an address with ``_addr_of_obj``, or
+        to an assignment instruction with ``_emit_assign``.
+
+        Args:
+            exp: The expression to evaluate lazily.
+
+        Returns:
+            A ``(_AbstractObject, instructions)`` tuple.  ``instructions`` must be
+            emitted before the abstract object is used.
+
+        Raises:
+            CodeGenerationError: If any sub-expression cannot be translated.
+        """
+        match exp:
+            case ast.Var(name=name):
+                return _PlainOperand(tac.Var(value=name)), []
+            case ast.Dereference(exp=inner):
+                ptr_val, ptr_instrs = self.translate_exp(inner)
+                return _DereferencedPointer(ptr=ptr_val), ptr_instrs
+            case ast.Subscript(exp1=exp1, exp2=exp2):
+                if isinstance(exp1.exp_type, ast.Pointer):
+                    ptr_node, int_node = exp1, exp2
+                else:
+                    ptr_node, int_node = exp2, exp1
+                ptr_val, ptr_instrs = self.translate_exp(ptr_node)
+                int_val, int_instrs = self.translate_exp(int_node)
+                assert isinstance(ptr_node.exp_type, ast.Pointer)
+                scale = self._size_of(ptr_node.exp_type.referenced)
+                elem_ptr = self._make_temp(ptr_node.exp_type)
+                return _DereferencedPointer(ptr=elem_ptr), [
+                    *ptr_instrs,
+                    *int_instrs,
+                    tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=elem_ptr),
+                ]
+            case ast.Dot(structure=structure, member=member):
+                assert isinstance(structure.exp_type, ast.Structure)
+                offset, _ = self._get_member(structure.exp_type.tag, member)
+                inner_obj, inner_instrs = self._eval_exp(structure)
+                match inner_obj:
+                    case _PlainOperand(val=tac.Var(value=v)):
+                        return _SubObject(base=v, offset=offset), inner_instrs  # ❶
+                    case _SubObject(base=base, offset=inner_offset):
+                        return _SubObject(base=base, offset=inner_offset + offset), inner_instrs  # ❷
+                    case _DereferencedPointer(ptr=ptr):  # ❸
+                        if offset == 0:
+                            return _DereferencedPointer(ptr=ptr), inner_instrs
+                        dst_ptr = self._make_temp(ast.Pointer(exp.exp_type or ast.IntType()))
+                        return _DereferencedPointer(ptr=dst_ptr), [
+                            *inner_instrs,
+                            tac.AddPtr(ptr=ptr, index=tac.Constant(ast.ConstLong(offset)), scale=1, dst=dst_ptr),
+                        ]
+            case ast.Arrow(pointer=pointer, member=member):
+                assert isinstance(pointer.exp_type, ast.Pointer)
+                assert isinstance(pointer.exp_type.referenced, ast.Structure)
+                offset, _ = self._get_member(pointer.exp_type.referenced.tag, member)
+                ptr_val, ptr_instrs = self.translate_exp(pointer)
+                if offset == 0:
+                    return _DereferencedPointer(ptr=ptr_val), ptr_instrs
+                dst_ptr = self._make_temp(ast.Pointer(exp.exp_type or ast.IntType()))
+                return _DereferencedPointer(ptr=dst_ptr), [
+                    *ptr_instrs,
+                    tac.AddPtr(ptr=ptr_val, index=tac.Constant(ast.ConstLong(offset)), scale=1, dst=dst_ptr),
+                ]
+            case _:
+                val, instrs = self.translate_exp(exp)
+                return _PlainOperand(val=val), instrs
+
+    def _force_val(self, obj: _AbstractObject, t: ast.Type) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Convert an abstract lvalue object into a concrete TAC value (read).
+
+        Args:
+            obj: The abstract object to materialise.
+            t: The C type of the resulting value (used when allocating a fresh temporary).
+
+        Returns:
+            A ``(val, instructions)`` tuple.  ``instructions`` must be emitted before
+            ``val`` is valid.
+        """
+        match obj:
+            case _PlainOperand(val=val):
+                return val, []
+            case _SubObject(base=base, offset=offset):
+                dst = self._make_temp(t)
+                return dst, [tac.CopyFromOffset(src=base, offset=offset, dst=dst)]
+            case _DereferencedPointer(ptr=ptr):
+                dst = self._make_temp(t)
+                return dst, [tac.Load(src_ptr=ptr, dst=dst)]
+
+    def _addr_of_obj(self, obj: _AbstractObject, t: ast.Type) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Compute the address of an abstract lvalue object.
+
+        For ``_DereferencedPointer`` the dereference and address-of cancel out and
+        no instructions are emitted.  For ``_SubObject`` a ``GetAddress`` instruction
+        plus an optional ``AddPtr`` are emitted.
+
+        Args:
+            obj: The abstract lvalue whose address is required.
+            t: The C pointer type of the resulting address.
+
+        Returns:
+            A ``(address_val, instructions)`` tuple.
+
+        Raises:
+            CodeGenerationError: If ``obj`` cannot have its address taken.
+        """
+        match obj:
+            case _PlainOperand(val=tac.Var(value=name)):
+                dst = self._make_temp(t)
+                return dst, [tac.GetAddress(src=tac.Var(value=name), dst=dst)]
+            case _SubObject(base=base, offset=offset):
+                dst = self._make_temp(t)
+                get_addr = tac.GetAddress(src=tac.Var(value=base), dst=dst)
+                if offset == 0:
+                    return dst, [get_addr]
+                return dst, [
+                    get_addr,
+                    tac.AddPtr(ptr=dst, index=tac.Constant(ast.ConstLong(offset)), scale=1, dst=dst),
+                ]
+            case _DereferencedPointer(ptr=ptr):
+                return ptr, []  # & and * cancel
+            case _:
+                raise CodeGenerationError("cannot take address of non-lvalue abstract object")
+
+    def _emit_assign(self, obj: _AbstractObject, val: tac.Val) -> list[tac.Instruction]:
+        """Emit the assignment instruction(s) for writing ``val`` into ``obj``.
+
+        Args:
+            obj: The abstract lvalue to write to.
+            val: The TAC value to store.
+
+        Returns:
+            A list of instructions that perform the assignment.
+
+        Raises:
+            CodeGenerationError: If ``obj`` is not a writable lvalue form.
+        """
+        match obj:
+            case _PlainOperand(val=tac.Var() as dst_var):
+                return [tac.Copy(src=val, dst=dst_var)]
+            case _SubObject(base=base, offset=offset):
+                return [tac.CopyToOffset(src=val, dst=base, offset=offset)]
+            case _DereferencedPointer(ptr=ptr):
+                return [tac.Store(src=val, dst_ptr=ptr)]
+            case _:
+                raise CodeGenerationError("cannot assign to non-lvalue abstract object")
 
     def translate_function(self, function: ast.Function) -> tac.Function:
         """Translate an AST ``Function`` into a TAC ``Function``.
@@ -551,26 +832,38 @@ class _TacGenerator:
                         raise CodeGenerationError(f"unsupported initializer variant: {type(init).__name__}")
             case ast.D(declaration=ast.FunDecl()):
                 return []
+            case ast.D(declaration=ast.StructDecl()):
+                return []  # local struct type definition — no code, pure type metadata
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 
     def _init_byte_size(self, init: ast.Initializer) -> int:
         """Return the total byte size covered by an initializer.
 
+        For ``CompoundInit`` nodes targeting a struct the padded ``StructEntry.size`` is
+        returned rather than summing sub-initializer sizes, which would under-count when
+        the struct has inter-member or trailing alignment padding.
+
         Args:
             init: A ``SingleInit`` or ``CompoundInit`` node whose size is needed.
 
         Returns:
             For ``SingleInit``: the size of the wrapped expression's type.
-            For ``CompoundInit``: the sum of sizes of all sub-initializers.
+            For struct ``CompoundInit``: the padded size of the struct from the type table.
+            For array ``CompoundInit``: the sum of sizes of all sub-initializers.
 
         Raises:
-            CodeGenerationError: If ``init`` is an unrecognised ``Initializer`` variant or contains
-                an expression with no type annotation.
+            CodeGenerationError: If ``init`` is an unrecognised ``Initializer`` variant, contains
+                an expression with no type annotation, or references an unknown struct tag.
         """
         match init:
             case ast.SingleInit(exp=e):
-                return _type_size(e.exp_type or ast.IntType())
+                return self._size_of(e.exp_type or ast.IntType())
+            case ast.CompoundInit(init_type=ast.Structure(tag=tag)):
+                entry = self._struct_type_table.get(tag)
+                if entry is None:
+                    raise CodeGenerationError(f"unknown struct tag '{tag}' in initializer")
+                return entry.size
             case ast.CompoundInit(initializers=sub_inits):
                 return sum(self._init_byte_size(sub) for sub in sub_inits)
             case _:
@@ -585,9 +878,10 @@ class _TacGenerator:
     ) -> None:
         """Recursively emit ``CopyToOffset`` instructions for an initializer at a byte offset.
 
-        Each scalar leaf emits one ``CopyToOffset`` with a compile-time offset; nested
-        ``CompoundInit`` nodes are expanded recursively with a running offset derived from
-        element sizes via ``_init_byte_size``.
+        Each scalar leaf emits one ``CopyToOffset`` with a compile-time offset.  Struct
+        ``CompoundInit`` nodes use the member offsets from the struct type table so that
+        alignment padding is respected.  Array ``CompoundInit`` nodes use a running size
+        accumulator.
 
         Args:
             var_name: The resolved name of the aggregate variable (e.g. ``".Varr.0"``).
@@ -603,6 +897,29 @@ class _TacGenerator:
                 val, elem_instrs = self.translate_exp(e)
                 instructions.extend(elem_instrs)
                 instructions.append(tac.CopyToOffset(src=val, dst=var_name, offset=byte_offset))
+            case ast.CompoundInit(initializers=sub_inits, init_type=ast.Structure(tag=tag)):
+                entry = self._struct_type_table.get(tag)
+                if entry is None:
+                    raise CodeGenerationError(f"unknown struct tag '{tag}' in initializer")
+                # Zero-fill the entire struct region first so that padding bytes are always 0.
+                remaining = entry.size
+                fill_off = byte_offset
+                while remaining > 0:
+                    if remaining >= 8:
+                        zero: ast.Const = ast.ConstLong(0)
+                        chunk = 8
+                    elif remaining >= 4:
+                        zero = ast.ConstInt(0)
+                        chunk = 4
+                    else:
+                        zero = ast.ConstChar(0)
+                        chunk = 1
+                    instructions.append(tac.CopyToOffset(src=tac.Constant(zero), dst=var_name, offset=fill_off))
+                    fill_off += chunk
+                    remaining -= chunk
+                # Write member values on top using each member's precise byte offset. ❷
+                for sub_init, member in zip(sub_inits, entry.members):
+                    self._emit_copy_to_offset(var_name, byte_offset + member.offset, sub_init, instructions)
             case ast.CompoundInit(initializers=sub_inits):
                 offset = byte_offset
                 for sub_init in sub_inits:
@@ -610,18 +927,20 @@ class _TacGenerator:
                     offset += self._init_byte_size(sub_init)
 
     def _translate_compound_init(self, name: str, init: ast.CompoundInit) -> list[tac.Instruction]:
-        """Translate a ``CompoundInit`` for a local array variable into ``CopyToOffset`` instructions.
+        """Translate a ``CompoundInit`` for a local aggregate variable into ``CopyToOffset`` instructions.
 
-        Emits one ``CopyToOffset`` per scalar element.  The byte offset for each element is
-        computed at compile time from ``_init_byte_size``, so no runtime pointer arithmetic
+        Emits one ``CopyToOffset`` per scalar element.  For struct targets, padding bytes are zeroed
+        at each nesting level inside ``_emit_copy_to_offset`` before member values are written on top.
+        The byte offset for each element is computed at compile time, so no runtime pointer arithmetic
         or ``GetAddress`` is needed.
 
         Args:
-            name: The unique resolved name of the array variable (e.g. ``".Varr.0"``).
-            init: The ``CompoundInit`` node carrying the element initializers.
+            name: The unique resolved name of the aggregate variable (e.g. ``".Varr.0"``).
+            init: The ``CompoundInit`` node carrying the element or member initialisers.
 
         Returns:
-            A list of ``tac.Instruction`` nodes that initialise every element of the array.
+            A list of ``tac.Instruction`` nodes that initialise every element/member of the aggregate,
+            with padding bytes zeroed for struct targets.
         """
         instructions: list[tac.Instruction] = []
         self._emit_copy_to_offset(name, 0, init, instructions)
@@ -992,8 +1311,8 @@ class _TacGenerator:
                     else:
                         conv = tac.DoubleToUInt(src=result, dst=dst)
                 else:
-                    dst_size = _type_size(t)
-                    src_size = _type_size(inner_type)  # type: ignore[arg-type]
+                    dst_size = self._size_of(t)
+                    src_size = self._size_of(inner_type)  # type: ignore[arg-type]
                     if dst_size == src_size:
                         conv = tac.Copy(src=result, dst=dst)
                     elif dst_size < src_size:
@@ -1004,9 +1323,9 @@ class _TacGenerator:
                         conv = tac.ZeroExtend(src=result, dst=dst)
                 return dst, [*inner_instrs, conv]
             case ast.SizeOf(exp=inner):
-                return tac.Constant(ast.ConstULong(_type_size(inner.exp_type or ast.IntType()))), []
+                return tac.Constant(ast.ConstULong(self._size_of(inner.exp_type or ast.IntType()))), []
             case ast.SizeOfT(t=t):
-                return tac.Constant(ast.ConstULong(_type_size(t))), []
+                return tac.Constant(ast.ConstULong(self._size_of(t))), []
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
             case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
@@ -1099,7 +1418,7 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(ptr_node)
                 int_val, int_instrs = self.translate_exp(int_node)
                 assert isinstance(ptr_node.exp_type, ast.Pointer)
-                scale = _type_size(ptr_node.exp_type.referenced)
+                scale = self._size_of(ptr_node.exp_type.referenced)
                 dst = self._make_temp(exp.exp_type)
                 return dst, [
                     *ptr_instrs,
@@ -1111,7 +1430,7 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(left)
                 int_val, int_instrs = self.translate_exp(right)
                 assert isinstance(left.exp_type, ast.Pointer)
-                scale = _type_size(left.exp_type.referenced)
+                scale = self._size_of(left.exp_type.referenced)
                 neg_tmp = self._make_temp(right.exp_type or ast.LongType())
                 dst = self._make_temp(exp.exp_type)
                 return dst, [
@@ -1127,7 +1446,7 @@ class _TacGenerator:
                 if left.exp_type != right.exp_type:
                     raise CodeGenerationError(f"Pointer subtraction type mismatch: {left.exp_type} vs {right.exp_type}")
                 assert isinstance(left.exp_type, ast.Pointer)
-                scale = _type_size(left.exp_type.referenced)
+                scale = self._size_of(left.exp_type.referenced)
                 p1_val, p1_instrs = self.translate_exp(left)
                 p2_val, p2_instrs = self.translate_exp(right)
                 diff_tmp = self._make_temp(ast.LongType())
@@ -1159,7 +1478,7 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(ptr_node)
                 int_val, int_instrs = self.translate_exp(int_node)
                 assert isinstance(ptr_node.exp_type, ast.Pointer)
-                scale = _type_size(ptr_node.exp_type.referenced)
+                scale = self._size_of(ptr_node.exp_type.referenced)
                 elem_ptr = self._make_temp(ptr_node.exp_type)
                 return rval, [
                     *rval_instrs,
@@ -1172,6 +1491,10 @@ class _TacGenerator:
                 val, instrs = self.translate_exp(rvalue)
                 dst = tac.Var(value=name)
                 return dst, [*instrs, tac.Copy(src=val, dst=dst)]
+            case ast.Assignment(lvalue=ast.Dot() | ast.Arrow() as lvalue_node, rvalue=rvalue):
+                lval_obj, lval_instrs = self._eval_exp(lvalue_node)
+                rval, rval_instrs = self.translate_exp(rvalue)
+                return rval, [*rval_instrs, *lval_instrs, *self._emit_assign(lval_obj, rval)]
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 cond_val, cond_instrs = self.translate_exp(cond)
                 label_false = self._make_label("cond_false")
@@ -1227,7 +1550,7 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(ptr_node)
                 int_val, int_instrs = self.translate_exp(int_node)
                 assert isinstance(ptr_node.exp_type, ast.Pointer)
-                scale = _type_size(ptr_node.exp_type.referenced)
+                scale = self._size_of(ptr_node.exp_type.referenced)
                 dst = self._make_temp(exp.exp_type or ptr_node.exp_type)
                 return dst, [*ptr_instrs, *int_instrs, tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=dst)]
             case ast.AddrOf(exp=ast.String(string=s)):
@@ -1243,6 +1566,10 @@ class _TacGenerator:
             case ast.AddrOf(exp=ast.Var(name=name)):
                 dst = self._make_temp(exp.exp_type or ast.Pointer(ast.IntType()))
                 return dst, [tac.GetAddress(src=tac.Var(value=name), dst=dst)]
+            case ast.AddrOf(exp=ast.Dot() | ast.Arrow() as inner):
+                obj, obj_instrs = self._eval_exp(inner)
+                addr_val, addr_instrs = self._addr_of_obj(obj, exp.exp_type or ast.Pointer(ast.IntType()))
+                return addr_val, [*obj_instrs, *addr_instrs]
             case ast.Dereference(exp=inner):
                 ptr_val, ptr_instrs = self.translate_exp(inner)
                 dst = self._make_temp(exp.exp_type or ast.IntType())
@@ -1255,7 +1582,7 @@ class _TacGenerator:
                 ptr_val, ptr_instrs = self.translate_exp(ptr_node)
                 int_val, int_instrs = self.translate_exp(int_node)
                 assert isinstance(ptr_node.exp_type, ast.Pointer)
-                scale = _type_size(ptr_node.exp_type.referenced)
+                scale = self._size_of(ptr_node.exp_type.referenced)
                 elem_ptr = self._make_temp(ptr_node.exp_type)
                 result = self._make_temp(exp.exp_type or ast.IntType())
                 return result, [
@@ -1264,5 +1591,9 @@ class _TacGenerator:
                     tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=elem_ptr),
                     tac.Load(src_ptr=elem_ptr, dst=result),
                 ]
+            case ast.Dot() | ast.Arrow():
+                obj, obj_instrs = self._eval_exp(exp)
+                val, force_instrs = self._force_val(obj, exp.exp_type or ast.IntType())
+                return val, [*obj_instrs, *force_instrs]
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

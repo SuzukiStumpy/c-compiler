@@ -29,6 +29,7 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | Store(val src, val dst_ptr)
                         | AddPtr(val ptr, val index, int scale, val dst)
                         | CopyToOffset(val src, identifier dst, int offset)
+                        | CopyFromOffset(identifier src, int offset, val dst)
     val                 = Constant(const) | Var(identifier)
     static_init         = CharInit(int) | IntInit(int) | LongInit(int) | DoubleInit(float) | ZeroInit(int bytes)
                         | StringInit(bytes string, bool null_terminated) | PointerInit(str name)
@@ -60,6 +61,7 @@ from compiler.syntax.tac.instructions import (
     AddPtr,
     Binary,
     Copy,
+    CopyFromOffset,
     CopyToOffset,
     DoubleToInt,
     DoubleToUInt,
@@ -118,6 +120,7 @@ from compiler.syntax.tac.values import (
 )
 
 __all__ = [
+    "CopyFromOffset",
     "StaticConstant",
     "AddPtr",
     "CopyToOffset",
