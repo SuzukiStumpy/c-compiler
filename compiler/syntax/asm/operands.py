@@ -180,17 +180,23 @@ class Data(Operand):
 
     Attributes:
         name: The symbol name of the static variable.
+        offset: Optional offset to the data (default = 0)
     """
 
     name: str
+    offset: int = 0
 
     def emit(self) -> str:
         """Return the RIP-relative reference in AT&T syntax.
 
         Returns:
-            A string of the form ``<name>(%rip)``, e.g. ``x(%rip)``.
+            A string of the form ``<name>(%rip)`` when offset is zero, or
+            ``<name>+<offset>(%rip)`` / ``<name>-<offset>(%rip)`` otherwise.
         """
-        return f"{self.name}(%rip)"
+        if self.offset == 0:
+            return f"{self.name}(%rip)"
+        sign = "+" if self.offset > 0 else "-"
+        return f"{self.name}{sign}{abs(self.offset)}(%rip)"
 
 
 @dataclass(frozen=True, slots=True)

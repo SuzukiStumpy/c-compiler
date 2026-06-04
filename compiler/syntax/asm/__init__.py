@@ -41,7 +41,7 @@ for the supported assembly subset:
                         | Register(reg)
                         | Pseudo(identifier)
                         | Memory(reg, int)
-                        | Data(identifier)
+                        | Data(identifier, int)
                         | Indexed(reg base, reg index, int scale)
                         | PseudoMem(identifier, int)
     cond_code           = E | NE | G | GE | L | LE | A | AE | B | BE

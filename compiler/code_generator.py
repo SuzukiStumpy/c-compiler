@@ -51,25 +51,32 @@ Unsigned variants (selected when the source operand has an unsigned C type):
     tac.Binary(relational, unsigned, ...)             → Cmp, Mov(Imm(0), dst), SetCC(A/AE/B/BE)
 """
 
+# ruff: noqa: C901 - ignore complexity warnings for entire file (since there's lots of them)
+
 import itertools
+from enum import Enum, auto
 
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
+from compiler.semantic_analysis import type_size
 from compiler.syntax.ast.constants import ConstChar, ConstDouble, ConstInt, ConstLong, ConstUChar, ConstUInt, ConstULong
 from compiler.syntax.ast.types import Array as ArrayType
 from compiler.syntax.ast.types import (
     Char,
     DoubleType,
+    FunType,
     IntType,
     LongType,
     Pointer,
     SChar,
+    Structure,
     Type,
     UChar,
     UIntType,
     ULongType,
+    VoidType,
 )
-from compiler.types.symbols import FunAttr, StaticAttr, SymbolTable
+from compiler.types.symbols import FunAttr, StaticAttr, StructTypeTable, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
 
 # System V AMD64 ABI integer argument registers, in order.
@@ -184,7 +191,251 @@ def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
             return False
 
 
-def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> asm.Program:
+class EightbyteClass(Enum):
+    """System V AMD64 ABI eightbyte class for struct argument and return-value passing.
+
+    Each 8-byte chunk of a struct is assigned one of these classes to determine
+    which register file (integer GPR, SSE/XMM, or the stack) handles it during
+    a function call.
+
+    Attributes:
+        NO_CLASS: Unused / padding-only eightbyte; ignored during register allocation.
+        INTEGER: General-purpose register (``rdi``, ``rsi``, … / ``rax``, ``rdx``).
+        SSE: Floating-point XMM register (``xmm0``–``xmm7`` / ``xmm0``, ``xmm1``).
+        MEMORY: Struct is too large or unclassifiable; passed via a hidden stack pointer.
+    """
+
+    NO_CLASS = auto()
+    INTEGER = auto()
+    SSE = auto()
+    MEMORY = auto()
+
+
+def _merge_class(a: EightbyteClass, b: EightbyteClass) -> EightbyteClass:
+    """Merge two eightbyte classes following SysV AMD64 ABI §3.2.3 rule 5.
+
+    Priority order (highest wins): MEMORY > INTEGER > SSE > NO_CLASS.
+
+    Args:
+        a: First class.
+        b: Second class.
+
+    Returns:
+        The merged ``EightbyteClass``.
+    """
+    if a == b:
+        return a
+    if a == EightbyteClass.NO_CLASS:
+        return b
+    if b == EightbyteClass.NO_CLASS:
+        return a
+    if EightbyteClass.MEMORY in (a, b):
+        return EightbyteClass.MEMORY
+    if EightbyteClass.INTEGER in (a, b):
+        return EightbyteClass.INTEGER
+    return EightbyteClass.SSE
+
+
+def _classify_type_at_offset(
+    t: Type,
+    byte_offset: int,
+    eightbytes: list[EightbyteClass],
+    struct_type_table: StructTypeTable,
+) -> None:
+    """Recursively merge the classification of ``t`` into ``eightbytes``.
+
+    Scalar types contribute a single class to the eightbyte that contains their
+    first byte (``byte_offset // 8``).  Arrays and nested structs recurse over
+    their elements/members with adjusted offsets.
+
+    Args:
+        t: The C type to classify.
+        byte_offset: Byte offset of ``t`` from the start of the outermost struct.
+        eightbytes: Mutable list of ``EightbyteClass``, indexed by eightbyte number.
+            Updated in-place via :func:`_merge_class`.
+        struct_type_table: Mapping from struct tag to ``StructEntry`` layout.
+
+    Raises:
+        CodeGenerationError: If ``t`` is a type that cannot appear as a struct member
+            (e.g. ``VoidType``, ``FunType``).
+    """
+    eb = byte_offset // 8
+    match t:
+        case DoubleType():
+            eightbytes[eb] = _merge_class(eightbytes[eb], EightbyteClass.SSE)
+        case IntType() | LongType() | UIntType() | ULongType() | Char() | SChar() | UChar() | Pointer():
+            eightbytes[eb] = _merge_class(eightbytes[eb], EightbyteClass.INTEGER)
+        case ArrayType(element=elem_t, size=n):
+            elem_size = type_size(elem_t, struct_type_table)
+            for i in range(n):
+                _classify_type_at_offset(elem_t, byte_offset + i * elem_size, eightbytes, struct_type_table)
+        case Structure(tag=tag):
+            entry = struct_type_table[tag]
+            for member in entry.members:
+                _classify_type_at_offset(member.member_type, byte_offset + member.offset, eightbytes, struct_type_table)
+        case _:
+            raise CodeGenerationError(f"cannot classify type {type(t).__name__} in struct eightbyte")
+
+
+def classify_struct(tag: str, struct_type_table: StructTypeTable) -> list[EightbyteClass]:
+    """Classify each eightbyte of a struct type per the SysV AMD64 ABI §3.2.3.
+
+    Determines how each 8-byte chunk of the struct should be passed or returned:
+    in an integer register, an XMM register, or via a hidden memory pointer.
+
+    Rules applied (in order):
+
+    1. If the struct is larger than 16 bytes (two eightbytes) it must be passed
+       via memory and ``[MEMORY]`` is returned.
+    2. Each eightbyte starts as ``NO_CLASS`` and is updated by merging the
+       classification of every member whose storage overlaps that chunk.
+    3. If any eightbyte resolves to ``MEMORY`` after merging, the whole struct
+       must be passed via memory and ``[MEMORY]`` is returned.
+
+    Args:
+        tag: The resolved struct tag name.
+        struct_type_table: Mapping from struct tag to ``StructEntry`` layout.
+
+    Returns:
+        A list of ``EightbyteClass`` values, one per 8-byte chunk of the struct.
+        A single-element list ``[MEMORY]`` means the entire struct is passed via
+        the stack.
+
+    Raises:
+        KeyError: If ``tag`` is absent from ``struct_type_table``.
+        CodeGenerationError: If any member type cannot be classified.
+    """
+    entry = struct_type_table[tag]
+
+    if entry.size > 16:
+        return [EightbyteClass.MEMORY]
+
+    num_eightbytes = (entry.size + 7) // 8
+    classes: list[EightbyteClass] = [EightbyteClass.NO_CLASS] * num_eightbytes
+
+    for member in entry.members:
+        _classify_type_at_offset(member.member_type, member.offset, classes, struct_type_table)
+
+    if EightbyteClass.MEMORY in classes:
+        return [EightbyteClass.MEMORY]
+
+    return classes
+
+
+def classify_parameters(
+    params: tuple[str, ...],
+    symbol_table: SymbolTable | None,
+    struct_type_table: StructTypeTable,
+) -> list[list[EightbyteClass]]:
+    """Classify each function parameter per the SysV AMD64 ABI §3.2.3.
+
+    Returns one classification list per parameter.  Scalars produce a
+    single-element list; structs are delegated to :func:`classify_struct` which
+    returns one entry per eightbyte.
+
+    Args:
+        params: Ordered parameter names as found in ``tac.Function.params``.
+        symbol_table: Used to look up each parameter's declared C type.
+        struct_type_table: Required to classify struct-typed parameters; passed
+            through to :func:`classify_struct`.
+
+    Returns:
+        A list with one entry per parameter.  Each entry is a list of
+        ``EightbyteClass`` values:
+
+        - Scalar ``double``  → ``[SSE]``
+        - Other scalar       → ``[INTEGER]``
+        - Struct ≤ 16 bytes  → one ``EightbyteClass`` per eightbyte
+        - Struct > 16 bytes  → ``[MEMORY]``
+    """
+    result: list[list[EightbyteClass]] = []
+    for param in params:
+        t: Type | None = symbol_table[param].t if (symbol_table and param in symbol_table) else None
+        if isinstance(t, Structure):
+            result.append(classify_struct(t.tag, struct_type_table))
+        elif isinstance(t, DoubleType):
+            result.append([EightbyteClass.SSE])
+        else:
+            result.append([EightbyteClass.INTEGER])
+    return result
+
+
+# Return-value register sequences per the SysV AMD64 ABI.
+_GP_RETURN_REGS = [asm.Registers.AX, asm.Registers.DX]
+_XMM_RETURN_REGS = [asm.Registers.XMM0, asm.Registers.XMM1]
+
+
+def classify_return_value(
+    t: Type,
+    struct_type_table: StructTypeTable,
+) -> tuple[list[asm.Register], list[asm.Register], bool]:
+    """Classify how a return value is conveyed per the SysV AMD64 ABI §3.2.3.
+
+    Produces a unified triple for both scalar and struct return types so that
+    callers can handle all cases with the same shape of data.
+
+    Scalar types map to a single register in the appropriate class.  Struct
+    types are classified via :func:`classify_struct`: each eightbyte is assigned
+    to the next available integer (``RAX`` → ``RDX``) or SSE (``XMM0`` → ``XMM1``)
+    register in declaration order.  Structs that cannot be returned in registers
+    set ``in_memory=True``.
+
+    Args:
+        t: The C return type to classify.
+        struct_type_table: Required to classify struct return types; forwarded
+            to :func:`classify_struct`.
+
+    Returns:
+        A three-element tuple ``(gp_regs, xmm_regs, in_memory)`` where:
+
+        - ``gp_regs``: Ordered list of integer registers that carry return data
+          (subset of ``[RAX, RDX]``; at most two elements).
+        - ``xmm_regs``: Ordered list of XMM registers that carry return data
+          (subset of ``[XMM0, XMM1]``; at most two elements).
+        - ``in_memory``: ``True`` iff the return value is passed via a hidden
+          caller-allocated memory pointer.  When ``True``, both register lists
+          are empty.
+
+    Raises:
+        CodeGenerationError: If ``t`` is a type that cannot be returned
+          (e.g. an array type).
+    """
+    match t:
+        case VoidType():
+            return [], [], False
+        case IntType() | UIntType():
+            return [asm.Register(asm.Registers.AX, asm.Width.DWORD)], [], False
+        case LongType() | ULongType() | Pointer():
+            return [asm.Register(asm.Registers.AX, asm.Width.QWORD)], [], False
+        case Char() | SChar() | UChar():
+            return [asm.Register(asm.Registers.AX, asm.Width.BYTE)], [], False
+        case DoubleType():
+            return [], [asm.Register(asm.Registers.XMM0, asm.Width.QWORD)], False
+        case Structure(tag=tag):
+            classes = classify_struct(tag, struct_type_table)
+            if classes == [EightbyteClass.MEMORY]:
+                return [], [], True
+            gp_regs: list[asm.Register] = []
+            xmm_regs: list[asm.Register] = []
+            gp_idx = 0
+            xmm_idx = 0
+            for cls in classes:
+                if cls == EightbyteClass.INTEGER:
+                    gp_regs.append(asm.Register(_GP_RETURN_REGS[gp_idx], asm.Width.QWORD))
+                    gp_idx += 1
+                else:
+                    xmm_regs.append(asm.Register(_XMM_RETURN_REGS[xmm_idx], asm.Width.QWORD))
+                    xmm_idx += 1
+            return gp_regs, xmm_regs, False
+        case _:
+            raise CodeGenerationError(f"cannot classify return type {type(t).__name__}")
+
+
+def generate(
+    program: tac.Program,
+    symbol_table: SymbolTable | None = None,
+    struct_type_table: StructTypeTable | None = None,
+) -> asm.Program:
     """Translate a TAC ``Program`` into an assembly ``Program``.
 
     Applies all three translation passes (TAC lowering, pseudo replacement,
@@ -201,6 +452,8 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
         symbol_table: The program-wide symbol table produced by semantic
             analysis.  All names carrying a ``StaticAttr`` entry are treated as
             static variables and addressed via RIP-relative ``Data`` operands.
+        struct_type_table: Mapping from struct tag to ``StructEntry`` layout,
+            required to classify struct-typed parameters and return values.
 
     Returns:
         An ``asm.Program`` node representing the equivalent assembly program.
@@ -228,8 +481,8 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
     for item in program.top_level:
         match item:
             case tac.Function():
-                raw_fn = _translate_function(item, symbol_table, constants)
-                resolved_fn, stack_size = _replace_pseudos(raw_fn, static_names, symbol_table)
+                raw_fn = _translate_function(item, symbol_table, constants, struct_type_table)
+                resolved_fn, stack_size = _replace_pseudos(raw_fn, static_names, symbol_table, struct_type_table)
                 fixed_fn = _fix_instructions(resolved_fn)
                 definitions.append(_add_stack_allocation(fixed_fn, stack_size))
             case tac.StaticVariable(name=name, globl=globl, t=t, init=init):
@@ -252,15 +505,17 @@ def generate(program: tac.Program, symbol_table: SymbolTable | None = None) -> a
     return asm.Program(definitions=tuple(constants + definitions))
 
 
-def _type_size(t: Type) -> int:
+def _type_size(t: Type, struct_type_table: StructTypeTable | None = None) -> int:
     """Return the size in bytes of a C type.
 
     Args:
         t: The C type whose size is required.
+        struct_type_table: Required to compute the size of ``Structure`` types.
 
     Returns:
-        4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``/``double``/pointer;
-        element_size * count for arrays.
+        1 for char; 4 for ``int``/``unsigned int``; 8 for ``long``/``unsigned long``/
+        ``double``/pointer; element_size * count for arrays; ``StructEntry.size`` for
+        struct types when ``struct_type_table`` is provided; 8 as a fallback otherwise.
     """
     if isinstance(t, (Char, SChar, UChar)):
         return 1
@@ -269,11 +524,13 @@ def _type_size(t: Type) -> int:
     if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
         return 8
     if isinstance(t, ArrayType):
-        return t.size * _type_size(t.element)
+        return t.size * _type_size(t.element, struct_type_table)
+    if isinstance(t, Structure) and struct_type_table and t.tag in struct_type_table:
+        return struct_type_table[t.tag].size
     return 8
 
 
-def _static_alignment(t: Type) -> int:
+def _static_alignment(t: Type, struct_type_table: StructTypeTable | None = None) -> int:
     """Return the data-segment alignment in bytes for a static variable of type ``t``.
 
     Arrays >= 16 bytes are aligned to 16 bytes so SSE instructions can address them
@@ -283,18 +540,21 @@ def _static_alignment(t: Type) -> int:
 
     Args:
         t: The C type of the static variable.
+        struct_type_table: Required to look up struct alignment.
 
     Returns:
         16 for arrays whose total size is >= 16 bytes; the element-type alignment
         for smaller arrays; 8 for ``long``, ``unsigned long``, ``double``, or any
-        pointer; 4 otherwise.
+        pointer; the ``StructEntry.alignment`` for struct types; 4 otherwise.
     """
     if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
         return 8
     if isinstance(t, ArrayType):
-        if _type_size(t) >= 16:
+        if _type_size(t, struct_type_table) >= 16:
             return 16
-        return _static_alignment(t.element)
+        return _static_alignment(t.element, struct_type_table)
+    if isinstance(t, Structure) and struct_type_table and t.tag in struct_type_table:
+        return struct_type_table[t.tag].alignment
     return 4
 
 
@@ -323,6 +583,8 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
             return asm.ZeroInit(n)
         case tac.StringInit(string=s, null_terminated=nt):
             return asm.StringInit(s, nt)
+        case tac.PointerInit(name=n):
+            return asm.PointerInit(n)
         case _:
             raise CodeGenerationError(f"unsupported static initialiser: {type(init).__name__}")
 
@@ -336,19 +598,23 @@ def _translate_function(
     fn: tac.Function,
     symbol_table: SymbolTable | None = None,
     constants: list[asm.TopLevel] | None = None,
+    struct_type_table: StructTypeTable | None = None,
 ) -> asm.Function:
     """Lower a TAC function to an assembly function with pseudo operands.
 
-    For each parameter, a ``Mov`` from the corresponding ABI register into a
-    ``Pseudo`` operand is prepended to the instruction list.  Parameters
-    beyond the sixth (which arrive on the stack) are handled by positive-offset
-    ``Stack`` operands rather than pseudo-registers.
+    For each parameter, one or more ``Mov`` instructions from the ABI registers
+    (or caller stack slots) into ``Pseudo`` / ``PseudoMem`` operands are prepended
+    to the instruction list.  Scalar parameters beyond the sixth integer or eighth
+    XMM register arrive on the stack.  Struct parameters are classified via
+    :func:`classify_parameters`: register-passed structs use one register per
+    eightbyte; MEMORY structs are copied from the caller's stack frame.
 
     Args:
         fn: The TAC function to translate.
         symbol_table: Used to derive the assembly type for each parameter.
         constants: Mutable list into which any required ``StaticConstant`` nodes
             (e.g. the ``DoubleToUInt`` threshold) are appended.
+        struct_type_table: Required to classify struct-typed parameters.
 
     Returns:
         An ``asm.Function`` with the same name and lowered instructions.
@@ -357,36 +623,86 @@ def _translate_function(
         CodeGenerationError: If any instruction cannot be translated.
     """
     instructions: list[asm.Instruction] = []
+    stt: StructTypeTable = struct_type_table or {}
+    bp = asm.Register(asm.Registers.BP, asm.Width.QWORD)
 
-    # Assign each parameter to an ABI register or a caller stack slot.
-    # Integer and double parameters each have their own register class (GP vs XMM)
-    # and are counted independently; each class spills to the stack when exhausted.
-    # Stack-passed parameters of both classes share one stack index, advancing in
-    # parameter-declaration order.
+    # Classify all parameters up-front so register-spill decisions for struct
+    # parameters can be made before any instructions are emitted.
+    classifications = classify_parameters(fn.params, symbol_table, stt)
+
+    # For a struct parameter whose classification is not MEMORY but whose
+    # required registers are no longer available, fall back to MEMORY.
+    int_regs_left = len(_ABI_REGS)
+    xmm_regs_left = len(_XMM_REGS)
+    effective_classes: list[list[EightbyteClass]] = []
+    for param, classes in zip(fn.params, classifications):
+        param_type = symbol_table[param].t if (symbol_table and param in symbol_table) else None
+        if isinstance(param_type, Structure) and classes != [EightbyteClass.MEMORY]:
+            int_need = sum(1 for c in classes if c == EightbyteClass.INTEGER)
+            xmm_need = sum(1 for c in classes if c == EightbyteClass.SSE)
+            if int_need > int_regs_left or xmm_need > xmm_regs_left:
+                effective_classes.append([EightbyteClass.MEMORY])
+            else:
+                int_regs_left -= int_need
+                xmm_regs_left -= xmm_need
+                effective_classes.append(classes)
+        else:
+            if classes == [EightbyteClass.SSE]:
+                xmm_regs_left = max(0, xmm_regs_left - 1)
+            elif classes == [EightbyteClass.INTEGER]:
+                int_regs_left = max(0, int_regs_left - 1)
+            effective_classes.append(classes)
+
     int_reg_idx = 0
     xmm_reg_idx = 0
     stack_param_idx = 0
 
-    for param in fn.params:
-        at = _asm_type(tac.Var(param), symbol_table)
-        if at == asm.Double():
-            if xmm_reg_idx < len(_XMM_REGS):
-                src: asm.Operand = asm.Register(_XMM_REGS[xmm_reg_idx], asm.Width.QWORD)
-                xmm_reg_idx += 1
+    for param, classes in zip(fn.params, effective_classes):
+        param_type = symbol_table[param].t if (symbol_table and param in symbol_table) else None
+
+        if isinstance(param_type, Structure):
+            if classes == [EightbyteClass.MEMORY]:
+                # Struct passed entirely on the stack; copy each eightbyte to a local PseudoMem.
+                entry = stt[param_type.tag]
+                n = (entry.size + 7) // 8
+                base = 16 + 8 * stack_param_idx
+                stack_param_idx += n
+                for i in range(n):
+                    src: asm.Operand = asm.Memory(reg=bp, offset=base + 8 * i)
+                    instructions.append(asm.Mov(src=src, dst=asm.PseudoMem(param, 8 * i), assembly_type=asm.Quadword()))
             else:
-                src = asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=16 + 8 * stack_param_idx)
-                stack_param_idx += 1
+                # Struct passed in registers; one register move per eightbyte.
+                for i, cls in enumerate(classes):
+                    if cls == EightbyteClass.SSE:
+                        src = asm.Register(_XMM_REGS[xmm_reg_idx], asm.Width.QWORD)
+                        xmm_reg_idx += 1
+                        at: asm.AssemblyType = asm.Double()
+                    else:
+                        src = asm.Register(_ABI_REGS[int_reg_idx], asm.Width.QWORD)
+                        int_reg_idx += 1
+                        at = asm.Quadword()
+                    instructions.append(asm.Mov(src=src, dst=asm.PseudoMem(param, 8 * i), assembly_type=at))
         else:
-            if int_reg_idx < len(_ABI_REGS):
-                src = asm.Register(_ABI_REGS[int_reg_idx], _reg_width(at))
-                int_reg_idx += 1
+            # Scalar parameter: use the exact assembly type for the move.
+            at = _asm_type(tac.Var(param), symbol_table)
+            if at == asm.Double():
+                if xmm_reg_idx < len(_XMM_REGS):
+                    src = asm.Register(_XMM_REGS[xmm_reg_idx], asm.Width.QWORD)
+                    xmm_reg_idx += 1
+                else:
+                    src = asm.Memory(reg=bp, offset=16 + 8 * stack_param_idx)
+                    stack_param_idx += 1
             else:
-                src = asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=16 + 8 * stack_param_idx)
-                stack_param_idx += 1
-        instructions.append(asm.Mov(src=src, dst=asm.Pseudo(param), assembly_type=at))
+                if int_reg_idx < len(_ABI_REGS):
+                    src = asm.Register(_ABI_REGS[int_reg_idx], _reg_width(at))
+                    int_reg_idx += 1
+                else:
+                    src = asm.Memory(reg=bp, offset=16 + 8 * stack_param_idx)
+                    stack_param_idx += 1
+            instructions.append(asm.Mov(src=src, dst=asm.Pseudo(param), assembly_type=at))
 
     for instr in fn.body:
-        instructions.extend(_translate_instruction(instr, symbol_table, constants))
+        instructions.extend(_translate_instruction(instr, symbol_table, constants, stt))
 
     return asm.Function(
         name=fn.name,
@@ -571,10 +887,11 @@ def _zero_operand_for(at: asm.AssemblyType, constants: list[asm.TopLevel] | None
     return asm.Imm(0)
 
 
-def _translate_instruction(  # noqa: C901 - ignore complexity warning
+def _translate_instruction(
     instr: tac.Instruction,
     symbol_table: SymbolTable | None = None,
     constants: list[asm.TopLevel] | None = None,
+    struct_type_table: StructTypeTable | None = None,
 ) -> list[asm.Instruction]:
     """Lower a single TAC instruction to a sequence of assembly instructions.
 
@@ -583,6 +900,8 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
         symbol_table: Used to derive assembly types for variable operands.
         constants: Mutable list into which any required ``StaticConstant`` nodes
             are appended (used by ``DoubleToUInt`` for the 2^63 threshold).
+        struct_type_table: Required to classify struct arguments and return
+            values in ``FunCall`` instructions.
 
     Returns:
         A list of ``asm.Instruction`` nodes equivalent to the TAC instruction.
@@ -707,7 +1026,7 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
             return _translate_binary(op, src1, src2, dst, symbol_table, constants)
         case tac.FunCall(fun_val=fun_val, args=args, dst=dst):
             dst_asm = _translate_val(dst, None, symbol_table) if dst is not None else None
-            return _translate_funcall(fun_val, list(args), dst_asm, symbol_table, constants)
+            return _translate_funcall(fun_val, list(args), dst_asm, symbol_table, constants, struct_type_table)
         case tac.SignExtend(src=src, dst=dst):
             return [
                 asm.Movsx(
@@ -810,6 +1129,10 @@ def _translate_instruction(  # noqa: C901 - ignore complexity warning
             at = _asm_type(src, symbol_table)
             src_asm = _translate_val(src, constants, symbol_table)
             return [asm.Mov(src=src_asm, dst=asm.PseudoMem(dst_name, offset), assembly_type=at)]
+        case tac.CopyFromOffset(src=src_name, offset=offset, dst=dst):
+            at = _asm_type(dst, symbol_table)
+            dst_asm = _translate_val(dst, constants, symbol_table)
+            return [asm.Mov(src=asm.PseudoMem(src_name, offset), dst=dst_asm, assembly_type=at)]
         case tac.AddPtr(ptr=ptr, index=index, scale=scale, dst=dst):
             r10 = asm.Register(asm.Registers.R10, asm.Width.QWORD)
             r11 = asm.Register(asm.Registers.R11, asm.Width.QWORD)
@@ -1014,32 +1337,168 @@ def _translate_double_to_uint(
     ]
 
 
+def _struct_src_operand(name: str, offset: int, is_static: bool) -> asm.Operand:
+    """Return a ``PseudoMem`` or ``Data`` operand for a struct source at the given byte offset.
+
+    Args:
+        name: The variable name.
+        offset: Byte offset within the struct.
+        is_static: ``True`` when the variable has static storage (global / file-scope).
+
+    Returns:
+        ``Data(name, offset=offset)`` for static variables; ``PseudoMem(name, offset)``
+        for locals.
+    """
+    return asm.Data(name, offset=offset) if is_static else asm.PseudoMem(name, offset)
+
+
+def _load_partial_eightbyte(
+    src_name: str,
+    eb_start: int,
+    size: int,
+    is_static: bool,
+) -> list[asm.Instruction]:
+    """Load exactly ``size`` bytes (1–7) of a partial struct eightbyte into ``%r10``.
+
+    Reads from ``src_name`` starting at byte ``eb_start``.  Never reads past
+    ``eb_start + size``.  Uses ``%r11`` as an auxiliary scratch register and
+    ``imulq`` with 32-bit immediates for all shift operations so that ``%rcx``
+    is never clobbered — safe to call while argument registers are being set up.
+
+    Args:
+        src_name: The variable name of the source struct.
+        eb_start: Byte offset of this eightbyte's start within the struct.
+        size: Number of valid bytes in this eightbyte (1–7).
+        is_static: ``True`` when the variable has static storage duration.
+
+    Returns:
+        A list of assembly instructions whose net effect is to place the
+        ``size``-byte value in ``%r10``, zero-extended to 64 bits.
+    """
+    assert 1 <= size <= 7
+    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+    r11d = asm.Register(asm.Registers.R11, asm.Width.DWORD)
+
+    instrs: list[asm.Instruction] = []
+    remaining = size
+    local_off = 0
+    first = True
+
+    while remaining > 0:
+        chunk = 4 if remaining >= 4 else 1
+        src_op = _struct_src_operand(src_name, eb_start + local_off, is_static)
+
+        if first:
+            if chunk == 4:
+                instrs.append(asm.Mov(src=src_op, dst=r10d, assembly_type=asm.Longword()))
+            else:
+                instrs.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_op, dst=r10d))
+            first = False
+        else:
+            if chunk == 4:
+                instrs.append(asm.Mov(src=src_op, dst=r11d, assembly_type=asm.Longword()))
+            else:
+                instrs.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_op, dst=r11d))
+            # Shift r11 left by local_off*8 bits using repeated imulq (avoids clobbering %cl).
+            shift = local_off * 8
+            while shift >= 16:
+                instrs.append(asm.Binary(asm.Mult(), r11q, asm.Imm(65536), r11q, asm.Quadword()))
+                shift -= 16
+            if shift == 8:
+                instrs.append(asm.Binary(asm.Mult(), r11q, asm.Imm(256), r11q, asm.Quadword()))
+            instrs.append(asm.Binary(asm.Or(), r10q, r11q, r10q, asm.Quadword()))
+
+        remaining -= chunk
+        local_off += chunk
+
+    return instrs
+
+
+def _store_partial_eightbyte(
+    src_reg: asm.Register,
+    dst_name: str,
+    eb_start: int,
+    size: int,
+    is_static: bool,
+) -> list[asm.Instruction]:
+    """Store exactly ``size`` bytes (1–7) from ``src_reg`` into a struct eightbyte.
+
+    Copies the low ``size`` bytes of ``src_reg`` into consecutive bytes starting
+    at ``dst_name + eb_start``.  Uses ``%r10`` as scratch and ``%rcx`` as the
+    shift-count register.  Safe to call after a ``call`` instruction (all
+    caller-saved registers are available).
+
+    Args:
+        src_reg: The 64-bit GP register holding the value to store.
+        dst_name: The variable name of the destination struct.
+        eb_start: Byte offset of this eightbyte's start within the struct.
+        size: Number of bytes to write (1–7).
+        is_static: ``True`` when the destination has static storage duration.
+
+    Returns:
+        A list of assembly instructions that write exactly ``size`` bytes to memory.
+    """
+    assert 1 <= size <= 7
+    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+    r10b = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+    cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
+
+    instrs: list[asm.Instruction] = [asm.Mov(src=src_reg, dst=r10q, assembly_type=asm.Quadword())]
+
+    remaining = size
+    local_off = 0
+    while remaining > 0:
+        chunk = 4 if remaining >= 4 else 1
+        dst_op = _struct_src_operand(dst_name, eb_start + local_off, is_static)
+        if chunk == 4:
+            instrs.append(asm.Mov(src=r10d, dst=dst_op, assembly_type=asm.Longword()))
+        else:
+            instrs.append(asm.Mov(src=r10b, dst=dst_op, assembly_type=asm.Byte()))
+        remaining -= chunk
+        local_off += chunk
+        if remaining > 0:
+            instrs.append(asm.Mov(src=asm.Imm(chunk * 8), dst=cx, assembly_type=asm.Longword()))
+            instrs.append(asm.Shr(operand=r10q, assembly_type=asm.Quadword()))
+
+    return instrs
+
+
 def _translate_funcall(
     fun_val: tac.Val,
     args: list[tac.Val],
     dst: asm.Operand | None,
     symbol_table: SymbolTable | None = None,
     constants: list[asm.TopLevel] | None = None,
+    struct_type_table: StructTypeTable | None = None,
 ) -> list[asm.Instruction]:
     """Lower a ``tac.FunCall`` to the System V AMD64 ABI calling sequence.
 
-    Integer and double arguments are allocated to separate register classes:
-    up to six integers go to DI/SI/DX/CX/R8/R9, and up to eight doubles go to
-    XMM0-XMM7.  Arguments beyond each class's limit are pushed right-to-left.
-    An 8-byte padding ``AllocateStack`` is inserted when the total number of
-    stack-passed arguments is odd, to keep the stack 16-byte aligned at ``call``.
+    Handles both scalar and struct arguments and return values.  Integer and
+    double scalars are allocated to GP / XMM registers as before.  Struct
+    arguments are classified per :func:`classify_struct`: register-classified
+    structs use one register per eightbyte; MEMORY structs are pushed onto the
+    stack one eightbyte at a time.  Partial (< 8 byte) last eightbytes are
+    loaded with :func:`_load_partial_eightbyte` to avoid reading past the
+    struct's allocation.
 
-    After the call the return value is read from ``%xmm0`` (double) or
-    ``%eax``/``%rax`` (integer) into ``dst``.
+    When the return type classifies as MEMORY, ``%rdi`` is reserved for the
+    hidden pointer to the caller-allocated result space; regular arguments
+    start from ``%rsi`` onward.  Register-returned structs are copied from
+    ``%rax``/``%rdx``/``%xmm0``/``%xmm1`` into the destination eightbytes
+    after the call using :func:`_store_partial_eightbyte` for partial last
+    eightbytes.
 
     Args:
-        fun_val: The TAC value identifying the callable.  Must be a ``Var``.  When its
-            symbol table entry carries ``FunAttr`` a direct ``call`` is emitted; otherwise
-            the pointer value is loaded into ``%r10`` and an indirect ``call *%r10`` is used.
+        fun_val: The TAC value identifying the callable.  Must be a ``Var``.
         args: The ordered list of TAC argument values.
-        dst: The assembly operand that receives the return value, or ``None`` for a void call.
-        symbol_table: Used to derive assembly types for variable arguments.
-        constants: Accumulator for ``StaticConstant`` entries emitted for double literals.
+        dst: The assembly operand for the return value, or ``None`` for void.
+        symbol_table: Used to derive assembly types and look up function types.
+        constants: Accumulator for ``StaticConstant`` entries.
+        struct_type_table: Required to classify struct-typed arguments and
+            return values.
 
     Returns:
         A list of ``asm.Instruction`` nodes implementing the call site.
@@ -1049,93 +1508,202 @@ def _translate_funcall(
     """
     if not isinstance(fun_val, tac.Var):
         raise CodeGenerationError("fun_val must be a Var.")
-    name = fun_val.value
-    is_direct = symbol_table is not None and name in symbol_table and isinstance(symbol_table[name].attrs, FunAttr)
+    stt: StructTypeTable = struct_type_table or {}
+    fn_name = fun_val.value
+    is_direct = (
+        symbol_table is not None and fn_name in symbol_table and isinstance(symbol_table[fn_name].attrs, FunAttr)
+    )
     instrs: list[asm.Instruction] = []
+    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
 
-    # Classify each argument and assign it to a register or the stack.
-    int_reg_idx = 0
+    # ------------------------------------------------------------------ #
+    # Determine return-value classification so we know whether DI is free.
+    # ------------------------------------------------------------------ #
+    ret_type: Type = VoidType()
+    if symbol_table and fn_name in symbol_table:
+        fn_t = symbol_table[fn_name].t
+        if isinstance(fn_t, FunType):
+            ret_type = fn_t.ret
+        elif isinstance(fn_t, Pointer) and isinstance(fn_t.referenced, FunType):
+            ret_type = fn_t.referenced.ret
+
+    gp_ret, xmm_ret, ret_in_memory = classify_return_value(ret_type, stt)
+
+    # If the return value goes via a hidden pointer, DI is consumed before any
+    # normal argument registers.
+    int_reg_idx = 1 if ret_in_memory else 0
     xmm_reg_idx = 0
-    int_reg_args: list[tuple[tac.Val, int]] = []
-    dbl_reg_args: list[tuple[tac.Val, int]] = []
-    stack_args: list[tac.Val] = []
+
+    # ------------------------------------------------------------------ #
+    # Classify each argument: assign to register or stack.
+    #
+    # Each entry in the lists is either:
+    #   ('scalar', tac.Val)
+    #   ('struct', arg_name, eb_start, eb_size, is_static, EightbyteClass)
+    # ------------------------------------------------------------------ #
+    int_reg_args: list[tuple] = []
+    xmm_reg_args: list[tuple] = []
+    # Each entry in stack_args represents one 8-byte stack slot.
+    stack_args: list[tuple] = []
 
     for arg in args:
-        at = _asm_type(arg, symbol_table)
-        if at == asm.Double():
-            if xmm_reg_idx < len(_XMM_REGS):
-                dbl_reg_args.append((arg, xmm_reg_idx))
-                xmm_reg_idx += 1
-            else:
-                stack_args.append(arg)
-        else:
-            if int_reg_idx < len(_ABI_REGS):
-                int_reg_args.append((arg, int_reg_idx))
-                int_reg_idx += 1
-            else:
-                stack_args.append(arg)
+        arg_type = (
+            symbol_table[arg.value].t
+            if (symbol_table and isinstance(arg, tac.Var) and arg.value in symbol_table)
+            else None
+        )  # type: ignore[union-attr]
+        if isinstance(arg_type, Structure) and isinstance(arg, tac.Var):
+            entry = stt.get(arg_type.tag)
+            if entry is None:
+                raise CodeGenerationError(f"struct type '{arg_type.tag}' not in struct_type_table")
+            struct_size = entry.size
+            classes = classify_struct(arg_type.tag, stt)
+            is_static = bool(
+                symbol_table
+                and arg.value in symbol_table
+                and isinstance(symbol_table[arg.value].attrs, (StaticAttr, FunAttr))
+            )
+            # Fall back to MEMORY if not enough registers for all eightbytes.
+            if classes != [EightbyteClass.MEMORY]:
+                int_need = sum(1 for c in classes if c == EightbyteClass.INTEGER)
+                xmm_need = sum(1 for c in classes if c == EightbyteClass.SSE)
+                if int_need > len(_ABI_REGS) - int_reg_idx or xmm_need > len(_XMM_REGS) - xmm_reg_idx:
+                    classes = [EightbyteClass.MEMORY]
 
-    # Odd number of stack args would misalign the stack before `call`.
+            if classes == [EightbyteClass.MEMORY]:
+                n = (struct_size + 7) // 8
+                for i in range(n):
+                    eb_start = i * 8
+                    eb_size = min(8, struct_size - eb_start)
+                    stack_args.append(("struct", arg.value, eb_start, eb_size, is_static, EightbyteClass.MEMORY))
+            else:
+                for i, cls in enumerate(classes):
+                    eb_start = i * 8
+                    eb_size = min(8, struct_size - eb_start)
+                    src = ("struct", arg.value, eb_start, eb_size, is_static, cls)
+                    if cls == EightbyteClass.SSE:
+                        xmm_reg_args.append((src, xmm_reg_idx))
+                        xmm_reg_idx += 1
+                    else:
+                        int_reg_args.append((src, int_reg_idx))
+                        int_reg_idx += 1
+        else:
+            at = _asm_type(arg, symbol_table)
+            if at == asm.Double():
+                if xmm_reg_idx < len(_XMM_REGS):
+                    xmm_reg_args.append((("scalar", arg), xmm_reg_idx))
+                    xmm_reg_idx += 1
+                else:
+                    stack_args.append(("scalar", arg))
+            else:
+                if int_reg_idx < len(_ABI_REGS):
+                    int_reg_args.append((("scalar", arg), int_reg_idx))
+                    int_reg_idx += 1
+                else:
+                    stack_args.append(("scalar", arg))
+
+    # ------------------------------------------------------------------ #
+    # Stack alignment padding.
+    # ------------------------------------------------------------------ #
     needs_padding = len(stack_args) % 2 != 0
     if needs_padding:
         instrs.append(asm.AllocateStack(8))
 
-    # Push stack args right-to-left so the first stack arg is closest to %rbp
-    # in the callee's frame (at 16(%rbp)).
-    for arg in reversed(stack_args):
-        at = _asm_type(arg, symbol_table)
-        if at == asm.Byte():
-            # `pushq` has no 1-byte form; extend the char into %r10d (zero-extends %r10 to
-            # 64 bits) then push the full 8-byte register so the ABI slot is well-formed.
-            r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-            r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-            src_asm = _translate_val(arg, constants)
-            if _is_unsigned(arg, symbol_table):
-                instrs.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=r10d))
+    # ------------------------------------------------------------------ #
+    # Push stack arguments right-to-left.
+    # ------------------------------------------------------------------ #
+    for src in reversed(stack_args):
+        if src[0] == "struct":
+            _, arg_name, eb_start, eb_size, is_static, _ = src
+            if eb_size == 8:
+                instrs.append(
+                    asm.Mov(
+                        src=_struct_src_operand(arg_name, eb_start, is_static), dst=r10q, assembly_type=asm.Quadword()
+                    )
+                )
             else:
-                instrs.append(asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=r10d))
+                instrs.extend(_load_partial_eightbyte(arg_name, eb_start, eb_size, is_static))
             instrs.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
         else:
-            instrs.append(asm.Push(operand=_translate_val(arg, constants), assembly_type=at))
+            _, arg = src
+            at = _asm_type(arg, symbol_table)
+            if at == asm.Byte():
+                src_asm = _translate_val(arg, constants)
+                if _is_unsigned(arg, symbol_table):
+                    instrs.append(
+                        asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=r10d)
+                    )
+                else:
+                    instrs.append(asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=r10d))
+                instrs.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
+            else:
+                instrs.append(asm.Push(operand=_translate_val(arg, constants), assembly_type=at))
 
-    # Load integer args into GP registers.
-    # The System V AMD64 ABI requires sub-32-bit integer arguments to be sign- or zero-extended
-    # to at least 32 bits before placement in the argument register.  Char arguments are extended
-    # to Longword so that Clang-compiled callees can rely on the upper bytes being well-defined.
-    for arg, i in int_reg_args:
-        at = _asm_type(arg, symbol_table)
-        if at == asm.Byte():
-            reg_dword = asm.Register(_ABI_REGS[i], asm.Width.DWORD)
-            src_asm = _translate_val(arg, constants)
-            if _is_unsigned(arg, symbol_table):
+    # ------------------------------------------------------------------ #
+    # Load GP register arguments.
+    # ------------------------------------------------------------------ #
+    for src, i in int_reg_args:
+        target = asm.Register(_ABI_REGS[i], asm.Width.QWORD)
+        if src[0] == "struct":
+            _, arg_name, eb_start, eb_size, is_static, _ = src
+            if eb_size == 8:
                 instrs.append(
-                    asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword)
+                    asm.Mov(
+                        src=_struct_src_operand(arg_name, eb_start, is_static), dst=target, assembly_type=asm.Quadword()
+                    )
                 )
             else:
-                instrs.append(asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword))
+                instrs.extend(_load_partial_eightbyte(arg_name, eb_start, eb_size, is_static))
+                instrs.append(asm.Mov(src=r10q, dst=target, assembly_type=asm.Quadword()))
         else:
-            instrs.append(
-                asm.Mov(
-                    src=_translate_val(arg, constants),
-                    dst=asm.Register(_ABI_REGS[i], _reg_width(at)),
-                    assembly_type=at,
+            _, arg = src
+            at = _asm_type(arg, symbol_table)
+            if at == asm.Byte():
+                reg_dword = asm.Register(_ABI_REGS[i], asm.Width.DWORD)
+                src_asm = _translate_val(arg, constants)
+                if _is_unsigned(arg, symbol_table):
+                    instrs.append(
+                        asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword)
+                    )
+                else:
+                    instrs.append(asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword))
+            else:
+                instrs.append(
+                    asm.Mov(
+                        src=_translate_val(arg, constants),
+                        dst=asm.Register(_ABI_REGS[i], _reg_width(at)),
+                        assembly_type=at,
+                    )
                 )
-            )
 
-    # Load double args into XMM registers.
-    for arg, i in dbl_reg_args:
-        instrs.append(
-            asm.Mov(
-                src=_translate_val(arg, constants),
-                dst=asm.Register(_XMM_REGS[i], asm.Width.QWORD),
-                assembly_type=asm.Double(),
+    # ------------------------------------------------------------------ #
+    # Load XMM register arguments.
+    # ------------------------------------------------------------------ #
+    for src, i in xmm_reg_args:
+        xmm_reg = asm.Register(_XMM_REGS[i], asm.Width.QWORD)
+        if src[0] == "struct":
+            _, arg_name, eb_start, eb_size, is_static, _ = src
+            instrs.append(
+                asm.Mov(src=_struct_src_operand(arg_name, eb_start, is_static), dst=xmm_reg, assembly_type=asm.Double())
             )
-        )
+        else:
+            _, arg = src
+            instrs.append(asm.Mov(src=_translate_val(arg, constants), dst=xmm_reg, assembly_type=asm.Double()))
 
+    # ------------------------------------------------------------------ #
+    # For memory-returned structs, load the hidden pointer into %rdi last
+    # (so earlier integer-register loads cannot have clobbered it).
+    # ------------------------------------------------------------------ #
+    if ret_in_memory and dst is not None:
+        instrs.append(asm.Lea(src=dst, dst=asm.Register(asm.Registers.DI, asm.Width.QWORD)))
+
+    # ------------------------------------------------------------------ #
+    # Emit the call instruction.
+    # ------------------------------------------------------------------ #
     if is_direct:
-        instrs.append(asm.Call(name))
+        instrs.append(asm.Call(fn_name))
     else:
-        r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
         instrs.append(asm.Mov(src=_translate_val(fun_val, constants), dst=r10q, assembly_type=asm.Quadword()))
         instrs.append(asm.IndirectCall(target=r10q))
 
@@ -1144,13 +1712,67 @@ def _translate_funcall(
     if bytes_to_free:
         instrs.append(asm.DeallocateStack(bytes_to_free))
 
-    # Return value: doubles in %xmm0, integers in %eax/%rax.  Void calls have no dst.
+    # ------------------------------------------------------------------ #
+    # Read the return value.
+    # ------------------------------------------------------------------ #
     if dst is not None:
-        at = _asm_type(tac.Var(dst.name) if isinstance(dst, asm.Pseudo) else tac.Constant(ConstInt(0)), symbol_table)
-        if at == asm.Double():
-            instrs.append(asm.Mov(src=asm.Register(asm.Registers.XMM0, asm.Width.QWORD), dst=dst, assembly_type=at))
+        if ret_in_memory:
+            # Result was written directly to *dst by the callee; nothing to copy.
+            pass
+        elif gp_ret or xmm_ret:
+            # Struct (or scalar) returned in registers.
+            dst_name: str | None = dst.name if isinstance(dst, (asm.Pseudo, asm.PseudoMem)) else None
+            is_dst_static = bool(
+                dst_name
+                and symbol_table
+                and dst_name in symbol_table
+                and isinstance(symbol_table[dst_name].attrs, (StaticAttr, FunAttr))
+            )
+            if isinstance(ret_type, Structure):
+                entry = stt[ret_type.tag]
+                struct_size = entry.size
+                classes = classify_struct(ret_type.tag, stt)
+                gp_idx = 0
+                xmm_idx = 0
+                for i, cls in enumerate(classes):
+                    eb_start = i * 8
+                    eb_size = min(8, struct_size - eb_start)
+                    if cls == EightbyteClass.INTEGER:
+                        reg = gp_ret[gp_idx]
+                        gp_idx += 1
+                        if eb_size == 8 and dst_name:
+                            instrs.append(
+                                asm.Mov(
+                                    src=reg,
+                                    dst=_struct_src_operand(dst_name, eb_start, is_dst_static),
+                                    assembly_type=asm.Quadword(),
+                                )
+                            )
+                        elif dst_name:
+                            instrs.extend(_store_partial_eightbyte(reg, dst_name, eb_start, eb_size, is_dst_static))
+                    else:
+                        reg = xmm_ret[xmm_idx]
+                        xmm_idx += 1
+                        if dst_name:
+                            instrs.append(
+                                asm.Mov(
+                                    src=reg,
+                                    dst=_struct_src_operand(dst_name, eb_start, is_dst_static),
+                                    assembly_type=asm.Double(),
+                                )
+                            )
+            else:
+                # Scalar return via gp_ret[0] or xmm_ret[0].
+                if xmm_ret:
+                    instrs.append(asm.Mov(src=xmm_ret[0], dst=dst, assembly_type=asm.Double()))
+                else:
+                    at = _asm_type(tac.Var(dst_name) if dst_name else tac.Constant(ConstInt(0)), symbol_table)
+                    instrs.append(
+                        asm.Mov(src=asm.Register(asm.Registers.AX, _reg_width(at)), dst=dst, assembly_type=at)
+                    )
         else:
-            instrs.append(asm.Mov(src=asm.Register(asm.Registers.AX, _reg_width(at)), dst=dst, assembly_type=at))
+            # Void: no return value (dst should be None, but guard just in case).
+            pass
 
     return instrs
 
@@ -1192,10 +1814,21 @@ def _translate_val(
             ):
                 constants.append(asm.StaticConstant(identifier=label, alignment=8, init=asm.DoubleInit(v)))
             return asm.Data(label)
-        case tac.Constant(value=v):
-            return asm.Imm(value=v.val)
+        case tac.Constant(
+            value=ConstInt(val=v)
+            | ConstLong(val=v)
+            | ConstUInt(val=v)
+            | ConstULong(val=v)
+            | ConstChar(val=v)
+            | ConstUChar(val=v)
+        ):
+            return asm.Imm(value=v)
         case tac.Var(value=name):
-            if symbol_table is not None and name in symbol_table and isinstance(symbol_table[name].t, ArrayType):
+            if (
+                symbol_table is not None
+                and name in symbol_table
+                and isinstance(symbol_table[name].t, (ArrayType, Structure))
+            ):
                 return asm.PseudoMem(name, 0)
             return asm.Pseudo(name=name)
         case _:
@@ -1408,25 +2041,25 @@ def _translate_double_comparison(
 # ==============================================================================
 
 
-def _replace_pseudos(  # noqa: C901 - ignore complexity warning
-    fn: asm.Function, static_names: frozenset[str], symbol_table: SymbolTable | None = None
+def _replace_pseudos(
+    fn: asm.Function,
+    static_names: frozenset[str],
+    symbol_table: SymbolTable | None = None,
+    struct_type_table: StructTypeTable | None = None,
 ) -> tuple[asm.Function, int]:
     """Replace every ``Pseudo`` operand with a concrete operand.
 
     Pseudo operands whose names appear in ``static_names`` become RIP-relative
-    ``Data`` operands.  All other pseudos are assigned a unique slot in the
-    stack frame (1 byte for ``char``/``schar``/``uchar``, 4 bytes for ``int``,
-    8 bytes for ``long``), starting just below ``%rbp`` and growing downward.
-    The total number of stack bytes used is returned so the caller can emit an
-    ``AllocateStack``.
+    ``Data`` operands (preserving any ``PseudoMem`` byte offset).  All other
+    pseudos are assigned a unique slot in the stack frame, starting just below
+    ``%rbp`` and growing downward.  Struct pseudos use ``StructEntry.size`` for
+    allocation size and ``StructEntry.alignment`` for alignment.
 
     Args:
         fn: The assembly function whose pseudo operands are to be resolved.
-        static_names: Names of all static/global variables in the program;
-            pseudos with these names are mapped to ``asm.Data`` rather than
-            a local stack slot.
-        symbol_table: Used to determine the storage size (4 or 8 bytes) for
-            each pseudo variable.
+        static_names: Names of all static/global variables in the program.
+        symbol_table: Used to determine the storage size for each pseudo.
+        struct_type_table: Required to size struct-typed pseudo variables.
 
     Returns:
         A tuple ``(resolved_function, stack_bytes)`` where ``stack_bytes`` is
@@ -1444,12 +2077,12 @@ def _replace_pseudos(  # noqa: C901 - ignore complexity warning
         if isinstance(operand, asm.PseudoMem):
             name, elem_offset = operand.name, operand.offset
             if name in static_names:
-                return asm.Data(name=name)
+                return asm.Data(name=name, offset=elem_offset)
             if name not in pseudo_offsets:
                 if symbol_table is not None and name in symbol_table:
                     t = symbol_table[name].t
-                    size = _type_size(t)
-                    alignment = _static_alignment(t)
+                    size = _type_size(t, struct_type_table)
+                    alignment = _static_alignment(t, struct_type_table)
                 else:
                     size, alignment = 8, 8
                 next_offset[0] -= size
@@ -1571,7 +2204,7 @@ def _fix_movsx(
         fixed.append(asm.Movsx(src_type=src_type, dst_type=dst_type, src=src, dst=dst))
 
 
-def _fix_instructions(fn: asm.Function) -> asm.Function:  # noqa: C901 - ignore complexity warning
+def _fix_instructions(fn: asm.Function) -> asm.Function:
     """Rewrite instructions that are invalid in x86-64 assembly.
 
     Handles the following cases:
