@@ -294,6 +294,8 @@ def _convert_symbols_to_tacky(
                             static_inits.append(tac.DoubleInit(0.0) if is_double else tac.ZeroInit(n))
                         case SymStringInit(string=s, null_terminated=nt):
                             static_inits.append(tac.StringInit(s, nt))
+                        case PointerInit(name=target):
+                            static_inits.append(tac.PointerInit(target))
                         case _:
                             skip = True
                             break

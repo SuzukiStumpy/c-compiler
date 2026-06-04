@@ -630,9 +630,29 @@ def _translate_function(
     # parameters can be made before any instructions are emitted.
     classifications = classify_parameters(fn.params, symbol_table, stt)
 
+    # Determine whether the function returns a MEMORY-classified struct.
+    # If so, %rdi holds the hidden return pointer and must be saved before
+    # any parameter moves can overwrite it.
+    ret_ptr_name: str | None = None
+    ret_in_memory_fn = False
+    if symbol_table and fn.name in symbol_table:
+        fn_t = symbol_table[fn.name].t
+        if isinstance(fn_t, FunType):
+            _, _, ret_in_memory_fn = classify_return_value(fn_t.ret, stt)
+    if ret_in_memory_fn:
+        ret_ptr_name = ".__ret_ptr"
+        instructions.append(
+            asm.Mov(
+                src=asm.Register(asm.Registers.DI, asm.Width.QWORD),
+                dst=asm.Pseudo(ret_ptr_name),
+                assembly_type=asm.Quadword(),
+            )
+        )
+
     # For a struct parameter whose classification is not MEMORY but whose
     # required registers are no longer available, fall back to MEMORY.
-    int_regs_left = len(_ABI_REGS)
+    # When the function uses a hidden return pointer, DI is already consumed.
+    int_regs_left = len(_ABI_REGS) - (1 if ret_in_memory_fn else 0)
     xmm_regs_left = len(_XMM_REGS)
     effective_classes: list[list[EightbyteClass]] = []
     for param, classes in zip(fn.params, classifications):
@@ -653,7 +673,8 @@ def _translate_function(
                 int_regs_left = max(0, int_regs_left - 1)
             effective_classes.append(classes)
 
-    int_reg_idx = 0
+    # When the function returns via hidden pointer, DI (index 0) is already used.
+    int_reg_idx = 1 if ret_in_memory_fn else 0
     xmm_reg_idx = 0
     stack_param_idx = 0
 
@@ -702,7 +723,7 @@ def _translate_function(
             instructions.append(asm.Mov(src=src, dst=asm.Pseudo(param), assembly_type=at))
 
     for instr in fn.body:
-        instructions.extend(_translate_instruction(instr, symbol_table, constants, stt))
+        instructions.extend(_translate_instruction(instr, symbol_table, constants, stt, ret_ptr_name))
 
     return asm.Function(
         name=fn.name,
@@ -892,6 +913,7 @@ def _translate_instruction(
     symbol_table: SymbolTable | None = None,
     constants: list[asm.TopLevel] | None = None,
     struct_type_table: StructTypeTable | None = None,
+    ret_ptr_name: str | None = None,
 ) -> list[asm.Instruction]:
     """Lower a single TAC instruction to a sequence of assembly instructions.
 
@@ -902,6 +924,9 @@ def _translate_instruction(
             are appended (used by ``DoubleToUInt`` for the 2^63 threshold).
         struct_type_table: Required to classify struct arguments and return
             values in ``FunCall`` instructions.
+        ret_ptr_name: Name of the pseudo holding the hidden return pointer for
+            MEMORY-classified struct returns.  ``None`` when the function does
+            not use the hidden-pointer convention.
 
     Returns:
         A list of ``asm.Instruction`` nodes equivalent to the TAC instruction.
@@ -913,6 +938,10 @@ def _translate_instruction(
         case tac.Return(val=val):
             if val is None:
                 return [asm.Ret()]
+            if isinstance(val, tac.Var) and symbol_table is not None and val.value in symbol_table:
+                _ret_t = symbol_table[val.value].t
+                if isinstance(_ret_t, Structure) and struct_type_table is not None:
+                    return _translate_struct_return(val.value, _ret_t, symbol_table, struct_type_table, ret_ptr_name)
             at = _asm_type(val, symbol_table)
             val_asm = _translate_val(val, constants, symbol_table)
             if at == asm.Double():
@@ -968,6 +997,47 @@ def _translate_instruction(
                 and isinstance(symbol_table[src.value].attrs, FunAttr)
             ):
                 return [asm.Lea(src=src_asm, dst=dst_asm)]
+            # Struct copy: generate chunked memory moves for the full struct size.
+            if (
+                isinstance(src, tac.Var)
+                and isinstance(dst, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].t, Structure)
+                and struct_type_table is not None
+            ):
+                src_t = symbol_table[src.value].t
+                assert isinstance(src_t, Structure)
+                size = struct_type_table[src_t.tag].size
+                src_is_static = isinstance(symbol_table[src.value].attrs, (StaticAttr, FunAttr))
+                dst_is_static = dst.value in symbol_table and isinstance(
+                    symbol_table[dst.value].attrs, (StaticAttr, FunAttr)
+                )
+                chunk_instrs: list[asm.Instruction] = []
+                offset = 0
+                while offset < size:
+                    remaining = size - offset
+                    if remaining >= 8:
+                        chunk, at_chunk = 8, asm.Quadword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                    elif remaining >= 4:
+                        chunk, at_chunk = 4, asm.Longword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                    else:
+                        chunk, at_chunk = 1, asm.Byte()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                    chunk_instrs.append(
+                        asm.Mov(
+                            src=_struct_src_operand(src.value, offset, src_is_static), dst=reg, assembly_type=at_chunk
+                        )
+                    )
+                    chunk_instrs.append(
+                        asm.Mov(
+                            src=reg, dst=_struct_src_operand(dst.value, offset, dst_is_static), assembly_type=at_chunk
+                        )
+                    )
+                    offset += chunk
+                return chunk_instrs
             at = _asm_type(src, symbol_table)
             return [asm.Mov(src=src_asm, dst=dst_asm, assembly_type=at)]
         case tac.Label(name=name):
@@ -1103,21 +1173,83 @@ def _translate_instruction(
         case tac.DoubleToUInt(src=src, dst=dst):
             return _translate_double_to_uint(src, dst, symbol_table, constants)
         case tac.Load(src_ptr=src_ptr, dst=dst):
+            ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            load_ptr = asm.Mov(
+                src=_translate_val(src_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()
+            )
+            # Struct load: copy each chunk from *ptr into the destination struct.
+            if (
+                isinstance(dst, tac.Var)
+                and symbol_table is not None
+                and dst.value in symbol_table
+                and isinstance(symbol_table[dst.value].t, Structure)
+                and struct_type_table is not None
+            ):
+                dst_t = symbol_table[dst.value].t
+                assert isinstance(dst_t, Structure)
+                size = struct_type_table[dst_t.tag].size
+                dst_is_static = isinstance(symbol_table[dst.value].attrs, (StaticAttr, FunAttr))
+                load_instrs: list[asm.Instruction] = [load_ptr]
+                i = 0
+                while i < size:
+                    remaining = size - i
+                    if remaining >= 8:
+                        chunk, at_c = 8, asm.Quadword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                    elif remaining >= 4:
+                        chunk, at_c = 4, asm.Longword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                    else:
+                        chunk, at_c = 1, asm.Byte()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                    load_instrs.append(asm.Mov(src=asm.Memory(ax, i), dst=reg, assembly_type=at_c))
+                    load_instrs.append(
+                        asm.Mov(src=reg, dst=_struct_src_operand(dst.value, i, dst_is_static), assembly_type=at_c)
+                    )
+                    i += chunk
+                return load_instrs
             at = _asm_type(dst, symbol_table)
-            ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
             dst_asm = _translate_val(dst, constants, symbol_table)
-            return [
-                asm.Mov(src=_translate_val(src_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()),
-                asm.Mov(src=asm.Memory(reg=ax, offset=0), dst=dst_asm, assembly_type=at),
-            ]
+            return [load_ptr, asm.Mov(src=asm.Memory(reg=ax, offset=0), dst=dst_asm, assembly_type=at)]
         case tac.Store(src=src, dst_ptr=dst_ptr):
-            at = _asm_type(src, symbol_table)
             ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            store_ptr = asm.Mov(
+                src=_translate_val(dst_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()
+            )
+            # Struct store: copy each chunk from the source struct through the pointer.
+            if (
+                isinstance(src, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].t, Structure)
+                and struct_type_table is not None
+            ):
+                src_t = symbol_table[src.value].t
+                assert isinstance(src_t, Structure)
+                size = struct_type_table[src_t.tag].size
+                src_is_static = isinstance(symbol_table[src.value].attrs, (StaticAttr, FunAttr))
+                store_instrs: list[asm.Instruction] = [store_ptr]
+                i = 0
+                while i < size:
+                    remaining = size - i
+                    if remaining >= 8:
+                        chunk, at_c = 8, asm.Quadword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                    elif remaining >= 4:
+                        chunk, at_c = 4, asm.Longword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                    else:
+                        chunk, at_c = 1, asm.Byte()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                    store_instrs.append(
+                        asm.Mov(src=_struct_src_operand(src.value, i, src_is_static), dst=reg, assembly_type=at_c)
+                    )
+                    store_instrs.append(asm.Mov(src=reg, dst=asm.Memory(ax, i), assembly_type=at_c))
+                    i += chunk
+                return store_instrs
+            at = _asm_type(src, symbol_table)
             src_asm = _translate_val(src, constants, symbol_table)
-            return [
-                asm.Mov(src=_translate_val(dst_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()),
-                asm.Mov(src=src_asm, dst=asm.Memory(reg=ax, offset=0), assembly_type=at),
-            ]
+            return [store_ptr, asm.Mov(src=src_asm, dst=asm.Memory(reg=ax, offset=0), assembly_type=at)]
         case tac.GetAddress(src=src, dst=dst):
             src_asm = _translate_val(src, constants, symbol_table)
             if isinstance(src_asm, (asm.Imm, asm.Register)):
@@ -1126,10 +1258,92 @@ def _translate_instruction(
                 )
             return [asm.Lea(src=src_asm, dst=_translate_val(dst, constants, symbol_table))]
         case tac.CopyToOffset(src=src, dst=dst_name, offset=offset):
+            # If src is a struct, generate chunked copies into dst at the given offset.
+            if (
+                isinstance(src, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].t, Structure)
+                and struct_type_table is not None
+            ):
+                src_t = symbol_table[src.value].t
+                assert isinstance(src_t, Structure)
+                size = struct_type_table[src_t.tag].size
+                src_is_static = isinstance(symbol_table[src.value].attrs, (StaticAttr, FunAttr))
+                dst_is_static = bool(
+                    symbol_table
+                    and dst_name in symbol_table
+                    and isinstance(symbol_table[dst_name].attrs, (StaticAttr, FunAttr))
+                )
+                cto_instrs: list[asm.Instruction] = []
+                i = 0
+                while i < size:
+                    remaining = size - i
+                    if remaining >= 8:
+                        chunk, at_c = 8, asm.Quadword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                    elif remaining >= 4:
+                        chunk, at_c = 4, asm.Longword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                    else:
+                        chunk, at_c = 1, asm.Byte()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                    cto_instrs.append(
+                        asm.Mov(src=_struct_src_operand(src.value, i, src_is_static), dst=reg, assembly_type=at_c)
+                    )
+                    cto_instrs.append(
+                        asm.Mov(
+                            src=reg,
+                            dst=_struct_src_operand(dst_name, offset + i, dst_is_static),
+                            assembly_type=at_c,
+                        )
+                    )
+                    i += chunk
+                return cto_instrs
             at = _asm_type(src, symbol_table)
             src_asm = _translate_val(src, constants, symbol_table)
             return [asm.Mov(src=src_asm, dst=asm.PseudoMem(dst_name, offset), assembly_type=at)]
         case tac.CopyFromOffset(src=src_name, offset=offset, dst=dst):
+            # If dst is a struct, generate chunked copies from src at the given offset.
+            if (
+                isinstance(dst, tac.Var)
+                and symbol_table is not None
+                and dst.value in symbol_table
+                and isinstance(symbol_table[dst.value].t, Structure)
+                and struct_type_table is not None
+            ):
+                dst_t = symbol_table[dst.value].t
+                assert isinstance(dst_t, Structure)
+                size = struct_type_table[dst_t.tag].size
+                src_is_static = bool(
+                    symbol_table
+                    and src_name in symbol_table
+                    and isinstance(symbol_table[src_name].attrs, (StaticAttr, FunAttr))
+                )
+                dst_is_static = isinstance(symbol_table[dst.value].attrs, (StaticAttr, FunAttr))
+                cfo_instrs: list[asm.Instruction] = []
+                i = 0
+                while i < size:
+                    remaining = size - i
+                    if remaining >= 8:
+                        chunk, at_c = 8, asm.Quadword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                    elif remaining >= 4:
+                        chunk, at_c = 4, asm.Longword()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                    else:
+                        chunk, at_c = 1, asm.Byte()
+                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                    cfo_instrs.append(
+                        asm.Mov(
+                            src=_struct_src_operand(src_name, offset + i, src_is_static), dst=reg, assembly_type=at_c
+                        )
+                    )
+                    cfo_instrs.append(
+                        asm.Mov(src=reg, dst=_struct_src_operand(dst.value, i, dst_is_static), assembly_type=at_c)
+                    )
+                    i += chunk
+                return cfo_instrs
             at = _asm_type(dst, symbol_table)
             dst_asm = _translate_val(dst, constants, symbol_table)
             return [asm.Mov(src=asm.PseudoMem(src_name, offset), dst=dst_asm, assembly_type=at)]
@@ -1462,6 +1676,102 @@ def _store_partial_eightbyte(
         if remaining > 0:
             instrs.append(asm.Mov(src=asm.Imm(chunk * 8), dst=cx, assembly_type=asm.Longword()))
             instrs.append(asm.Shr(operand=r10q, assembly_type=asm.Quadword()))
+
+    return instrs
+
+
+def _translate_struct_return(
+    name: str,
+    t: Structure,
+    symbol_table: SymbolTable | None,
+    struct_type_table: StructTypeTable,
+    ret_ptr_name: str | None,
+) -> list[asm.Instruction]:
+    """Generate assembly instructions for returning a struct-typed value.
+
+    For register-classified structs, copies each eightbyte into the appropriate
+    return register (``%rax``/``%rdx`` for INTEGER, ``%xmm0``/``%xmm1`` for SSE).
+    For MEMORY-classified structs, loads the hidden return pointer saved in
+    ``ret_ptr_name``, copies the struct to ``*ret_ptr``, then sets ``%rax = ret_ptr``
+    per the SysV ABI and emits ``ret``.
+
+    Args:
+        name: Name of the struct variable being returned.
+        t: The ``Structure`` type of the return value.
+        symbol_table: Used to determine storage class (static vs local).
+        struct_type_table: Layout information for all struct types.
+        ret_ptr_name: Name of the ``Pseudo`` holding the hidden return pointer.
+            Required when the struct is MEMORY-classified.
+
+    Returns:
+        A list of assembly instructions culminating in a ``Ret``.
+    """
+    gp_regs, xmm_regs, ret_in_memory = classify_return_value(t, struct_type_table)
+    entry = struct_type_table[t.tag]
+    size = entry.size
+    classes = classify_struct(t.tag, struct_type_table)
+    is_static = bool(
+        symbol_table and name in symbol_table and isinstance(symbol_table[name].attrs, (StaticAttr, FunAttr))
+    )
+    instrs: list[asm.Instruction] = []
+    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+    rax_q = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+
+    if ret_in_memory:
+        assert ret_ptr_name is not None, "ret_ptr_name required for MEMORY struct return"
+        ret_ptr_asm = asm.Pseudo(ret_ptr_name)
+        instrs.append(asm.Mov(src=ret_ptr_asm, dst=r11q, assembly_type=asm.Quadword()))
+        offset = 0
+        while offset < size:
+            remaining = size - offset
+            if remaining >= 8:
+                chunk, at_c = 8, asm.Quadword()
+                reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+            elif remaining >= 4:
+                chunk, at_c = 4, asm.Longword()
+                reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+            else:
+                chunk, at_c = 1, asm.Byte()
+                reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+            instrs.append(asm.Mov(src=_struct_src_operand(name, offset, is_static), dst=reg, assembly_type=at_c))
+            instrs.append(asm.Mov(src=reg, dst=asm.Memory(r11q, offset), assembly_type=at_c))
+            offset += chunk
+        instrs.append(asm.Mov(src=ret_ptr_asm, dst=rax_q, assembly_type=asm.Quadword()))
+        instrs.append(asm.Ret())
+    else:
+        gp_idx = 0
+        xmm_idx = 0
+        for eb_idx, cls in enumerate(classes):
+            eb_start = eb_idx * 8
+            eb_size = min(8, size - eb_start)
+            if cls == EightbyteClass.SSE:
+                reg_xmm = xmm_regs[xmm_idx]
+                xmm_idx += 1
+                instrs.append(
+                    asm.Mov(
+                        src=_struct_src_operand(name, eb_start, is_static),
+                        dst=reg_xmm,
+                        assembly_type=asm.Double(),
+                    )
+                )
+            elif cls == EightbyteClass.INTEGER:
+                reg_gp = gp_regs[gp_idx]
+                gp_idx += 1
+                if eb_size == 8:
+                    instrs.append(
+                        asm.Mov(
+                            src=_struct_src_operand(name, eb_start, is_static),
+                            dst=asm.Register(reg_gp.reg, asm.Width.QWORD),
+                            assembly_type=asm.Quadword(),
+                        )
+                    )
+                else:
+                    instrs.extend(_load_partial_eightbyte(name, eb_start, eb_size, is_static))
+                    instrs.append(
+                        asm.Mov(src=r10q, dst=asm.Register(reg_gp.reg, asm.Width.QWORD), assembly_type=asm.Quadword())
+                    )
+        instrs.append(asm.Ret())
 
     return instrs
 
@@ -2083,6 +2393,11 @@ def _replace_pseudos(
                     t = symbol_table[name].t
                     size = _type_size(t, struct_type_table)
                     alignment = _static_alignment(t, struct_type_table)
+                    # Round struct allocation up to eightbyte boundary so a full
+                    # register write into the last (partial) eightbyte never
+                    # overflows into adjacent stack data.
+                    if isinstance(t, Structure):
+                        size = (size + 7) & ~7
                 else:
                     size, alignment = 8, 8
                 next_offset[0] -= size
@@ -2097,7 +2412,8 @@ def _replace_pseudos(
         if operand.name in static_names:
             return asm.Data(name=operand.name)
         if operand.name not in pseudo_offsets:
-            size = 4
+            # Compiler-generated hidden-return-pointer pseudo is always pointer-sized (8 bytes).
+            size = 8 if operand.name == ".__ret_ptr" else 4
             if symbol_table is not None and operand.name in symbol_table:
                 t = symbol_table[operand.name].t
                 if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):

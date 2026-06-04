@@ -10,7 +10,16 @@ from dataclasses import dataclass
 
 from compiler.syntax.asm.instructions import Instruction, _asm_line
 from compiler.syntax.asm.operands import Operand
-from compiler.syntax.asm.values import CharInit, DoubleInit, IntInit, LongInit, StaticInit, StringInit, ZeroInit
+from compiler.syntax.asm.values import (
+    CharInit,
+    DoubleInit,
+    IntInit,
+    LongInit,
+    PointerInit,
+    StaticInit,
+    StringInit,
+    ZeroInit,
+)
 
 
 def _string_comment(s: bytes, null_terminated: bool) -> str:
@@ -199,6 +208,8 @@ class StaticVariable(TopLevel):
                     data = list(s) + ([0] if nt else [])
                     lines.append(_string_comment(s, nt))
                     lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
+                case PointerInit(name=n):
+                    lines.append(_asm_line(".quad", n))
 
         return "\n".join(lines)
 
