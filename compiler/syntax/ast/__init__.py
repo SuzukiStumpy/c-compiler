@@ -23,7 +23,9 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     declaration          = FunDecl(function_declaration)
                          | VarDecl(variable_declaration)
                          | StructDecl(struct_declaration)
+                         | UnionDecl(union_declaration)
     struct_declaration   = (identifier tag, member_declaration* members)
+    union_declaration    = (identifier tag, member_declaration* members)
     member_declaration   = (identifier member_name, type member_type)
     variable_declaration = (identifier name, initializer? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
@@ -33,6 +35,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Pointer(type referenced)
                          | Array(type element, int size)
                          | Structure(identifier tag)
+                         | Union(identifier tag)
     storage_class        = Static | Extern
     parameter            = Parameter(type param_type, identifier name)
     for_init             = InitDecl(declaration) | InitExp(exp?)
@@ -43,6 +46,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Unary(unary_operator, exp)
                          | Binary(binary_operator, exp, exp)
                          | Assignment(exp, exp)
+                         | CompoundAssignment(exp, binary_operator, exp)
                          | Conditional(exp condition, exp exp_true, exp exp_false)
                          | FunctionCall(exp callee, exp* args)
                          | Dereference(exp)
@@ -129,6 +133,8 @@ from compiler.syntax.ast.declarations import (
     StorageClass,
     StructDecl,
     StructDeclaration,
+    UnionDecl,
+    UnionDeclaration,
     VarDecl,
     VariableDeclaration,
 )
@@ -138,6 +144,7 @@ from compiler.syntax.ast.expressions import (
     Assignment,
     Binary,
     Cast,
+    CompoundAssignment,
     CompoundInit,
     Conditional,
     Constant,
@@ -215,16 +222,21 @@ from compiler.syntax.ast.types import (
     UChar,
     UIntType,
     ULongType,
+    Union,
     VoidType,
 )
 
 __all__ = [
     "Arrow",
+    "CompoundAssignment",
     "Dot",
     "MemberDeclaration",
     "Structure",
     "StructDecl",
     "StructDeclaration",
+    "Union",
+    "UnionDecl",
+    "UnionDeclaration",
     "SizeOf",
     "SizeOfT",
     "VoidType",

@@ -74,6 +74,7 @@ from compiler.syntax.ast.types import (
     UChar,
     UIntType,
     ULongType,
+    Union,
     VoidType,
 )
 from compiler.types.symbols import FunAttr, StaticAttr, StructTypeTable, SymbolTable
@@ -269,12 +270,12 @@ def _classify_type_at_offset(
             elem_size = type_size(elem_t, struct_type_table)
             for i in range(n):
                 _classify_type_at_offset(elem_t, byte_offset + i * elem_size, eightbytes, struct_type_table)
-        case Structure(tag=tag):
+        case Structure(tag=tag) | Union(tag=tag):
             entry = struct_type_table[tag]
             for member in entry.members:
                 _classify_type_at_offset(member.member_type, byte_offset + member.offset, eightbytes, struct_type_table)
         case _:
-            raise CodeGenerationError(f"cannot classify type {type(t).__name__} in struct eightbyte")
+            raise CodeGenerationError(f"cannot classify type {type(t).__name__} in aggregate eightbyte")
 
 
 def classify_struct(tag: str, struct_type_table: StructTypeTable) -> list[EightbyteClass]:
@@ -351,7 +352,7 @@ def classify_parameters(
     result: list[list[EightbyteClass]] = []
     for param in params:
         t: Type | None = symbol_table[param].t if (symbol_table and param in symbol_table) else None
-        if isinstance(t, Structure):
+        if isinstance(t, (Structure, Union)):
             result.append(classify_struct(t.tag, struct_type_table))
         elif isinstance(t, DoubleType):
             result.append([EightbyteClass.SSE])
@@ -411,7 +412,7 @@ def classify_return_value(
             return [asm.Register(asm.Registers.AX, asm.Width.BYTE)], [], False
         case DoubleType():
             return [], [asm.Register(asm.Registers.XMM0, asm.Width.QWORD)], False
-        case Structure(tag=tag):
+        case Structure(tag=tag) | Union(tag=tag):
             classes = classify_struct(tag, struct_type_table)
             if classes == [EightbyteClass.MEMORY]:
                 return [], [], True
@@ -525,7 +526,7 @@ def _type_size(t: Type, struct_type_table: StructTypeTable | None = None) -> int
         return 8
     if isinstance(t, ArrayType):
         return t.size * _type_size(t.element, struct_type_table)
-    if isinstance(t, Structure) and struct_type_table and t.tag in struct_type_table:
+    if isinstance(t, (Structure, Union)) and struct_type_table and t.tag in struct_type_table:
         return struct_type_table[t.tag].size
     return 8
 
@@ -553,7 +554,7 @@ def _static_alignment(t: Type, struct_type_table: StructTypeTable | None = None)
         if _type_size(t, struct_type_table) >= 16:
             return 16
         return _static_alignment(t.element, struct_type_table)
-    if isinstance(t, Structure) and struct_type_table and t.tag in struct_type_table:
+    if isinstance(t, (Structure, Union)) and struct_type_table and t.tag in struct_type_table:
         return struct_type_table[t.tag].alignment
     return 4
 
@@ -657,7 +658,7 @@ def _translate_function(
     effective_classes: list[list[EightbyteClass]] = []
     for param, classes in zip(fn.params, classifications):
         param_type = symbol_table[param].t if (symbol_table and param in symbol_table) else None
-        if isinstance(param_type, Structure) and classes != [EightbyteClass.MEMORY]:
+        if isinstance(param_type, (Structure, Union)) and classes != [EightbyteClass.MEMORY]:
             int_need = sum(1 for c in classes if c == EightbyteClass.INTEGER)
             xmm_need = sum(1 for c in classes if c == EightbyteClass.SSE)
             if int_need > int_regs_left or xmm_need > xmm_regs_left:
@@ -681,7 +682,7 @@ def _translate_function(
     for param, classes in zip(fn.params, effective_classes):
         param_type = symbol_table[param].t if (symbol_table and param in symbol_table) else None
 
-        if isinstance(param_type, Structure):
+        if isinstance(param_type, (Structure, Union)):
             if classes == [EightbyteClass.MEMORY]:
                 # Struct passed entirely on the stack; copy each eightbyte to a local PseudoMem.
                 entry = stt[param_type.tag]
@@ -940,7 +941,7 @@ def _translate_instruction(
                 return [asm.Ret()]
             if isinstance(val, tac.Var) and symbol_table is not None and val.value in symbol_table:
                 _ret_t = symbol_table[val.value].t
-                if isinstance(_ret_t, Structure) and struct_type_table is not None:
+                if isinstance(_ret_t, (Structure, Union)) and struct_type_table is not None:
                     return _translate_struct_return(val.value, _ret_t, symbol_table, struct_type_table, ret_ptr_name)
             at = _asm_type(val, symbol_table)
             val_asm = _translate_val(val, constants, symbol_table)
@@ -1003,11 +1004,11 @@ def _translate_instruction(
                 and isinstance(dst, tac.Var)
                 and symbol_table is not None
                 and src.value in symbol_table
-                and isinstance(symbol_table[src.value].t, Structure)
+                and isinstance(symbol_table[src.value].t, (Structure, Union))
                 and struct_type_table is not None
             ):
                 src_t = symbol_table[src.value].t
-                assert isinstance(src_t, Structure)
+                assert isinstance(src_t, (Structure, Union))
                 size = struct_type_table[src_t.tag].size
                 src_is_static = isinstance(symbol_table[src.value].attrs, (StaticAttr, FunAttr))
                 dst_is_static = dst.value in symbol_table and isinstance(
@@ -1182,11 +1183,11 @@ def _translate_instruction(
                 isinstance(dst, tac.Var)
                 and symbol_table is not None
                 and dst.value in symbol_table
-                and isinstance(symbol_table[dst.value].t, Structure)
+                and isinstance(symbol_table[dst.value].t, (Structure, Union))
                 and struct_type_table is not None
             ):
                 dst_t = symbol_table[dst.value].t
-                assert isinstance(dst_t, Structure)
+                assert isinstance(dst_t, (Structure, Union))
                 size = struct_type_table[dst_t.tag].size
                 dst_is_static = isinstance(symbol_table[dst.value].attrs, (StaticAttr, FunAttr))
                 load_instrs: list[asm.Instruction] = [load_ptr]
@@ -1221,11 +1222,11 @@ def _translate_instruction(
                 isinstance(src, tac.Var)
                 and symbol_table is not None
                 and src.value in symbol_table
-                and isinstance(symbol_table[src.value].t, Structure)
+                and isinstance(symbol_table[src.value].t, (Structure, Union))
                 and struct_type_table is not None
             ):
                 src_t = symbol_table[src.value].t
-                assert isinstance(src_t, Structure)
+                assert isinstance(src_t, (Structure, Union))
                 size = struct_type_table[src_t.tag].size
                 src_is_static = isinstance(symbol_table[src.value].attrs, (StaticAttr, FunAttr))
                 store_instrs: list[asm.Instruction] = [store_ptr]
@@ -1263,11 +1264,11 @@ def _translate_instruction(
                 isinstance(src, tac.Var)
                 and symbol_table is not None
                 and src.value in symbol_table
-                and isinstance(symbol_table[src.value].t, Structure)
+                and isinstance(symbol_table[src.value].t, (Structure, Union))
                 and struct_type_table is not None
             ):
                 src_t = symbol_table[src.value].t
-                assert isinstance(src_t, Structure)
+                assert isinstance(src_t, (Structure, Union))
                 size = struct_type_table[src_t.tag].size
                 src_is_static = isinstance(symbol_table[src.value].attrs, (StaticAttr, FunAttr))
                 dst_is_static = bool(
@@ -1309,11 +1310,11 @@ def _translate_instruction(
                 isinstance(dst, tac.Var)
                 and symbol_table is not None
                 and dst.value in symbol_table
-                and isinstance(symbol_table[dst.value].t, Structure)
+                and isinstance(symbol_table[dst.value].t, (Structure, Union))
                 and struct_type_table is not None
             ):
                 dst_t = symbol_table[dst.value].t
-                assert isinstance(dst_t, Structure)
+                assert isinstance(dst_t, (Structure, Union))
                 size = struct_type_table[dst_t.tag].size
                 src_is_static = bool(
                     symbol_table
@@ -1682,22 +1683,22 @@ def _store_partial_eightbyte(
 
 def _translate_struct_return(
     name: str,
-    t: Structure,
+    t: Structure | Union,
     symbol_table: SymbolTable | None,
     struct_type_table: StructTypeTable,
     ret_ptr_name: str | None,
 ) -> list[asm.Instruction]:
-    """Generate assembly instructions for returning a struct-typed value.
+    """Generate assembly instructions for returning a struct- or union-typed value.
 
-    For register-classified structs, copies each eightbyte into the appropriate
+    For register-classified aggregates, copies each eightbyte into the appropriate
     return register (``%rax``/``%rdx`` for INTEGER, ``%xmm0``/``%xmm1`` for SSE).
-    For MEMORY-classified structs, loads the hidden return pointer saved in
-    ``ret_ptr_name``, copies the struct to ``*ret_ptr``, then sets ``%rax = ret_ptr``
+    For MEMORY-classified aggregates, loads the hidden return pointer saved in
+    ``ret_ptr_name``, copies the aggregate to ``*ret_ptr``, then sets ``%rax = ret_ptr``
     per the SysV ABI and emits ``ret``.
 
     Args:
-        name: Name of the struct variable being returned.
-        t: The ``Structure`` type of the return value.
+        name: Name of the aggregate variable being returned.
+        t: The ``Structure`` or ``Union`` type of the return value.
         symbol_table: Used to determine storage class (static vs local).
         struct_type_table: Layout information for all struct types.
         ret_ptr_name: Name of the ``Pseudo`` holding the hidden return pointer.
@@ -1863,10 +1864,10 @@ def _translate_funcall(
             if (symbol_table and isinstance(arg, tac.Var) and arg.value in symbol_table)
             else None
         )  # type: ignore[union-attr]
-        if isinstance(arg_type, Structure) and isinstance(arg, tac.Var):
+        if isinstance(arg_type, (Structure, Union)) and isinstance(arg, tac.Var):
             entry = stt.get(arg_type.tag)
             if entry is None:
-                raise CodeGenerationError(f"struct type '{arg_type.tag}' not in struct_type_table")
+                raise CodeGenerationError(f"struct/union type '{arg_type.tag}' not in struct_type_table")
             struct_size = entry.size
             classes = classify_struct(arg_type.tag, stt)
             is_static = bool(
@@ -2038,7 +2039,7 @@ def _translate_funcall(
                 and dst_name in symbol_table
                 and isinstance(symbol_table[dst_name].attrs, (StaticAttr, FunAttr))
             )
-            if isinstance(ret_type, Structure):
+            if isinstance(ret_type, (Structure, Union)):
                 entry = stt[ret_type.tag]
                 struct_size = entry.size
                 classes = classify_struct(ret_type.tag, stt)
@@ -2137,7 +2138,7 @@ def _translate_val(
             if (
                 symbol_table is not None
                 and name in symbol_table
-                and isinstance(symbol_table[name].t, (ArrayType, Structure))
+                and isinstance(symbol_table[name].t, (ArrayType, Structure, Union))
             ):
                 return asm.PseudoMem(name, 0)
             return asm.Pseudo(name=name)
@@ -2396,7 +2397,7 @@ def _replace_pseudos(
                     # Round struct allocation up to eightbyte boundary so a full
                     # register write into the last (partial) eightbyte never
                     # overflows into adjacent stack data.
-                    if isinstance(t, Structure):
+                    if isinstance(t, (Structure, Union)):
                         size = (size + 7) & ~7
                 else:
                     size, alignment = 8, 8

@@ -228,6 +228,32 @@ class StructDecl(Declaration):
 
 
 @dataclass(frozen=True, slots=True)
+class UnionDeclaration:
+    """A ``union`` type definition, binding a tag to an ordered list of members.
+
+    Attributes:
+        tag: The union tag name as it appears after the ``union`` keyword.
+        members: The ordered sequence of field declarations.  Empty only for an
+            incomplete (forward) union declaration.
+    """
+
+    tag: str
+    members: tuple[MemberDeclaration, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UnionDecl(Declaration):
+    """A union definition wrapped as a top-level declaration node.
+
+    Attributes:
+        union_declaration: The underlying ``UnionDeclaration`` node carrying
+            the tag name and member list.
+    """
+
+    union_declaration: UnionDeclaration
+
+
+@dataclass(frozen=True, slots=True)
 class Program:
     """The root AST node representing a complete translation unit.
 

@@ -1825,3 +1825,111 @@ class TestUCharToDoubleConversion:
         instrs = _fn_instructions_with_table(_uchar_to_double_program("x"), st)
         assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs), "uint src should not produce MoveZeroExtend"
         assert any(isinstance(i, asm.Cvtsi2sd) and i.assembly_type == asm.Quadword() for i in instrs)
+
+
+# ---------------------------------------------------------------------------
+# Union code generation
+# ---------------------------------------------------------------------------
+
+
+class TestUnionCodegen:
+    """Union types are handled like structs by the code generator."""
+
+    def test_copy_from_offset_with_union_type_generates_assembly(self) -> None:
+        """CopyFromOffset on a union-typed variable generates Mov instructions without error."""
+        from compiler.syntax.ast.types import Union
+        from compiler.types.symbols import MemberEntry, StructEntry
+
+        union_tag = ".UFoo.0"
+        union_table = {
+            union_tag: StructEntry(
+                alignment=4,
+                size=4,
+                members=(
+                    MemberEntry(name="x", member_type=IntType(), offset=0),
+                    MemberEntry(name="y", member_type=IntType(), offset=0),
+                ),
+            )
+        }
+        sym: SymbolTable = {"u": SymbolTableEntry(t=Union(union_tag), attrs=LocalAttr())}
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.CopyFromOffset(src="u", offset=0, dst=tac.Var("tmp")),
+                        tac.Return(val=tac.Var("tmp")),
+                    ),
+                ),
+            )
+        )
+        result = generate(program, sym, union_table)
+        assert isinstance(result, asm.Program)
+
+    def test_copy_to_offset_with_union_type_generates_assembly(self) -> None:
+        """CopyToOffset on a union-typed variable generates Mov instructions without error."""
+        from compiler.syntax.ast.types import Union
+        from compiler.types.symbols import MemberEntry, StructEntry
+
+        union_tag = ".UFoo.0"
+        union_table = {
+            union_tag: StructEntry(
+                alignment=4, size=4, members=(MemberEntry(name="x", member_type=IntType(), offset=0),)
+            )
+        }
+        sym: SymbolTable = {"u": SymbolTableEntry(t=Union(union_tag), attrs=LocalAttr())}
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.CopyToOffset(src=tac.Constant(ConstInt(42)), dst="u", offset=0),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        result = generate(program, sym, union_table)
+        assert isinstance(result, asm.Program)
+
+    def test_copy_between_union_vars_uses_chunked_moves(self) -> None:
+        """Copy(src=union_var, dst=union_var) generates chunked moves, not a single scalar Mov."""
+        from compiler.syntax.ast.types import Union
+        from compiler.types.symbols import MemberEntry, StructEntry
+
+        union_tag = ".UFoo.0"
+        # Union of size 8: long member dominates.
+        union_table = {
+            union_tag: StructEntry(
+                alignment=8,
+                size=8,
+                members=(
+                    MemberEntry(name="x", member_type=LongType(), offset=0),
+                    MemberEntry(name="y", member_type=IntType(), offset=0),
+                ),
+            )
+        }
+        sym: SymbolTable = {
+            "u1": SymbolTableEntry(t=Union(union_tag), attrs=LocalAttr()),
+            "u2": SymbolTableEntry(t=Union(union_tag), attrs=LocalAttr()),
+        }
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.Copy(src=tac.Var("u1"), dst=tac.Var("u2")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        result = generate(program, sym, union_table)
+        instrs = next(d for d in result.definitions if isinstance(d, asm.Function)).instructions
+        # Chunked copy generates two Mov pairs (one for each 8-byte chunk).
+        # Without fix: Copy falls through to scalar path → single Mov(Longword) — wrong size.
+        movs = [i for i in instrs if isinstance(i, asm.Mov)]
+        # At least one move must be Quadword (8-byte) to copy the full 8-byte union.
+        assert any(m.assembly_type == asm.Quadword() for m in movs), (
+            "Copy of 8-byte union must generate at least one QWORD move"
+        )

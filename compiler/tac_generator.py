@@ -417,12 +417,12 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
         return 8
     if isinstance(t, ast.Array):
         return t.size * _type_size(t.element, struct_type_table)
-    if isinstance(t, ast.Structure):
+    if isinstance(t, (ast.Structure, ast.Union)):
         if struct_type_table is None:
-            raise CodeGenerationError(f"struct type table required to size struct '{t.tag}'")
+            raise CodeGenerationError(f"struct/union type table required to size aggregate '{t.tag}'")
         entry = struct_type_table.get(t.tag)
         if entry is None:
-            raise CodeGenerationError(f"unknown struct tag '{t.tag}' in size calculation")
+            raise CodeGenerationError(f"unknown aggregate tag '{t.tag}' in size calculation")
         return entry.size
     raise CodeGenerationError(f"unsupported type in size calculation: {type(t).__name__}")
 
@@ -639,7 +639,7 @@ class _TacGenerator:
                     tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=elem_ptr),
                 ]
             case ast.Dot(structure=structure, member=member):
-                assert isinstance(structure.exp_type, ast.Structure)
+                assert isinstance(structure.exp_type, (ast.Structure, ast.Union))
                 offset, _ = self._get_member(structure.exp_type.tag, member)
                 inner_obj, inner_instrs = self._eval_exp(structure)
                 match inner_obj:
@@ -657,7 +657,7 @@ class _TacGenerator:
                         ]
             case ast.Arrow(pointer=pointer, member=member):
                 assert isinstance(pointer.exp_type, ast.Pointer)
-                assert isinstance(pointer.exp_type.referenced, ast.Structure)
+                assert isinstance(pointer.exp_type.referenced, (ast.Structure, ast.Union))
                 offset, _ = self._get_member(pointer.exp_type.referenced.tag, member)
                 ptr_val, ptr_instrs = self.translate_exp(pointer)
                 if offset == 0:
@@ -750,6 +750,165 @@ class _TacGenerator:
             case _:
                 raise CodeGenerationError("cannot assign to non-lvalue abstract object")
 
+    def _emit_cast(self, src: tac.Val, src_type: ast.Type, dst_type: ast.Type) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Emit TAC instructions for an implicit type conversion.
+
+        Mirrors the logic of the ``ast.Cast`` branch of ``translate_exp``.
+
+        Args:
+            src: The source TAC value to convert.
+            src_type: The C type of ``src``.
+            dst_type: The target C type.
+
+        Returns:
+            A ``(dst_val, instructions)`` tuple. If ``src_type == dst_type`` no
+            instructions are emitted and ``src`` is returned as-is.
+        """
+        if src_type == dst_type:
+            return src, []
+        dst = self._make_temp(dst_type)
+        if isinstance(dst_type, ast.DoubleType):
+            conv: tac.Instruction = (
+                tac.IntToDouble(src=src, dst=dst) if _is_signed(src_type) else tac.UIntToDouble(src=src, dst=dst)
+            )
+        elif isinstance(src_type, ast.DoubleType):
+            conv = tac.DoubleToInt(src=src, dst=dst) if _is_signed(dst_type) else tac.DoubleToUInt(src=src, dst=dst)
+        else:
+            src_size = _type_size(src_type, self._struct_type_table)
+            dst_size = _type_size(dst_type, self._struct_type_table)
+            if dst_size == src_size:
+                conv = tac.Copy(src=src, dst=dst)
+            elif dst_size < src_size:
+                conv = tac.Truncate(src=src, dst=dst)
+            elif _is_signed(src_type):
+                conv = tac.SignExtend(src=src, dst=dst)
+            else:
+                conv = tac.ZeroExtend(src=src, dst=dst)
+        return dst, [conv]
+
+    def _translate_incr_decr(
+        self,
+        op: ast.PreIncrement | ast.PreDecrement | ast.PostIncrement | ast.PostDecrement,
+        inner: ast.Exp,
+        t: ast.Type,
+    ) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Translate a pre/post increment/decrement applied to any lvalue expression.
+
+        Evaluates the lvalue address exactly once using ``_eval_exp``, then emits a
+        load, arithmetic, and store sequence.  Pointer types use ``AddPtr``; scalar
+        types use ``Binary(Add/Sub)``.
+
+        Args:
+            op: The increment/decrement operator node.
+            inner: The lvalue sub-expression.
+            t: The C type of the expression result.
+
+        Returns:
+            A ``(result_val, instructions)`` tuple.  For ``PostIncrement``/
+            ``PostDecrement`` the result value is the original (pre-operation) value;
+            for ``PreIncrement``/``PreDecrement`` it is the updated value.
+        """
+        obj, inner_instrs = self._eval_exp(inner)
+        is_post = isinstance(op, (ast.PostIncrement, ast.PostDecrement))
+        is_incr = isinstance(op, (ast.PreIncrement, ast.PostIncrement))
+
+        cur_val, load_instrs = self._force_val(obj, t)
+
+        if is_post:
+            old = self._make_temp(t)
+            save_instrs: list[tac.Instruction] = [tac.Copy(src=cur_val, dst=old)]
+        else:
+            old = cur_val  # unused sentinel for type checker
+            save_instrs = []
+
+        new_val = self._make_temp(t)
+        if isinstance(t, ast.Pointer):
+            scale = self._size_of(t.referenced)
+            idx = tac.Constant(ast.ConstLong(1) if is_incr else ast.ConstLong(-1))
+            compute_instrs: list[tac.Instruction] = [tac.AddPtr(ptr=cur_val, index=idx, scale=scale, dst=new_val)]
+        elif isinstance(t, ast.DoubleType):
+            one: tac.Val = tac.Constant(ast.ConstDouble(1.0))
+            op_tac = tac.Add() if is_incr else tac.Subtract()
+            compute_instrs = [tac.Binary(operator=op_tac, src1=cur_val, src2=one, dst=new_val)]
+        else:
+            one = tac.Constant(ast.ConstInt(1))
+            op_tac = tac.Add() if is_incr else tac.Subtract()
+            compute_instrs = [tac.Binary(operator=op_tac, src1=cur_val, src2=one, dst=new_val)]
+
+        store_instrs = self._emit_assign(obj, new_val)
+        # For a plain variable and pre-op, return the variable itself (reflects the new value after store).
+        if not is_post and isinstance(obj, _PlainOperand) and isinstance(obj.val, tac.Var):
+            result = obj.val
+        else:
+            result = old if is_post else new_val
+        return result, [*inner_instrs, *load_instrs, *save_instrs, *compute_instrs, *store_instrs]
+
+    def _translate_compound_assignment(
+        self,
+        lvalue: ast.Exp,
+        op: ast.BinaryOperator,
+        rvalue: ast.Exp,
+        lv_type: ast.Type,
+    ) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Translate a compound assignment (``+=``, ``-=``, …) evaluating the lvalue once.
+
+        The lvalue address is computed exactly once via ``_eval_exp``; the current value
+        is loaded, the binary operation applied, and the result stored back.  Pointer
+        arithmetic (``+=``/``-=`` on pointer lvalues) uses ``AddPtr``.
+
+        Args:
+            lvalue: The left-hand side expression (already type-annotated by semantic analysis).
+            op: The binary operator.
+            rvalue: The right-hand side (already converted to the common type by semantic analysis).
+            lv_type: The C type of ``lvalue`` (and the result type of the expression).
+
+        Returns:
+            A ``(result_val, instructions)`` tuple.  The result value is the updated
+            lvalue (C11 §6.5.16.2 — compound assignment produces the updated value).
+        """
+        obj, lval_instrs = self._eval_exp(lvalue)
+        rhs_val, rhs_instrs = self.translate_exp(rvalue)
+        rhs_type = rvalue.exp_type or lv_type
+
+        cur_val, load_instrs = self._force_val(obj, lv_type)
+
+        if isinstance(lv_type, ast.Pointer) and isinstance(op, (ast.Add, ast.Subtract)):
+            scale = self._size_of(lv_type.referenced)
+            new_val = self._make_temp(lv_type)
+            if isinstance(op, ast.Add):
+                op_instrs: list[tac.Instruction] = [tac.AddPtr(ptr=cur_val, index=rhs_val, scale=scale, dst=new_val)]
+            else:
+                neg_idx = self._make_temp(ast.LongType())
+                op_instrs = [
+                    tac.Unary(operator=tac.Negate(), src=rhs_val, dst=neg_idx),
+                    tac.AddPtr(ptr=cur_val, index=neg_idx, scale=scale, dst=new_val),
+                ]
+            store_instrs = self._emit_assign(obj, new_val)
+            return new_val, [*lval_instrs, *rhs_instrs, *load_instrs, *op_instrs, *store_instrs]
+
+        # Arithmetic compound assignment — determine binary operation type.
+        if isinstance(op, (ast.LeftShift, ast.RightShift)):
+            # Result type is the promoted lvalue type; rhs already promoted by semantic analysis.
+            bin_type: ast.Type = ast.IntType() if isinstance(lv_type, (ast.Char, ast.SChar, ast.UChar)) else lv_type
+        else:
+            # rhs is already cast to the common type by semantic analysis.
+            bin_type = rhs_type
+
+        cast_cur, cast_instrs = self._emit_cast(cur_val, lv_type, bin_type)
+        op_result = self._make_temp(bin_type)
+        arith_instr = tac.Binary(operator=_translate_binary_op(op), src1=cast_cur, src2=rhs_val, dst=op_result)
+        result_val, result_cast_instrs = self._emit_cast(op_result, bin_type, lv_type)
+        store_instrs = self._emit_assign(obj, result_val)
+        return result_val, [
+            *lval_instrs,
+            *rhs_instrs,
+            *load_instrs,
+            *cast_instrs,
+            arith_instr,
+            *result_cast_instrs,
+            *store_instrs,
+        ]
+
     def translate_function(self, function: ast.Function) -> tac.Function:
         """Translate an AST ``Function`` into a TAC ``Function``.
 
@@ -835,7 +994,9 @@ class _TacGenerator:
             case ast.D(declaration=ast.FunDecl()):
                 return []
             case ast.D(declaration=ast.StructDecl()):
-                return []  # local struct type definition — no code, pure type metadata
+                return []  # local struct/union type definition — no code, pure type metadata
+            case ast.D(declaration=ast.UnionDecl()):
+                return []
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 
@@ -861,10 +1022,10 @@ class _TacGenerator:
         match init:
             case ast.SingleInit(exp=e):
                 return self._size_of(e.exp_type or ast.IntType())
-            case ast.CompoundInit(init_type=ast.Structure(tag=tag)):
+            case ast.CompoundInit(init_type=ast.Structure(tag=tag)) | ast.CompoundInit(init_type=ast.Union(tag=tag)):
                 entry = self._struct_type_table.get(tag)
                 if entry is None:
-                    raise CodeGenerationError(f"unknown struct tag '{tag}' in initializer")
+                    raise CodeGenerationError(f"unknown aggregate tag '{tag}' in initializer")
                 return entry.size
             case ast.CompoundInit(initializers=sub_inits):
                 return sum(self._init_byte_size(sub) for sub in sub_inits)
@@ -899,11 +1060,14 @@ class _TacGenerator:
                 val, elem_instrs = self.translate_exp(e)
                 instructions.extend(elem_instrs)
                 instructions.append(tac.CopyToOffset(src=val, dst=var_name, offset=byte_offset))
-            case ast.CompoundInit(initializers=sub_inits, init_type=ast.Structure(tag=tag)):
+            case (
+                ast.CompoundInit(initializers=sub_inits, init_type=ast.Structure(tag=tag))
+                | ast.CompoundInit(initializers=sub_inits, init_type=ast.Union(tag=tag))
+            ):
                 entry = self._struct_type_table.get(tag)
                 if entry is None:
-                    raise CodeGenerationError(f"unknown struct tag '{tag}' in initializer")
-                # Zero-fill the entire struct region first so that padding bytes are always 0.
+                    raise CodeGenerationError(f"unknown aggregate tag '{tag}' in initializer")
+                # Zero-fill the entire struct/union region first so padding bytes are 0.
                 remaining = entry.size
                 fill_off = byte_offset
                 while remaining > 0:
@@ -1330,46 +1494,11 @@ class _TacGenerator:
                 return tac.Constant(ast.ConstULong(self._size_of(t))), []
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
-            case ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name=name)):
-                var = tac.Var(value=name)
-                t = exp.exp_type or ast.IntType()
-                tmp = self._make_temp(t)
-                one: ast.Const = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
-                return var, [
-                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(one), dst=tmp),
-                    tac.Copy(src=tmp, dst=var),
-                ]
-            case ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name=name)):
-                var = tac.Var(value=name)
-                t = exp.exp_type or ast.IntType()
-                tmp = self._make_temp(t)
-                one = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
-                return var, [
-                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(one), dst=tmp),
-                    tac.Copy(src=tmp, dst=var),
-                ]
-            case ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name=name)):
-                var = tac.Var(value=name)
-                t = exp.exp_type or ast.IntType()
-                old = self._make_temp(t)
-                tmp = self._make_temp(t)
-                one = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
-                return old, [
-                    tac.Copy(src=var, dst=old),
-                    tac.Binary(operator=tac.Add(), src1=var, src2=tac.Constant(one), dst=tmp),
-                    tac.Copy(src=tmp, dst=var),
-                ]
-            case ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name=name)):
-                var = tac.Var(value=name)
-                t = exp.exp_type or ast.IntType()
-                old = self._make_temp(t)
-                tmp = self._make_temp(t)
-                one = ast.ConstDouble(1.0) if isinstance(t, ast.DoubleType) else ast.ConstInt(1)
-                return old, [
-                    tac.Copy(src=var, dst=old),
-                    tac.Binary(operator=tac.Subtract(), src1=var, src2=tac.Constant(one), dst=tmp),
-                    tac.Copy(src=tmp, dst=var),
-                ]
+            case ast.Unary(
+                operator=ast.PreIncrement() | ast.PreDecrement() | ast.PostIncrement() | ast.PostDecrement() as op,
+                exp=inner,
+            ):
+                return self._translate_incr_decr(op, inner, exp.exp_type or ast.IntType())
             case ast.Unary(operator=op, exp=inner):
                 src, inner_instrs = self.translate_exp(inner)
                 dst = self._make_temp(exp.exp_type or ast.IntType())
@@ -1497,6 +1626,8 @@ class _TacGenerator:
                 lval_obj, lval_instrs = self._eval_exp(lvalue_node)
                 rval, rval_instrs = self.translate_exp(rvalue)
                 return rval, [*rval_instrs, *lval_instrs, *self._emit_assign(lval_obj, rval)]
+            case ast.CompoundAssignment(lvalue=lvalue, op=op, rvalue=rvalue):
+                return self._translate_compound_assignment(lvalue, op, rvalue, exp.exp_type or ast.IntType())
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 cond_val, cond_instrs = self.translate_exp(cond)
                 label_false = self._make_label("cond_false")

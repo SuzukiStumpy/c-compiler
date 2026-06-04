@@ -37,6 +37,7 @@ class TokenType(Enum):
     CHAR = auto()
     SIZEOF = auto()
     STRUCT = auto()
+    UNION = auto()
     # Identifiers and literals
     IDENTIFIER = auto()
     NUMBER = auto()

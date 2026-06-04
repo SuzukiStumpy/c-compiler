@@ -108,6 +108,25 @@ class Assignment(Exp):
 
 
 @dataclass(frozen=True, slots=True)
+class CompoundAssignment(Exp):
+    """A compound assignment expression (``+=``, ``-=``, ``*=``, etc.).
+
+    Stores the lvalue and rhs separately so that the TAC generator can evaluate
+    the lvalue address exactly once (C11 §6.5.16.2), unlike the naive desugaring
+    ``Assignment(lvalue, Binary(op, lvalue, rhs))`` which would evaluate lvalue twice.
+
+    Attributes:
+        lvalue: The left-hand side; its address is computed once.
+        op: The underlying binary operator (``Add``, ``Subtract``, …).
+        rvalue: The right-hand side expression.
+    """
+
+    lvalue: Exp
+    op: BinaryOperator
+    rvalue: Exp
+
+
+@dataclass(frozen=True, slots=True)
 class Conditional(Exp):
     """A ternary (``?:``) expression.
 

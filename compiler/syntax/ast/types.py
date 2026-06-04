@@ -158,6 +158,23 @@ class Structure(Type):
     tag: str
 
 
+@dataclass(frozen=True, slots=True)
+class Union(Type):
+    """Represents a ``union`` type referred to by its tag name.
+
+    This node appears wherever a ``union Tag`` type is used as a variable
+    type, parameter type, or return type.  The actual member layout is
+    carried by the corresponding ``UnionDeclaration`` node looked up via
+    the tag.
+
+    Attributes:
+        tag: The union tag name as it appears after the ``union`` keyword
+            in the source.
+    """
+
+    tag: str
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 §6.2.2).
 

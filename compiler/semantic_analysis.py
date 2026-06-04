@@ -52,7 +52,7 @@ from itertools import count
 from typing import NamedTuple
 
 import compiler.syntax.ast as ast
-from compiler.syntax.ast.declarations import MemberDeclaration, StorageClass, StructDeclaration
+from compiler.syntax.ast.declarations import MemberDeclaration, StorageClass, StructDeclaration, UnionDeclaration
 from compiler.syntax.ast.operators import (
     And,
     Equal,
@@ -81,6 +81,7 @@ from compiler.syntax.ast.types import (
     UChar,
     UIntType,
     ULongType,
+    Union,
     VoidType,
 )
 from compiler.types.symbols import (
@@ -165,10 +166,10 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
             return 1
         case Array(element=elem_t):
             return type_alignment(elem_t, struct_type_table)
-        case Structure(tag=tag):
+        case Structure(tag=tag) | Union(tag=tag):
             entry = struct_type_table.get(tag)
             if entry is None:
-                raise SemanticError(f"Cannot determine alignment of incomplete struct type '{tag}'")
+                raise SemanticError(f"Cannot determine alignment of incomplete aggregate type '{tag}'")
             return entry.alignment
         case _:
             raise SemanticError(f"Cannot determine alignment of type '{t}'")
@@ -198,10 +199,10 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
             return 1
         case Array(element=elem_t, size=n):
             return type_size(elem_t, struct_type_table) * n
-        case Structure(tag=tag):
+        case Structure(tag=tag) | Union(tag=tag):
             entry = struct_type_table.get(tag)
             if entry is None:
-                raise SemanticError(f"Cannot determine size of incomplete struct type '{tag}'")
+                raise SemanticError(f"Cannot determine size of incomplete aggregate type '{tag}'")
             return entry.size
         case _:
             raise SemanticError(f"Cannot determine size of type '{t}'")
@@ -409,7 +410,7 @@ def is_scalar(t: Type | None) -> bool:
         ``VoidType``, ``Array``, ``FunType``, ``Structure``, and ``None``.
     """
     match t:
-        case None | VoidType() | Array() | FunType() | Structure():
+        case None | VoidType() | Array() | FunType() | Structure() | Union():
             return False
         case _:
             return True
@@ -500,7 +501,7 @@ def is_complete(t: Type, struct_type_table: StructTypeTable) -> bool:
     match t:
         case VoidType():
             return False
-        case Structure(tag=tag):
+        case Structure(tag=tag) | Union(tag=tag):
             return tag in struct_type_table
         case _:
             return True
@@ -598,6 +599,13 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
         case Structure(tag=tag):
             struct_def = struct_type_table[tag]
             return ast.CompoundInit([_zero_initializer(m.member_type, struct_type_table) for m in struct_def.members])
+        case Union(tag=tag):
+            # C11 §6.7.9p10: union zero-initialisation initialises the first named member.
+            union_def = struct_type_table[tag]
+            return ast.CompoundInit(
+                [_zero_initializer(union_def.members[0].member_type, struct_type_table)],
+                init_type=Union(tag=tag),
+            )
         case _:
             raise SemanticError(f"Cannot create a zero initializer for type '{t}'.")
 
@@ -896,10 +904,12 @@ class SemanticAnalyser:
         self._variable_map: dict[str, VariableBinding] = {}
         self._function_map: dict[str, FunctionBinding] = {}
         self._structure_map: dict[str, StructureBinding] = {}
+        self._union_map: dict[str, StructureBinding] = {}
         self._symbol_table: SymbolTable = {}
         self._type_table: dict[str, Type] = {}
         self._struct_type_table: StructTypeTable = {}
         self._all_unique_struct_tags: set[str] = set()
+        self._all_unique_union_tags: set[str] = set()
         self._file_scope_linkage: dict[str, Linkage] = {}
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
@@ -977,6 +987,24 @@ class SemanticAnalyser:
         self._all_unique_struct_tags.add(new_tag)
         return new_tag
 
+    def _make_union_tag(self, tag: str) -> str:
+        """Generate a unique internal tag name for a source-level union tag.
+
+        Produces identifiers of the form ``.Ufoo.0``, ``.Ufoo.1``, etc.  The
+        leading ``.U`` prefix ensures the name cannot collide with any valid C
+        identifier.
+
+        Args:
+            tag: The source-level union tag to uniquify.
+
+        Returns:
+            A string of the form ``".U<tag>.<n>"`` where ``<n>`` is the next
+            value drawn from ``_counter``.
+        """
+        new_tag = f".U{tag}.{next(self._counter)}"
+        self._all_unique_union_tags.add(new_tag)
+        return new_tag
+
     def _resolve_type(self, t: Type) -> Type:
         """Recursively resolve a type specifier, replacing struct tags with their unique internal tags.
 
@@ -1001,12 +1029,25 @@ class SemanticAnalyser:
         """
         match t:
             case Structure(tag=tag):
+                u_binding = self._union_map.get(tag)
+                if u_binding is not None and u_binding.from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a union in this scope.")
                 binding = self._structure_map.get(tag)
                 if binding is not None:
                     return Structure(binding.new_tag)
                 if tag in self._all_unique_struct_tags:
                     return t  # already resolved — idempotent
                 raise SemanticError(f"Use of undeclared struct tag '{tag}'")
+            case Union(tag=tag):
+                s_binding = self._structure_map.get(tag)
+                if s_binding is not None and s_binding.from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a struct in this scope.")
+                binding = self._union_map.get(tag)
+                if binding is not None:
+                    return Union(binding.new_tag)
+                if tag in self._all_unique_union_tags:
+                    return t  # already resolved — idempotent
+                raise SemanticError(f"Use of undeclared union tag '{tag}'")
             case Pointer(referenced=ref_t):
                 return Pointer(self._resolve_type(ref_t))
             case Array(element=elem_t, size=size):
@@ -1033,7 +1074,7 @@ class SemanticAnalyser:
         match t:
             case VoidType() | FunType():
                 return False
-            case Structure(tag=tag):
+            case Structure(tag=tag) | Union(tag=tag):
                 return tag in self._struct_type_table
             case Array(element=elem_t):
                 return self._is_member_type_complete(elem_t)
@@ -1110,6 +1151,71 @@ class SemanticAnalyser:
         struct_size = _round_up(struct_size, struct_alignment)  # ❻
         struct_def = StructEntry(alignment=struct_alignment, size=struct_size, members=tuple(member_entries))
         self._struct_type_table[struct_decl.tag] = struct_def  # ❼
+
+    def _validate_union_definition(self, union_decl: UnionDeclaration) -> None:
+        """Validate the member list of a union definition.
+
+        Checks that no two members share the same name and that every
+        member's type is eligible (complete, not void, not a function type).
+
+        Args:
+            union_decl: The resolved ``UnionDeclaration`` whose members are
+                to be validated.  ``union_decl.members`` must be non-empty.
+
+        Raises:
+            SemanticError: If any member name is duplicated within the union,
+                or if any member has an incomplete or invalid type.
+        """
+        seen: set[str] = set()
+        for member in union_decl.members:
+            if member.member_name in seen:
+                raise SemanticError(f"Duplicate member '{member.member_name}' in union '{union_decl.tag}'")
+            seen.add(member.member_name)
+            if not self._is_member_type_complete(member.member_type):
+                raise SemanticError(
+                    f"Member '{member.member_name}' of union '{union_decl.tag}' has an incomplete or invalid type"
+                )
+            validate_type_specifier(member.member_type, self._struct_type_table)
+
+    def _typecheck_union_declaration(self, union_decl: UnionDeclaration) -> None:
+        """Validate a union definition and record its layout in ``_struct_type_table``.
+
+        Union layout (C11 §6.7.2.1p16): all members start at offset 0; size
+        equals the largest member size rounded up to the union's alignment;
+        alignment equals the maximum member alignment.
+
+        * ❶ Declarations without a member list are silently ignored.
+        * ❷ ``_validate_union_definition`` checks for duplicate names and bad types.
+        * ❸ Every member entry records offset 0.
+        * ❹ Track max alignment and max raw member size.
+        * ❺ Round final size up to alignment (trailing padding).
+        * ❻ Store in ``_struct_type_table`` keyed by the unique internal tag.
+
+        Args:
+            union_decl: The resolved ``UnionDeclaration`` (tag is a unique
+                internal identifier; member types are fully resolved).
+
+        Raises:
+            SemanticError: If the union tag already has a complete definition;
+                if ``_validate_union_definition`` finds a violation.
+        """
+        if not union_decl.members:  # ❶ forward declaration — nothing to do
+            return
+        if union_decl.tag in self._struct_type_table:
+            raise SemanticError(f"Redefinition of union '{union_decl.tag}'.")
+        self._validate_union_definition(union_decl)  # ❷
+        member_entries: list[MemberEntry] = []
+        union_alignment = 1
+        union_size = 0
+        for member in union_decl.members:
+            member_align = type_alignment(member.member_type, self._struct_type_table)
+            member_size = type_size(member.member_type, self._struct_type_table)
+            member_entries.append(MemberEntry(member.member_name, member.member_type, 0))  # ❸
+            union_alignment = max(union_alignment, member_align)  # ❹
+            union_size = max(union_size, member_size)
+        union_size = _round_up(union_size, union_alignment)  # ❺
+        union_def = StructEntry(alignment=union_alignment, size=union_size, members=tuple(member_entries))
+        self._struct_type_table[union_decl.tag] = union_def  # ❻
 
     def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
         """Recursively collect label names from a statement into ``_label_set``.
@@ -1212,10 +1318,10 @@ class SemanticAnalyser:
             raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
         if (
             var_decl.storage_class != StorageClass.Extern
-            and isinstance(var_decl.var_type, Structure)
+            and isinstance(var_decl.var_type, (Structure, Union))
             and not is_complete(var_decl.var_type, self._struct_type_table)
         ):
-            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete struct type.")
+            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete aggregate type.")
         binding = self._variable_map.get(var_decl.name)
         if var_decl.storage_class == StorageClass.Extern:
             if var_decl.init is not None:
@@ -1292,10 +1398,10 @@ class SemanticAnalyser:
                         raise SemanticError(
                             f"Initialiser of static array '{var_decl.name}' must consist of constant expressions."
                         )
-                elif isinstance(var_decl.var_type, Structure):
+                elif isinstance(var_decl.var_type, (Structure, Union)):
                     if not _is_constant_init(var_decl.init):
                         raise SemanticError(
-                            f"Initialiser of static struct '{var_decl.name}' must consist of constant expressions."
+                            f"Initialiser of static aggregate '{var_decl.name}' must consist of constant expressions."
                         )
                 elif not isinstance(raw_init_exp, ast.Constant):
                     raise SemanticError(
@@ -1324,7 +1430,7 @@ class SemanticAnalyser:
                     else:
                         assert isinstance(init, ast.CompoundInit)
                         static_init = Initial(tuple(self._flatten_static_init(init)))
-                elif isinstance(var_decl.var_type, Structure):
+                elif isinstance(var_decl.var_type, (Structure, Union)):
                     assert isinstance(init, ast.CompoundInit)
                     static_init = Initial(tuple(self._flatten_static_init(init)))
                 else:
@@ -1374,10 +1480,10 @@ class SemanticAnalyser:
             raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
         if (
             var_decl.storage_class != StorageClass.Extern
-            and isinstance(var_decl.var_type, Structure)
+            and isinstance(var_decl.var_type, (Structure, Union))
             and not is_complete(var_decl.var_type, self._struct_type_table)
         ):
-            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete struct type.")
+            raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete aggregate type.")
         if var_decl.name in self._function_map:
             raise SemanticError(
                 f"'{var_decl.name}' redeclared as a variable but was previously declared as a function."
@@ -1404,10 +1510,10 @@ class SemanticAnalyser:
                     raise SemanticError(
                         f"Initialiser of file-scope array '{var_decl.name}' must consist of constant expressions."
                     )
-            elif isinstance(var_decl.var_type, Structure):
+            elif isinstance(var_decl.var_type, (Structure, Union)):
                 if not _is_constant_init(var_decl.init):
                     raise SemanticError(
-                        f"Initialiser of file-scope struct '{var_decl.name}' must consist of constant expressions."
+                        f"Initialiser of file-scope aggregate '{var_decl.name}' must consist of constant expressions."
                     )
             elif not isinstance(file_raw_exp, ast.Constant):
                 raise SemanticError(
@@ -1466,7 +1572,7 @@ class SemanticAnalyser:
                 else:
                     assert isinstance(file_typed_init, ast.CompoundInit)
                     file_init = Initial(tuple(self._flatten_static_init(file_typed_init)))
-            elif isinstance(var_decl.var_type, Structure):
+            elif isinstance(var_decl.var_type, (Structure, Union)):
                 file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
                 assert isinstance(file_typed_init, ast.CompoundInit)
                 file_init = Initial(tuple(self._flatten_static_init(file_typed_init)))
@@ -1588,14 +1694,14 @@ class SemanticAnalyser:
                 raise SemanticError(f"Parameter '{param.name}' of '{fun.name}' has type 'void'.")
         if fun.body is not None:
             fn_ret = fun.fun_type.ret if isinstance(fun.fun_type, FunType) else IntType()
-            if isinstance(fn_ret, Structure) and not is_complete(fn_ret, self._struct_type_table):
-                raise SemanticError(f"Function '{fun.name}' cannot be defined with incomplete struct return type.")
+            if isinstance(fn_ret, (Structure, Union)) and not is_complete(fn_ret, self._struct_type_table):
+                raise SemanticError(f"Function '{fun.name}' cannot be defined with incomplete aggregate return type.")
             for param in fun.params:
-                if isinstance(param.param_type, Structure) and not is_complete(
+                if isinstance(param.param_type, (Structure, Union)) and not is_complete(
                     param.param_type, self._struct_type_table
                 ):
                     raise SemanticError(
-                        f"Parameter '{param.name}' of '{fun.name}' cannot be defined with incomplete struct type."
+                        f"Parameter '{param.name}' of '{fun.name}' cannot be defined with incomplete aggregate type."
                     )
         var_binding = self._variable_map.get(fun.name)
         if var_binding is not None and (var_binding.from_current_block or var_binding.linkage == Linkage.EXTERNAL):
@@ -1652,26 +1758,29 @@ class SemanticAnalyser:
         self._current_block_funs.add(fun.name)
         return fun
 
-    def _enter_scope(self) -> tuple[dict[str, VariableBinding], set[str], dict[str, StructureBinding]]:
+    def _enter_scope(
+        self,
+    ) -> tuple[dict[str, VariableBinding], set[str], dict[str, StructureBinding], dict[str, StructureBinding]]:
         """Open a new nested scope and return snapshots of the current block state.
 
-        Saves a copy of ``_variable_map``, ``_current_block_funs``, and ``_structure_map``,
-        then marks every existing variable and structure binding as not-from-the-current-scope
-        and clears ``_current_block_funs`` so that the new scope starts with no locally-declared
-        names of either kind.
+        Saves a copy of ``_variable_map``, ``_current_block_funs``, ``_structure_map``, and
+        ``_union_map``, then marks every existing binding as not-from-the-current-scope and
+        clears ``_current_block_funs`` so that the new scope starts fresh.
 
         Returns:
-            A ``(saved_variable_map, saved_block_funs, saved_structure_map)`` triple.  Assign
-            all three values back to the corresponding attributes once the nested scope has been
-            fully processed to restore the enclosing bindings.
+            A 4-tuple ``(saved_variable_map, saved_block_funs, saved_structure_map,
+            saved_union_map)``.  Assign all four back to the corresponding attributes
+            once the nested scope has been fully processed to restore the enclosing bindings.
         """
         saved_vars = dict(self._variable_map)
         saved_funs = self._current_block_funs
         saved_structs = dict(self._structure_map)
+        saved_unions = dict(self._union_map)
         self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
         self._current_block_funs = set()
         self._structure_map = {k: v._replace(from_current_scope=False) for k, v in self._structure_map.items()}
-        return saved_vars, saved_funs, saved_structs
+        self._union_map = {k: v._replace(from_current_scope=False) for k, v in self._union_map.items()}
+        return saved_vars, saved_funs, saved_structs, saved_unions
 
     def _resolve_block(self, body: ast.Block) -> ast.Block:
         """Resolve a sequence of block items in a new nested scope.
@@ -1691,11 +1800,12 @@ class SemanticAnalyser:
             SemanticError: If any block item within ``body`` contains a
                 semantic violation.
         """
-        saved_vars, saved_funs, saved_structs = self._enter_scope()
+        saved_vars, saved_funs, saved_structs, saved_unions = self._enter_scope()
         result = tuple(self._resolve_block_item(item) for item in body)
         self._variable_map = saved_vars
         self._current_block_funs = saved_funs
         self._structure_map = saved_structs
+        self._union_map = saved_unions
         return result
 
     def _type_check_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
@@ -1790,6 +1900,17 @@ class SemanticAnalyser:
                     typed_exp = ast.Cast(IntType(), typed_exp, exp_type=IntType())
                 if isinstance(op, Not) and not is_scalar(typed_exp.exp_type):
                     raise SemanticError("Logical operators only apply to scalar expressions")
+                if isinstance(op, (ast.PreIncrement, ast.PreDecrement, ast.PostIncrement, ast.PostDecrement)):
+                    if not is_lvalue(typed_exp):
+                        raise SemanticError("Operand of increment/decrement must be a modifiable lvalue.")
+                    if isinstance(typed_exp.exp_type, (Structure, Union)):
+                        raise SemanticError("Increment/decrement requires a scalar or pointer operand.")
+                    if isinstance(typed_exp.exp_type, Pointer) and isinstance(typed_exp.exp_type.referenced, VoidType):
+                        raise SemanticError("Cannot increment/decrement a pointer to void.")
+                    if isinstance(typed_exp.exp_type, FunType) or (
+                        isinstance(typed_exp.exp_type, Pointer) and isinstance(typed_exp.exp_type.referenced, FunType)
+                    ):
+                        raise SemanticError("Cannot increment/decrement a function or function pointer.")
                 exp_type: Type | None = IntType() if isinstance(op, Not) else typed_exp.exp_type
                 return ast.Unary(op, typed_exp, exp_type=exp_type)
             case ast.Binary(operator=op, left=left, right=right):
@@ -1830,8 +1951,12 @@ class SemanticAnalyser:
                 elif isinstance(op, (LeftShift, RightShift)):
                     if not is_integer(typed_left.exp_type) or not is_integer(typed_right.exp_type):
                         raise SemanticError("Shift operands must be integer types.")
-                    # C §6.5.7: type of a shift is the type of the promoted left operand.
-                    # The right operand is evaluated independently and not cast to a common type.
+                    # C §6.5.7: integer promotions applied to each operand;
+                    # result type is that of the promoted left operand.
+                    if isinstance(typed_left.exp_type, (Char, SChar, UChar)):
+                        typed_left = ast.Cast(IntType(), typed_left, exp_type=IntType())
+                    if isinstance(typed_right.exp_type, (Char, SChar, UChar)):
+                        typed_right = ast.Cast(IntType(), typed_right, exp_type=IntType())
                     bin_type = typed_left.exp_type
                 else:
                     if either_is_ptr:
@@ -1900,15 +2025,52 @@ class SemanticAnalyser:
                     raise SemanticError("Invalid lvalue in assignment expression.")
                 if isinstance(typed_lv.exp_type, Array):
                     raise SemanticError("Cannot assign to an expression of array type.")
-                if isinstance(typed_lv.exp_type, Structure) and not is_complete(
+                if isinstance(typed_lv.exp_type, (Structure, Union)) and not is_complete(
                     typed_lv.exp_type, self._struct_type_table
                 ):
-                    raise SemanticError("Cannot assign to an expression of incomplete struct type.")
+                    raise SemanticError("Cannot assign to an expression of incomplete aggregate type.")
                 typed_rv = self._typecheck_and_convert(rvalue)
                 lv_type = typed_lv.exp_type
                 if lv_type is not None:
                     typed_rv = _convert_by_assignment(typed_rv, lv_type)
                 return ast.Assignment(typed_lv, typed_rv, exp_type=lv_type)
+            case ast.CompoundAssignment(lvalue=lvalue, op=op, rvalue=rvalue):
+                typed_lv = self._type_check_exp(lvalue)
+                if not is_lvalue(typed_lv):
+                    raise SemanticError("Invalid lvalue in compound assignment expression.")
+                if isinstance(typed_lv.exp_type, (Array, Structure, Union, VoidType, FunType)):
+                    raise SemanticError("Invalid type for compound assignment target.")
+                typed_rv = self._typecheck_and_convert(rvalue)
+                lv_type = typed_lv.exp_type
+                if isinstance(lv_type, Pointer) and isinstance(op, (ast.Add, ast.Subtract)):
+                    if isinstance(typed_rv.exp_type, Pointer):
+                        raise SemanticError("Cannot add or subtract two pointers via compound assignment.")
+                    if isinstance(typed_rv.exp_type, DoubleType):
+                        raise SemanticError("Cannot perform pointer arithmetic with a floating-point operand.")
+                    if not isinstance(lv_type.referenced, (FunType, VoidType)):
+                        tbl = self._struct_type_table
+                        if not is_pointer_to_complete(lv_type, tbl):
+                            raise SemanticError("Cannot perform pointer arithmetic on a pointer to an incomplete type.")
+                    if not isinstance(typed_rv.exp_type, LongType):
+                        typed_rv = ast.Cast(LongType(), typed_rv, exp_type=LongType())
+                elif isinstance(op, (LeftShift, RightShift)):
+                    if not is_integer(lv_type) or not is_integer(typed_rv.exp_type):
+                        raise SemanticError("Shift operator requires integer operands.")
+                    if isinstance(typed_rv.exp_type, (Char, SChar, UChar)):
+                        typed_rv = ast.Cast(IntType(), typed_rv, exp_type=IntType())
+                elif isinstance(op, (ast.Remainder, ast.BitwiseAnd, ast.BitwiseOr, ast.BitwiseXor)):
+                    if not is_integer(lv_type) or not is_integer(typed_rv.exp_type):
+                        raise SemanticError("Operator requires integer operands.")
+                    common = get_common_type(lv_type, typed_rv.exp_type)
+                    if typed_rv.exp_type != common:
+                        typed_rv = ast.Cast(common, typed_rv, exp_type=common)
+                else:
+                    if not is_arithmetic(lv_type) or not is_arithmetic(typed_rv.exp_type):
+                        raise SemanticError("Operator requires arithmetic operands.")
+                    common = get_common_type(lv_type, typed_rv.exp_type)
+                    if typed_rv.exp_type != common:
+                        typed_rv = ast.Cast(common, typed_rv, exp_type=common)
+                return ast.CompoundAssignment(typed_lv, op, typed_rv, exp_type=lv_type)
             case ast.Conditional(condition=cond, exp_true=exp_true, exp_false=exp_false):
                 typed_cond = self._typecheck_and_convert(cond)
                 typed_true = self._typecheck_and_convert(exp_true)
@@ -1934,9 +2096,9 @@ class SemanticAnalyser:
                             typed_true = ast.Cast(common_cond, typed_true, exp_type=common_cond)
                         if t2 != common_cond:
                             typed_false = ast.Cast(common_cond, typed_false, exp_type=common_cond)
-                    elif isinstance(t1, Structure) and isinstance(t2, Structure):
+                    elif isinstance(t1, (Structure, Union)) and isinstance(t2, (Structure, Union)):
                         if t1 != t2:
-                            raise SemanticError("Branches of conditional expression have incompatible struct types.")
+                            raise SemanticError("Branches of conditional expression have incompatible aggregate types.")
                         cond_type = t1
                     else:
                         raise SemanticError("Cannot convert branches of conditional to a common type")
@@ -2046,31 +2208,31 @@ class SemanticAnalyser:
             case ast.Dot(structure=structure, member=member):
                 typed_structure = self._typecheck_and_convert(structure)  # ❶
                 match typed_structure.exp_type:
-                    case Structure(tag=tag):
-                        struct_def = self._struct_type_table.get(tag)  # ❷
-                        if struct_def is None:
-                            raise SemanticError("Cannot access member of incomplete struct type.")
+                    case Structure(tag=tag) | Union(tag=tag):
+                        aggregate_def = self._struct_type_table.get(tag)  # ❷
+                        if aggregate_def is None:
+                            raise SemanticError("Cannot access member of incomplete aggregate type.")
                         member_def = next(  # ❸
-                            (m for m in struct_def.members if m.name == member), None
+                            (m for m in aggregate_def.members if m.name == member), None
                         )
                         if member_def is None:
-                            raise SemanticError(f"Structure has no member named '{member}'.")
+                            raise SemanticError(f"Aggregate has no member named '{member}'.")
                         return ast.Dot(typed_structure, member, exp_type=member_def.member_type)  # ❹
                     case _:
-                        raise SemanticError("Operand of '.' is not a structure.")
+                        raise SemanticError("Operand of '.' is not a struct or union.")
             case ast.Arrow(pointer=pointer, member=member):
                 typed_pointer = self._typecheck_and_convert(pointer)
                 match typed_pointer.exp_type:
-                    case Pointer(referenced=Structure(tag=tag)):
-                        struct_def = self._struct_type_table.get(tag)
-                        if struct_def is None:
-                            raise SemanticError("Cannot access member through pointer to incomplete struct type.")
-                        member_def = next((m for m in struct_def.members if m.name == member), None)
+                    case Pointer(referenced=Structure(tag=tag)) | Pointer(referenced=Union(tag=tag)):
+                        aggregate_def = self._struct_type_table.get(tag)
+                        if aggregate_def is None:
+                            raise SemanticError("Cannot access member through pointer to incomplete aggregate type.")
+                        member_def = next((m for m in aggregate_def.members if m.name == member), None)
                         if member_def is None:
-                            raise SemanticError(f"Structure has no member named '{member}'.")
+                            raise SemanticError(f"Aggregate has no member named '{member}'.")
                         return ast.Arrow(typed_pointer, member, exp_type=member_def.member_type)
                     case _:
-                        raise SemanticError("Operand of '->' is not a pointer to a structure.")
+                        raise SemanticError("Operand of '->' is not a pointer to a struct or union.")
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -2099,8 +2261,8 @@ class SemanticAnalyser:
         match typed_e.exp_type:
             case Array(element=elem_t):
                 return ast.AddrOf(typed_e, exp_type=Pointer(elem_t))
-            case Structure() as struct_t if not is_complete(struct_t, self._struct_type_table):
-                raise SemanticError("Expression has incomplete struct type; only its address may be taken.")
+            case (Structure() | Union()) as agg_t if not is_complete(agg_t, self._struct_type_table):
+                raise SemanticError("Expression has incomplete aggregate type; only its address may be taken.")
             case _:
                 return typed_e
 
@@ -2233,6 +2395,15 @@ class SemanticAnalyser:
                 trailing = struct_def.size - current_offset
                 if trailing > 0:
                     _append_zero_pad(result, trailing)
+            case ast.CompoundInit(initializers=sub_inits, init_type=Union(tag=tag)):
+                # First (and only) member is initialised; remainder is zero padding.
+                union_def = self._struct_type_table[tag]
+                first_member_t = union_def.members[0].member_type
+                self._flatten_helper(sub_inits[0], result)
+                first_size = type_size(first_member_t, self._struct_type_table)
+                trailing = union_def.size - first_size
+                if trailing > 0:
+                    _append_zero_pad(result, trailing)
             case ast.CompoundInit(initializers=sub_inits):
                 for sub_init in sub_inits:
                     self._flatten_helper(sub_init, result)
@@ -2302,6 +2473,22 @@ class SemanticAnalyser:
                         _zero_initializer(struct_def.members[i].member_type, self._struct_type_table)
                     )
                 return ast.CompoundInit(typechecked_list, init_type=target_type)
+            case Union(tag=tag), ast.CompoundInit(initializers=init_list):
+                # C11 §6.7.9p16: union initializer initialises the first named member only.
+                union_def = self._struct_type_table.get(tag)
+                if union_def is None:
+                    raise SemanticError("Cannot initialize an incomplete union type.")
+                if len(init_list) > 1:
+                    raise SemanticError(
+                        f"Too many elements in union initializer: expected at most 1, got {len(init_list)}."
+                    )
+                first_member_t = union_def.members[0].member_type
+                typechecked_list = (
+                    [self._typecheck_init(first_member_t, init_list[0])]
+                    if init_list
+                    else [_zero_initializer(first_member_t, self._struct_type_table)]
+                )
+                return ast.CompoundInit(typechecked_list, init_type=target_type)
             case _:
                 raise SemanticError("Cannot initialize a scalar object with a compound initializer.")
 
@@ -2335,6 +2522,10 @@ class SemanticAnalyser:
                 resolved_lvalue = self.resolve_exp(lvalue)
                 resolved_rvalue = self.resolve_exp(rvalue)
                 return self._type_check_exp(ast.Assignment(resolved_lvalue, resolved_rvalue))
+            case ast.CompoundAssignment(lvalue=lvalue, op=op, rvalue=rvalue):
+                resolved_lvalue = self.resolve_exp(lvalue)
+                resolved_rvalue = self.resolve_exp(rvalue)
+                return self._type_check_exp(ast.CompoundAssignment(resolved_lvalue, op, resolved_rvalue))
             case ast.Var(name=name):
                 if name in self._current_block_funs:
                     raise SemanticError(f"Function name '{name}' used as a variable.")
@@ -2484,7 +2675,7 @@ class SemanticAnalyser:
                 self._break_stack.pop()
                 return result
             case ast.For(init=init, condition=condition, post=post, body=body):
-                saved_vars, saved_funs, saved_structs = self._enter_scope()
+                saved_vars, saved_funs, saved_structs, saved_unions = self._enter_scope()
                 label = self._make_loop_label("for")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
@@ -2499,6 +2690,7 @@ class SemanticAnalyser:
                 self._variable_map = saved_vars
                 self._current_block_funs = saved_funs
                 self._structure_map = saved_structs
+                self._union_map = saved_unions
                 return ast.For(init, condition, post, body, label)
             case ast.Switch(control=control, body=body):
                 label = self._make_loop_label("switch")
@@ -2507,8 +2699,11 @@ class SemanticAnalyser:
                 self._case_values_stack.append(set())
                 self._default_seen_stack.append(False)
                 resolved_control = self._typecheck_and_convert(self.resolve_exp(control))
-                if isinstance(resolved_control.exp_type, DoubleType):
-                    raise SemanticError("Switch controlling expression must be an integer, not a double")
+                if not is_integer(resolved_control.exp_type):
+                    raise SemanticError("Switch controlling expression must be an integer type")
+                # C11 §6.8.4.2p1: integer promotions applied to the controlling expression
+                if isinstance(resolved_control.exp_type, (Char, SChar, UChar)):
+                    resolved_control = ast.Cast(IntType(), resolved_control, exp_type=IntType())
                 self._switch_type_stack.append(resolved_control.exp_type or IntType())
                 result = ast.Switch(resolved_control, self._resolve_statement(body), label)
                 self._break_stack.pop()
@@ -2644,6 +2839,8 @@ class SemanticAnalyser:
                 return ast.D(ast.VarDecl(self.resolve_variable_declaration(var_decl)))
             case ast.D(declaration=ast.StructDecl(struct_declaration=struct_decl)):
                 tag = struct_decl.tag
+                if self._union_map.get(tag, StructureBinding("", False)).from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a union in this scope.")
                 existing = self._structure_map.get(tag)
                 if existing is not None and existing.from_current_scope:
                     unique_tag = existing.new_tag
@@ -2656,6 +2853,22 @@ class SemanticAnalyser:
                 resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
                 self._typecheck_struct_declaration(resolved_struct_decl)
                 return ast.D(ast.StructDecl(resolved_struct_decl))
+            case ast.D(declaration=ast.UnionDecl(union_declaration=union_decl)):
+                tag = union_decl.tag
+                if self._structure_map.get(tag, StructureBinding("", False)).from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a struct in this scope.")
+                existing = self._union_map.get(tag)
+                if existing is not None and existing.from_current_scope:
+                    unique_tag = existing.new_tag
+                else:
+                    unique_tag = self._make_union_tag(tag)
+                    self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
+                resolved_members = tuple(
+                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in union_decl.members
+                )
+                resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
+                self._typecheck_union_declaration(resolved_union_decl)
+                return ast.D(ast.UnionDecl(resolved_union_decl))
             case ast.D(declaration=ast.FunDecl(function_declaration=fun)):
                 if fun.body is not None:
                     raise SemanticError(f"Nested function definition of '{fun.name}' is not permitted.")
@@ -2706,6 +2919,7 @@ class SemanticAnalyser:
 
         self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
         self._structure_map = {k: v._replace(from_current_scope=False) for k, v in self._structure_map.items()}
+        self._union_map = {k: v._replace(from_current_scope=False) for k, v in self._union_map.items()}
         self._current_block_funs = set()
         self._label_set = set()
         self._loop_stack = []
@@ -2783,6 +2997,8 @@ class SemanticAnalyser:
                     resolved.append(ast.VarDecl(self._resolve_file_scope_variable_declaration(var_decl)))
                 case ast.StructDecl(struct_declaration=struct_decl):
                     tag = struct_decl.tag
+                    if tag in self._union_map:
+                        raise SemanticError(f"Tag '{tag}' already declared as a union in this scope.")
                     existing = self._structure_map.get(tag)
                     if existing is not None and not existing.from_current_scope:
                         unique_tag = existing.new_tag
@@ -2795,6 +3011,22 @@ class SemanticAnalyser:
                     resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
                     self._typecheck_struct_declaration(resolved_struct_decl)
                     resolved.append(ast.StructDecl(resolved_struct_decl))
+                case ast.UnionDecl(union_declaration=union_decl):
+                    tag = union_decl.tag
+                    if tag in self._structure_map:
+                        raise SemanticError(f"Tag '{tag}' already declared as a struct in this scope.")
+                    existing = self._union_map.get(tag)
+                    if existing is not None and not existing.from_current_scope:
+                        unique_tag = existing.new_tag
+                    else:
+                        unique_tag = self._make_union_tag(tag)
+                        self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
+                    resolved_members = tuple(
+                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in union_decl.members
+                    )
+                    resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
+                    self._typecheck_union_declaration(resolved_union_decl)
+                    resolved.append(ast.UnionDecl(resolved_union_decl))
                 case _:
                     raise SemanticError("Unhandled top-level declaration type in semantic analyser")
         return ast.Program(declarations=tuple(resolved))

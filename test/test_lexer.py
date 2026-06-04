@@ -53,6 +53,12 @@ def test_keywords_produce_distinct_types_not_identifier(preprocess_c_file: Prepr
     assert by_value["return"] == TokenType.RETURN
 
 
+def test_union_keyword_produces_union_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/union_keyword.c"))
+    union_token = next(t for t in tokens if t.value == "union")
+    assert union_token.type == TokenType.UNION
+
+
 def test_identifier_sharing_keyword_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
     # "returning" starts with the keyword "return" — must not be classified as RETURN
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))

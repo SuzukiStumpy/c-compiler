@@ -105,6 +105,7 @@ from compiler.syntax.ast import (
     Char,
     Complement,
     Compound,
+    CompoundAssignment,
     CompoundInit,
     Conditional,
     Constant,
@@ -181,6 +182,9 @@ from compiler.syntax.ast import (
     ULongType,
     Unary,
     UnaryOperator,
+    Union,
+    UnionDecl,
+    UnionDeclaration,
     Var,
     VarDecl,
     VariableDeclaration,
@@ -239,6 +243,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.CHAR,
         TokenType.VOID,
         TokenType.STRUCT,
+        TokenType.UNION,
     }
 )
 
@@ -489,21 +494,22 @@ class Parser:
     # Type-specifier helpers
     # ------------------------------------------------------------------
 
-    def _consume_type_specifiers(self) -> tuple[frozenset[TokenType], Token | None, str | None]:
+    def _consume_type_specifiers(self) -> tuple[frozenset[TokenType], Token | None, str | None, str | None]:
         """Consume a run of type-specifier tokens and return the set seen.
 
         Reads tokens from the stream as long as they belong to
         ``_TYPE_SPECIFIER_TOKENS``.  Raises immediately on a duplicate specifier.
-        When a ``struct`` keyword is encountered the following identifier token is
-        consumed immediately as the struct tag; ``struct`` cannot be combined with
-        any other type specifier.
+        When a ``struct`` or ``union`` keyword is encountered the following
+        identifier token is consumed immediately as the tag; neither can be
+        combined with any other type specifier.
 
         Returns:
-            A ``(seen, last_tok, struct_tag)`` triple.  ``seen`` is the frozen set
-            of non-struct token types consumed; ``last_tok`` is the final token
-            consumed, used to anchor error messages (``None`` only when ``seen`` is
-            empty and ``struct_tag`` is ``None``); ``struct_tag`` is the struct tag
-            name when a ``struct identifier`` pair was consumed, otherwise ``None``.
+            A ``(seen, last_tok, struct_tag, union_tag)`` 4-tuple.  ``seen`` is
+            the frozen set of non-aggregate token types consumed; ``last_tok`` is
+            the final token consumed, used to anchor error messages; ``struct_tag``
+            is the struct tag name when a ``struct identifier`` pair was consumed
+            (otherwise ``None``); ``union_tag`` is the union tag name when a
+            ``union identifier`` pair was consumed (otherwise ``None``).
 
         Raises:
             ParseError: If the same specifier token appears more than once, if
@@ -513,6 +519,7 @@ class Parser:
         seen: set[TokenType] = set()
         last_tok: Token | None = None
         struct_tag: str | None = None
+        union_tag: str | None = None
         while (peek := self._peek()) is not None and peek.type in _TYPE_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
             if peek.type == TokenType.STRUCT:
                 if seen:
@@ -522,18 +529,27 @@ class Parser:
                 struct_tag = tag_token.value
                 last_tok = tag_token
                 break  # struct tag exhausts the type-specifier sequence
+            if peek.type == TokenType.UNION:
+                if seen:
+                    raise self._token_error("'union' cannot be combined with other type specifiers", peek)
+                self._consume()  # consume 'union'
+                tag_token = self._expect(TokenType.IDENTIFIER)
+                union_tag = tag_token.value
+                last_tok = tag_token
+                break  # union tag exhausts the type-specifier sequence
             tok = self._consume()
             if tok.type in seen:
                 raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
             seen.add(tok.type)
             last_tok = tok
-        return frozenset(seen), last_tok, struct_tag
+        return frozenset(seen), last_tok, struct_tag, union_tag
 
     def _resolve_type(
         self,
         seen: frozenset[TokenType],
         last_tok: Token | None,
         struct_tag: str | None = None,
+        union_tag: str | None = None,
     ) -> Type:
         """Map a set of consumed type-specifier token types to a ``Type`` node.
 
@@ -542,21 +558,27 @@ class Parser:
                 ``_consume_type_specifiers``.
             last_tok: The final token consumed from the stream, used as the
                 error anchor when a conflict is detected.  Non-``None``
-                whenever ``seen`` is non-empty or ``struct_tag`` is set.
+                whenever ``seen`` is non-empty or ``struct_tag`` / ``union_tag``
+                is set.
             struct_tag: When a ``struct identifier`` pair was consumed this
+                is the tag name; in that case ``seen`` must be empty.
+            union_tag: When a ``union identifier`` pair was consumed this
                 is the tag name; in that case ``seen`` must be empty.
 
         Returns:
             The ``Type`` node corresponding to the combination of specifiers.
 
         Raises:
-            ParseError: If ``seen`` is empty and ``struct_tag`` is ``None``,
-                if ``double`` is combined with any other specifier, if ``signed``
-                and ``unsigned`` appear together, or if ``char`` is combined with
-                specifiers other than ``signed`` / ``unsigned``.
+            ParseError: If ``seen`` is empty and both ``struct_tag`` and
+                ``union_tag`` are ``None``, if ``double`` is combined with any
+                other specifier, if ``signed`` and ``unsigned`` appear together,
+                or if ``char`` is combined with specifiers other than ``signed``
+                / ``unsigned``.
         """
         if struct_tag is not None:
             return Structure(tag=struct_tag)
+        if union_tag is not None:
+            return Union(tag=union_tag)
         if not seen:
             tok = self._peek()
             if tok is None:
@@ -649,6 +671,7 @@ class Parser:
         last_type_tok: Token | None = None
         storage: StorageClass | None = None
         struct_tag: str | None = None
+        union_tag: str | None = None
 
         while (peek := self._peek()) is not None and peek.type in _DECLARATION_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
             if peek.type == TokenType.STRUCT:
@@ -659,6 +682,14 @@ class Parser:
                 struct_tag = tag_token.value
                 last_type_tok = tag_token
                 break  # struct tag exhausts the type-specifier sequence
+            if peek.type == TokenType.UNION:
+                if type_seen:
+                    raise self._token_error("'union' cannot be combined with other type specifiers", peek)
+                self._consume()  # consume 'union'
+                tag_token = self._expect(TokenType.IDENTIFIER)
+                union_tag = tag_token.value
+                last_type_tok = tag_token
+                break  # union tag exhausts the type-specifier sequence
             tok = self._consume()
             if tok.type in {TokenType.STATIC, TokenType.EXTERN}:
                 if storage is not None:
@@ -670,7 +701,7 @@ class Parser:
                 type_seen.add(tok.type)
                 last_type_tok = tok
 
-        return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag), storage
+        return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag), storage
 
     def _parse_params(self) -> tuple[Parameter, ...]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -912,8 +943,8 @@ class Parser:
             ParseError: If no type specifier is present, the declarator is malformed,
                 or the initialiser expression or function body is malformed.
         """
-        # Two-token lookahead to distinguish "struct Tag { ... };" / "struct Tag ;"
-        # (a StructDecl) from "struct Tag varname;" (a VarDecl using a struct type).
+        # Two-token lookahead to distinguish "struct/union Tag { ... };" / "struct/union Tag ;"
+        # (a StructDecl/UnionDecl) from "struct/union Tag varname;" (a VarDecl).
         if self._match(TokenType.STRUCT):
             next1 = self._peek(1)
             next2 = self._peek(2)
@@ -924,6 +955,16 @@ class Parser:
                 and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
             ):
                 return self._parse_struct_declaration()
+        if self._match(TokenType.UNION):
+            next1 = self._peek(1)
+            next2 = self._peek(2)
+            if (
+                next1 is not None
+                and next1.type == TokenType.IDENTIFIER
+                and next2 is not None
+                and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
+            ):
+                return self._parse_union_declaration()
 
         first_token = self._peek()
         base_type, storage = self._parse_specifiers()
@@ -997,6 +1038,44 @@ class Parser:
             members = tuple(members_list)
         self._expect(TokenType.SEMICOLON)
         return StructDecl(struct_declaration=StructDeclaration(tag=tag_token.value, members=members))
+
+    def _parse_union_declaration(self) -> UnionDecl:
+        """Parse a union type declaration or definition.
+
+        Grammar::
+
+            union-declaration ::= "union" identifier ["{" member-declaration}+ "}"] ";"
+
+        The member list is optional (a bare ``union Tag;`` is a forward
+        declaration), but when braces are present at least one member must appear
+        inside them.
+
+        Returns:
+            A ``UnionDecl`` node wrapping the ``UnionDeclaration``.
+
+        Raises:
+            ParseError: If the tag identifier is missing, if the brace-enclosed
+                member list is empty, if any member declaration is malformed, or
+                if the trailing semicolon is absent.
+        """
+        self._expect(TokenType.UNION)
+        tag_token = self._expect(TokenType.IDENTIFIER)
+        members: tuple[MemberDeclaration, ...] = ()
+        if self._match(TokenType.LBRACE):
+            self._consume()
+            if self._match(TokenType.RBRACE):
+                tok = self._peek()
+                msg = "union definition must contain at least one member"
+                raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+            members_list: list[MemberDeclaration] = []
+            while not self._match(TokenType.RBRACE):
+                if self._peek() is None:
+                    raise self._eof_error("expected '}', got end of input")
+                members_list.append(self._parse_member_declaration())
+            self._consume()  # consume '}'
+            members = tuple(members_list)
+        self._expect(TokenType.SEMICOLON)
+        return UnionDecl(union_declaration=UnionDeclaration(tag=tag_token.value, members=members))
 
     def _parse_member_declaration(self) -> MemberDeclaration:
         """Parse a single struct member declaration.
@@ -1381,7 +1460,7 @@ class Parser:
             elif self._match_compound_assignment():
                 op = self._consume_compound_assignment()
                 right = self._parse_exp(prec)
-                left = Assignment(left, Binary(op, left, right))
+                left = CompoundAssignment(left, op, right)
             elif self._match(TokenType.QUERY):
                 middle = self._parse_conditional_middle()
                 right = self._parse_exp(prec)
@@ -1767,8 +1846,8 @@ class Parser:
                 specifier appears more than once, or if ``double`` is combined
                 with another type specifier.
         """
-        seen, last_tok, struct_tag = self._consume_type_specifiers()
-        return self._resolve_type(seen, last_tok, struct_tag)
+        seen, last_tok, struct_tag, union_tag = self._consume_type_specifiers()
+        return self._resolve_type(seen, last_tok, struct_tag, union_tag)
 
     def _parse_abstract_declarator(self) -> Callable[[Type], Type]:
         """Parse an abstract declarator (no identifier) for use in cast expressions.
