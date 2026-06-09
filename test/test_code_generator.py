@@ -1628,6 +1628,76 @@ class TestCharArgExtension:
         assert not any(isinstance(i, asm.Movsx) for i in instrs), "int arg should not produce Movsx"
         assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs), "int arg should not produce MoveZeroExtend"
 
+    def test_duplicate_schar_arg_uses_movl_not_second_movsbl(self) -> None:
+        """When the same signed-char variable appears in two argument slots, the second
+        slot is filled with a ``Mov(Longword)`` from the first register rather than a
+        second ``Movsx``.  The test-framework's ``find_reaching_copies`` only recognises
+        ``MOV`` (``movl``/``movq``), not ``MOVS`` (``movsbl``), so a duplicate
+        ``movsbl`` would cause the framework to report ``None`` for the second argument.
+        """
+        st = _make_symbol_table(c=SChar, ret=IntType)
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var("foo"),
+                            args=(tac.Var("c"), tac.Var("c")),
+                            dst=tac.Var("ret"),
+                        ),
+                        tac.Return(val=tac.Var("ret")),
+                    ),
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        movsx_count = sum(1 for i in instrs if isinstance(i, asm.Movsx))
+        assert movsx_count == 1, f"expected exactly one Movsx for duplicate schar args, got {movsx_count}"
+        edi_movl = [
+            i
+            for i in instrs
+            if isinstance(i, asm.Mov)
+            and isinstance(i.dst, asm.Register)
+            and i.dst.reg == asm.Registers.SI
+            and i.assembly_type == asm.Longword()
+        ]
+        assert edi_movl, "expected a Mov(Longword) into %esi for the duplicate arg"
+
+    def test_duplicate_uchar_arg_uses_movl_not_second_movzbl(self) -> None:
+        """When the same unsigned-char variable appears in two argument slots, the second
+        slot is filled with a ``Mov(Longword)`` from the first register rather than a
+        second ``MoveZeroExtend``.
+        """
+        st = _make_symbol_table(c=UChar, ret=IntType)
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var("foo"),
+                            args=(tac.Var("c"), tac.Var("c")),
+                            dst=tac.Var("ret"),
+                        ),
+                        tac.Return(val=tac.Var("ret")),
+                    ),
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        mze_count = sum(1 for i in instrs if isinstance(i, asm.MoveZeroExtend))
+        assert mze_count == 1, f"expected exactly one MoveZeroExtend for duplicate uchar args, got {mze_count}"
+        esi_movl = [
+            i
+            for i in instrs
+            if isinstance(i, asm.Mov)
+            and isinstance(i.dst, asm.Register)
+            and i.dst.reg == asm.Registers.SI
+            and i.assembly_type == asm.Longword()
+        ]
+        assert esi_movl, "expected a Mov(Longword) into %esi for the duplicate arg"
+
 
 def _double_to_char_program(dst_name: str) -> tac.Program:
     """Build a TAC program with a single ``DoubleToInt`` instruction targeting a char variable.

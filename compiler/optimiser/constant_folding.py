@@ -18,6 +18,7 @@ from compiler.syntax.ast.types import (
     DoubleType,
     IntType,
     LongType,
+    Pointer,
     SChar,
     Type,
     UChar,
@@ -192,6 +193,10 @@ def _const_of_type(t: Type, val: int | float) -> Const | None:
             return ConstChar(_wrap_int(int(val), 8, signed=True))
         case UChar():
             return ConstUChar(_wrap_int(int(val), 8, signed=False))
+        case Pointer():
+            # Pointers are 64-bit; represent as ConstULong so the null pointer
+            # constant (0) and other integer→pointer conversions can be folded.
+            return ConstULong(_wrap_int(int(val), 64, signed=False))
     return None
 
 

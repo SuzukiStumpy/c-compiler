@@ -50,7 +50,7 @@ def optimize_function(
             cfg = unreachable_code_elimination(cfg)
 
         if enabled_optimizations.propagate_copies:
-            cfg = copy_propagation(cfg)
+            cfg = copy_propagation(cfg, symbol_table)
 
         if enabled_optimizations.eliminate_dead_stores:
             cfg = dead_store_elimination(cfg)

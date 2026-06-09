@@ -205,12 +205,13 @@ class TestOptimizeFunction:
         result = optimize_function(fn, _NO_OPT)
         assert result == fn
 
-    def test_all_passes_enabled_no_dead_code_converges(self) -> None:
-        """With all passes enabled and no dead code the loop converges immediately."""
+    def test_all_passes_enabled_converges(self) -> None:
+        """With all passes enabled the optimization loop converges to a fixed point."""
         body = (tac.Copy(src=_const(1), dst=_var("x")), tac.Return(val=_var("x")))
         fn = _function(body)
         result = optimize_function(fn, _ALL_OPT)
-        assert result == fn
+        expected = (tac.Copy(src=_const(1), dst=_var("x")), tac.Return(val=_const(1)))
+        assert result.body == expected
 
     def test_result_body_matches_input_body(self) -> None:
         """The returned function has the same instruction body as the input (no-op passes)."""

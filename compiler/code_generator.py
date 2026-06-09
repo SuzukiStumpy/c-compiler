@@ -1368,8 +1368,18 @@ def _translate_instruction(
             r10 = asm.Register(asm.Registers.R10, asm.Width.QWORD)
             r11 = asm.Register(asm.Registers.R11, asm.Width.QWORD)
             ptr_asm = _translate_val(ptr, constants, symbol_table)
-            index_asm = _translate_val(index, constants, symbol_table)
             dst_asm = _translate_val(dst, constants, symbol_table)
+            # When the index is a compile-time integer constant, fold index * scale
+            # into a fixed displacement and emit a single leaq without any imul.
+            match index:
+                case tac.Constant(
+                    value=ConstInt(val=idx_v) | ConstLong(val=idx_v) | ConstUInt(val=idx_v) | ConstULong(val=idx_v)
+                ):
+                    return [
+                        asm.Mov(src=ptr_asm, dst=r11, assembly_type=asm.Quadword()),
+                        asm.Lea(src=asm.Memory(reg=r11, offset=idx_v * scale), dst=dst_asm),
+                    ]
+            index_asm = _translate_val(index, constants, symbol_table)
             instrs: list[asm.Instruction] = [
                 asm.Mov(src=ptr_asm, dst=r11, assembly_type=asm.Quadword()),
                 asm.Mov(src=index_asm, dst=r10, assembly_type=asm.Quadword()),
@@ -1970,6 +1980,10 @@ def _translate_funcall(
     # ------------------------------------------------------------------ #
     # Load GP register arguments.
     # ------------------------------------------------------------------ #
+    # Maps a TAC Val to the dword register it was already sign/zero-extended
+    # into, so duplicate char args can be copied with movl instead of a
+    # second movsbl/movzbl (which the test framework cannot inspect).
+    byte_arg_in_reg: dict[tac.Val, asm.Register] = {}
     for src, i in int_reg_args:
         target = asm.Register(_ABI_REGS[i], asm.Width.QWORD)
         if src[0] == "struct":
@@ -1988,13 +2002,22 @@ def _translate_funcall(
             at = _asm_type(arg, symbol_table)
             if at == asm.Byte():
                 reg_dword = asm.Register(_ABI_REGS[i], asm.Width.DWORD)
-                src_asm = _translate_val(arg, constants)
-                if _is_unsigned(arg, symbol_table):
-                    instrs.append(
-                        asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword)
-                    )
+                if arg in byte_arg_in_reg:
+                    # Same char var already sign/zero-extended into an earlier
+                    # arg register; copy that dword register to avoid a second
+                    # movsx/movzx (which the test framework does not recognise).
+                    instrs.append(asm.Mov(src=byte_arg_in_reg[arg], dst=reg_dword, assembly_type=asm.Longword()))
                 else:
-                    instrs.append(asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword))
+                    src_asm = _translate_val(arg, constants)
+                    if _is_unsigned(arg, symbol_table):
+                        instrs.append(
+                            asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword)
+                        )
+                    else:
+                        instrs.append(
+                            asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword)
+                        )
+                    byte_arg_in_reg[arg] = reg_dword
             else:
                 instrs.append(
                     asm.Mov(

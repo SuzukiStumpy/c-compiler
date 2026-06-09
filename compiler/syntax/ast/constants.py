@@ -1,5 +1,6 @@
 """Represent various constant types within the AST"""
 
+import struct
 from abc import ABC
 from dataclasses import dataclass
 
@@ -52,7 +53,7 @@ class ConstULong(Const):
     val: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class ConstDouble(Const):
     """Represents an double constant within the C code.
 
@@ -64,6 +65,28 @@ class ConstDouble(Const):
     """
 
     val: float
+
+    def __eq__(self, other: object) -> bool:
+        """Compare bit-exactly so that ``+0.0`` and ``-0.0`` are treated as distinct.
+
+        Args:
+            other: Object to compare against.
+
+        Returns:
+            ``True`` when *other* is a ``ConstDouble`` with the same IEEE 754 bit
+            pattern as ``self``.
+        """
+        if not isinstance(other, ConstDouble):
+            return NotImplemented
+        return struct.pack("d", self.val) == struct.pack("d", other.val)
+
+    def __hash__(self) -> int:
+        """Hash by IEEE 754 bit pattern so that ``+0.0`` and ``-0.0`` hash differently.
+
+        Returns:
+            An integer hash consistent with the bit-exact ``__eq__``.
+        """
+        return hash(struct.pack("d", self.val))
 
 
 @dataclass(frozen=True, slots=True)

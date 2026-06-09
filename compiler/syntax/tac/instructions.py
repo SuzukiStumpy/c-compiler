@@ -179,7 +179,7 @@ class FunCall(Instruction):
     """
 
     fun_val: Val
-    args: tuple[Val]
+    args: tuple[Val, ...]
     dst: Val | None = field(default=None)
 
 

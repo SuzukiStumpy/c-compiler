@@ -16,8 +16,6 @@ Passes that mutate the block list should call ``add_all_edges`` again before
 relying on successor data.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Final, Generic, Protocol, TypeAlias, TypeVar
@@ -267,11 +265,17 @@ def make_cfg(
 ) -> ControlFlowGraph[_I]:
     """Build a control-flow graph from a flat instruction sequence.
 
-    A new basic block begins at every instruction identified as a label by
-    *adapter* and at the implicit start of the body.  The preceding block is
-    closed before the new one is opened.  The label instruction is kept as the
-    first instruction of its block so that the original stream can be
-    reconstructed exactly.
+    A new basic block begins at every label instruction and after every
+    conditional jump.  Splitting on conditional jumps produces true basic
+    blocks — exactly one exit per block — which is required for correct
+    dataflow analysis: without the split, instructions that follow a
+    mid-block conditional jump would appear to execute on *both* the
+    fall-through and the jump-taken paths, causing the exit reaching-copy
+    set to be over-approximate and leading to incorrect propagation.
+
+    The label instruction is retained as the first instruction of its block
+    so that ``cfg_to_instructions`` can reproduce the original flat stream
+    exactly.
 
     ``add_all_edges`` is called before returning so that every block's
     ``successors`` list is fully populated.
@@ -302,6 +306,15 @@ def make_cfg(
             current_instrs = [instr]
         else:
             current_instrs.append(instr)
+            # Close the block after a conditional jump so that each block has
+            # exactly one exit.  This prevents instructions on the fall-through
+            # path from appearing to reach the jump target, which would make
+            # the block exit set imprecise for copy-propagation and similar
+            # forward dataflow analyses.
+            if adapter.conditional_jump_target(instr) is not None:
+                blocks.append(BasicBlock(label=current_label, instructions=current_instrs))
+                current_label = None
+                current_instrs = []
 
     if current_instrs:
         blocks.append(BasicBlock(label=current_label, instructions=current_instrs))
