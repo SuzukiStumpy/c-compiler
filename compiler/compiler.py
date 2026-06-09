@@ -13,11 +13,13 @@ import compiler.syntax.tac as tac
 from compiler.code_generator import generate
 from compiler.emitter import emit_program
 from compiler.lexer import lexer
+from compiler.optimiser import do_optimization
 from compiler.parser import parse
 from compiler.semantic_analysis import resolve_with_symbols
 from compiler.subprocesses import assemble_and_link, preprocess
 from compiler.syntax.ast import pretty_print
 from compiler.tac_generator import generate as tac_generate
+from compiler.types.optimizations import Optimizations
 from compiler.types.stages import Stage
 from compiler.utils.diagnostics import format_for_terminal
 from compiler.utils.exceptions import CodeGenerationError, LexerError, ParseError
@@ -70,7 +72,14 @@ class MutuallyExclusiveOption(click.Option):
         return super().handle_parse_result(ctx, opts, args)
 
 
-def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs: tuple[str, ...] = ()) -> None:
+def compile(
+    source: Path,
+    optimize: Optimizations,
+    stages: Stage = Stage.ALL,
+    exe_out: bool = True,
+    assembly_only: bool = False,
+    libs: tuple[str, ...] = (),
+) -> None:
     """Run the selected compilation stages on a preprocessed source file.
 
     Executes each requested stage in pipeline order: lexing, parsing, TAC
@@ -125,6 +134,7 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs:
 
     if Stage.CODEGEN in stages:
         assert tac_program is not None
+        tac_program = do_optimization(tac_program, optimize)
         asm_program = generate(tac_program, symbol_table, struct_type_table)
         if Stage.LINK not in stages:
             click.echo(pretty_print(asm_program))
@@ -133,6 +143,9 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs:
         assert asm_program is not None
         assembly = source.parent / f"{source.stem}.s"
         emit_program(asm_program, assembly)
+        if assembly_only:
+            click.echo(f"Assembly complete.  Assembly file at {assembly}")
+            return
         executable = assemble_and_link(assembly, exe_out=exe_out, libs=libs)
         click.echo(f"Compilation complete.  Output file is: {executable}")
 
@@ -151,6 +164,11 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs:
     "-c",
     is_flag=True,
     help="Don't link, just produce an object file.",
+)
+@click.option(
+    "-s",
+    is_flag=True,
+    help="Don't assemble or link, just produce the assembly file.",
 )
 @click.option("-l", "libraries", multiple=True, help="Link a library into the compiled binary")
 @click.option(
@@ -188,16 +206,27 @@ def compile(source: Path, stages: Stage = Stage.ALL, exe_out: bool = True, libs:
     mutually_exclusive=["lex", "parse", "validate", "tacky"],
     help="Stop after code generation; emit assembly but do not link.",
 )
+@click.option("--fold-constants", is_flag=True, help="Optimization: Enable constant folding")
+@click.option("--propagate-copies", is_flag=True, help="Optimization: Enable copy propagation")
+@click.option("--eliminate-unreachable-code", is_flag=True, help="Optimization: Enable unreachable code elimination")
+@click.option("--eliminate-dead-stores", is_flag=True, help="Optimization: Enable dead store elimination")
+@click.option("--optimize", is_flag=True, help="Enable all optimizations")
 @click.argument("source", type=click.Path(), required=True, nargs=1)
 def compiler(
     source: str,
     c: bool,
+    s: bool,
     libraries: tuple[str, ...],
     lex: bool,
     parse: bool,
     validate: bool,
     tacky: bool,
     codegen: bool,
+    fold_constants: bool,
+    propagate_copies: bool,
+    eliminate_unreachable_code: bool,
+    eliminate_dead_stores: bool,
+    optimize: bool,
 ) -> None:
     """Invoke the compiler pipeline for a single C source file.
 
@@ -223,9 +252,16 @@ def compiler(
     else:
         stages = Stage.ALL
 
+    optimisations = Optimizations(
+        fold_constants=fold_constants if not optimize else True,
+        propagate_copies=propagate_copies if not optimize else True,
+        eliminate_unreachable_code=eliminate_unreachable_code if not optimize else True,
+        eliminate_dead_stores=eliminate_dead_stores if not optimize else True,
+    )
+
     try:
         pre_processed = preprocess(Path(source))
-        compile(pre_processed, stages, exe_out=not c, libs=libraries)
+        compile(pre_processed, stages=stages, exe_out=not c, assembly_only=s, libs=libraries, optimize=optimisations)
     except (LexerError, ParseError, CodeGenerationError) as ex:
         click.echo(format_for_terminal(ex), err=True)
         sys.exit(1)
