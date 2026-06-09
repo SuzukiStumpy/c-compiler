@@ -134,7 +134,7 @@ def compile(
 
     if Stage.CODEGEN in stages:
         assert tac_program is not None
-        tac_program = do_optimization(tac_program, optimize)
+        tac_program = do_optimization(tac_program, optimize, symbol_table)
         asm_program = generate(tac_program, symbol_table, struct_type_table)
         if Stage.LINK not in stages:
             click.echo(pretty_print(asm_program))
@@ -166,7 +166,7 @@ def compile(
     help="Don't link, just produce an object file.",
 )
 @click.option(
-    "-s",
+    "-S",
     is_flag=True,
     help="Don't assemble or link, just produce the assembly file.",
 )

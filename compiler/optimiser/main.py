@@ -6,6 +6,7 @@ delegating each enabled pass to its own module.
 
 import compiler.syntax.tac as tac
 from compiler.types.optimizations import Optimizations
+from compiler.types.symbols import SymbolTable
 
 from .cfg import cfg_to_instructions, make_control_flow_graph
 from .constant_folding import constant_folding
@@ -14,7 +15,11 @@ from .dead_store_elimination import dead_store_elimination
 from .unreachable_code_elimination import unreachable_code_elimination
 
 
-def optimize_function(function: tac.Function, enabled_optimizations: Optimizations) -> tac.Function:
+def optimize_function(
+    function: tac.Function,
+    enabled_optimizations: Optimizations,
+    symbol_table: SymbolTable | None = None,
+) -> tac.Function:
     """Apply all enabled optimization passes to a single function in a fixed-point loop.
 
     Passes are applied in order on every iteration: constant folding, unreachable-code
@@ -24,6 +29,8 @@ def optimize_function(function: tac.Function, enabled_optimizations: Optimizatio
     Args:
         function: The TAC function to optimize.
         enabled_optimizations: Flags controlling which passes are active.
+        symbol_table: The program's symbol table, forwarded to ``constant_folding``
+            so that type-conversion instructions can be resolved.
 
     Returns:
         The optimized ``tac.Function``.  May equal the input when no pass fires.
@@ -33,7 +40,7 @@ def optimize_function(function: tac.Function, enabled_optimizations: Optimizatio
 
     while True:
         if enabled_optimizations.fold_constants:
-            post_constant_folding = constant_folding(function)
+            post_constant_folding = constant_folding(function, symbol_table)
         else:
             post_constant_folding = function
 
@@ -56,7 +63,11 @@ def optimize_function(function: tac.Function, enabled_optimizations: Optimizatio
         function = optimized_function
 
 
-def do_optimization(tac_program: tac.Program, enabled_optimisations: Optimizations) -> tac.Program:
+def do_optimization(
+    tac_program: tac.Program,
+    enabled_optimisations: Optimizations,
+    symbol_table: SymbolTable | None = None,
+) -> tac.Program:
     """Apply optimization passes to every function in a TAC program.
 
     Non-function top-level items (``StaticVariable``, ``StaticConstant``) are
@@ -65,12 +76,14 @@ def do_optimization(tac_program: tac.Program, enabled_optimisations: Optimizatio
     Args:
         tac_program: The TAC program to optimize.
         enabled_optimisations: Flags controlling which passes are active.
+        symbol_table: The program's symbol table.  Forwarded to each per-function
+            pass so that type-conversion instructions can be resolved.
 
     Returns:
         A new ``tac.Program`` with all functions optimized.
     """
     optimized_top_level = tuple(
-        optimize_function(item, enabled_optimisations) if isinstance(item, tac.Function) else item
+        optimize_function(item, enabled_optimisations, symbol_table) if isinstance(item, tac.Function) else item
         for item in tac_program.top_level
     )
     return tac.Program(top_level=optimized_top_level)

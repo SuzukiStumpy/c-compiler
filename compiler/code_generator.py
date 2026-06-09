@@ -1069,14 +1069,30 @@ def _translate_instruction(
                     ]
                 case tac.Negate() if at == asm.Double():
                     # IEEE 754 negation flips only the sign bit; use xorpd with -0.0 (sign bit set).
+                    # xorpd requires 16-byte alignment; if a lower-aligned entry already exists
+                    # (e.g. from constant folding emitting ConstDouble(-0.0) via _translate_val),
+                    # upgrade it in place rather than leaving the misaligned version.
                     sign_mask_bits = asm.DoubleInit(-0.0).as_bits()
                     sign_mask_label = f"double_const.{sign_mask_bits}"
-                    if constants is not None and not any(
-                        isinstance(c, asm.StaticConstant) and c.identifier == sign_mask_label for c in constants
-                    ):
-                        constants.append(
-                            asm.StaticConstant(identifier=sign_mask_label, alignment=16, init=asm.DoubleInit(-0.0))
+                    if constants is not None:
+                        existing_idx = next(
+                            (
+                                i
+                                for i, c in enumerate(constants)
+                                if isinstance(c, asm.StaticConstant) and c.identifier == sign_mask_label
+                            ),
+                            -1,
                         )
+                        if existing_idx == -1:
+                            constants.append(
+                                asm.StaticConstant(identifier=sign_mask_label, alignment=16, init=asm.DoubleInit(-0.0))
+                            )
+                        else:
+                            existing = constants[existing_idx]
+                            if isinstance(existing, asm.StaticConstant) and existing.alignment < 16:
+                                constants[existing_idx] = asm.StaticConstant(
+                                    identifier=sign_mask_label, alignment=16, init=asm.DoubleInit(-0.0)
+                                )
                     xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
                     return [
                         asm.Binary(
