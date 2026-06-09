@@ -205,8 +205,8 @@ class TestOptimizeFunction:
         result = optimize_function(fn, _NO_OPT)
         assert result == fn
 
-    def test_all_passes_enabled_stubs_converge(self) -> None:
-        """With all passes enabled but all stubs active the loop still terminates."""
+    def test_all_passes_enabled_no_dead_code_converges(self) -> None:
+        """With all passes enabled and no dead code the loop converges immediately."""
         body = (tac.Copy(src=_const(1), dst=_var("x")), tac.Return(val=_var("x")))
         fn = _function(body)
         result = optimize_function(fn, _ALL_OPT)
@@ -217,6 +217,111 @@ class TestOptimizeFunction:
         body = (tac.Return(val=_const(0)),)
         fn = _function(body)
         assert optimize_function(fn, _NO_OPT).body == body
+
+
+# ---------------------------------------------------------------------------
+# optimize_function — unreachable-code elimination
+# ---------------------------------------------------------------------------
+
+_UCE_ONLY = Optimizations(
+    fold_constants=False,
+    propagate_copies=False,
+    eliminate_unreachable_code=True,
+    eliminate_dead_stores=False,
+)
+
+_CF_UCE = Optimizations(
+    fold_constants=True,
+    propagate_copies=False,
+    eliminate_unreachable_code=True,
+    eliminate_dead_stores=False,
+)
+
+
+class TestOptimizeFunctionUCE:
+    """Integration tests for the unreachable-code elimination pass via ``optimize_function``."""
+
+    def test_dead_block_after_unconditional_jump_removed_from_body(self) -> None:
+        """Instructions in a dead block are absent from the optimized function body."""
+        body = (
+            tac.Jump(target="end"),
+            tac.Label("dead"),
+            tac.Copy(src=_const(99), dst=_var("z")),
+            tac.Label("end"),
+            tac.Return(val=_const(0)),
+        )
+        result = optimize_function(_function(body), _UCE_ONLY)
+        instrs = result.body
+        assert tac.Copy(src=_const(99), dst=_var("z")) not in instrs
+        assert tac.Return(val=_const(0)) in instrs
+
+    def test_cascading_dead_blocks_removed_from_body(self) -> None:
+        """Blocks dead only because their sole predecessor is also dead are both removed."""
+        body = (
+            tac.Jump(target="end"),
+            tac.Label("dead1"),
+            tac.Jump(target="dead2"),
+            tac.Label("dead2"),
+            tac.Copy(src=_const(7), dst=_var("w")),
+            tac.Label("end"),
+            tac.Return(val=_const(0)),
+        )
+        result = optimize_function(_function(body), _UCE_ONLY)
+        instrs = result.body
+        assert tac.Label("dead1") not in instrs
+        assert tac.Label("dead2") not in instrs
+        assert tac.Copy(src=_const(7), dst=_var("w")) not in instrs
+
+    def test_both_conditional_branches_kept(self) -> None:
+        """A conditional jump keeps instructions from both the true and false branches."""
+        body = (
+            tac.Label("entry"),
+            tac.JumpIfZero(condition=_var("x"), target="zero"),
+            tac.Label("nonzero"),
+            tac.Return(val=_const(1)),
+            tac.Label("zero"),
+            tac.Return(val=_const(0)),
+        )
+        result = optimize_function(_function(body), _UCE_ONLY)
+        instrs = result.body
+        assert tac.Return(val=_const(1)) in instrs
+        assert tac.Return(val=_const(0)) in instrs
+
+    def test_no_dead_code_all_live_instructions_survive(self) -> None:
+        """A function with no unreachable blocks keeps all non-label instructions.
+
+        The fall-through-only label is stripped by phase 3, but the Copy and
+        Return survive unchanged.
+        """
+        body = (
+            tac.Copy(src=_const(1), dst=_var("x")),
+            tac.Label("done"),
+            tac.Return(val=_var("x")),
+        )
+        result = optimize_function(_function(body), _UCE_ONLY)
+        assert tac.Copy(src=_const(1), dst=_var("x")) in result.body
+        assert tac.Return(val=_var("x")) in result.body
+        assert tac.Label("done") not in result.body
+
+    def test_constant_folding_then_uce_removes_dead_branch(self) -> None:
+        """Constant folding resolves a conditional to unconditional; UCE removes the dead branch.
+
+        ``JumpIfNotZero(1, target="nonzero")`` folds to ``Jump("nonzero")``;
+        the fall-through block then has no predecessors and is eliminated.
+        """
+        body = (
+            tac.Label("entry"),
+            tac.JumpIfNotZero(condition=_const(1), target="nonzero"),
+            tac.Label("dead_branch"),
+            tac.Return(val=_const(0)),
+            tac.Label("nonzero"),
+            tac.Return(val=_const(1)),
+        )
+        result = optimize_function(_function(body), _CF_UCE)
+        instrs = result.body
+        assert tac.Label("dead_branch") not in instrs
+        assert tac.Return(val=_const(0)) not in instrs
+        assert tac.Return(val=_const(1)) in instrs
 
 
 # ---------------------------------------------------------------------------
