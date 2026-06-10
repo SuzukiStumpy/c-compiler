@@ -417,6 +417,42 @@ def _fold_conversion(instr: ti.Instruction, symbol_table: SymbolTable) -> ti.Ins
     return instr
 
 
+def _fold_copy(instr: ti.Copy, symbol_table: SymbolTable) -> ti.Instruction:
+    """Normalize the constant type in a ``Copy`` whose source is a constant.
+
+    When a same-size reinterpretation cast is emitted as a ``Copy`` (e.g. ``int``
+    to ``unsigned int``), the source constant retains the source type while the
+    destination variable has the target type.  This mismatch prevents copy
+    propagation from tracking the resulting copy (it rejects int→uint pairs due to
+    signedness differences).  Re-encoding the constant with the destination type
+    fixes that, so subsequent copy-propagation passes can propagate it normally.
+
+    Only same-size conversions are rewritten; widening or narrowing casts, and
+    copies to/from floating-point variables, are left unchanged.
+
+    Args:
+        instr: The ``Copy`` instruction whose source is a ``Constant``.
+        symbol_table: The program symbol table used to look up the destination type.
+
+    Returns:
+        A ``Copy`` with the constant re-encoded to the destination type, or
+        ``instr`` unchanged when no conversion is applicable.
+    """
+    if not isinstance(instr.src, Constant):
+        return instr
+    c = instr.src.value
+    dst_t = _dst_type(instr.dst, symbol_table)
+    if dst_t is None:
+        return instr
+    new_c = _const_of_type(dst_t, _val(c))
+    if new_c is None or new_c == c:
+        return instr
+    # Only rewrite for same-size reinterpretation (not widening/narrowing/float).
+    if _bit_width(c) == 0 or _bit_width(c) != _bit_width(new_c):
+        return instr
+    return ti.Copy(src=Constant(new_c), dst=instr.dst)
+
+
 def _fold_instruction(instr: ti.Instruction, symbol_table: SymbolTable) -> ti.Instruction | None:
     """Dispatch a single instruction to the appropriate folding handler.
 
@@ -445,6 +481,8 @@ def _fold_instruction(instr: ti.Instruction, symbol_table: SymbolTable) -> ti.In
             | ti.DoubleToUInt()
         ):
             return _fold_conversion(instr, symbol_table)
+        case ti.Copy():
+            return _fold_copy(instr, symbol_table)
     return instr
 
 

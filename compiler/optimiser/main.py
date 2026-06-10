@@ -53,7 +53,7 @@ def optimize_function(
             cfg = copy_propagation(cfg, symbol_table)
 
         if enabled_optimizations.eliminate_dead_stores:
-            cfg = dead_store_elimination(cfg)
+            cfg = dead_store_elimination(cfg, symbol_table)
 
         optimized_function = cfg_to_instructions(cfg)
 

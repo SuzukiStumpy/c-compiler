@@ -210,7 +210,9 @@ class TestOptimizeFunction:
         body = (tac.Copy(src=_const(1), dst=_var("x")), tac.Return(val=_var("x")))
         fn = _function(body)
         result = optimize_function(fn, _ALL_OPT)
-        expected = (tac.Copy(src=_const(1), dst=_var("x")), tac.Return(val=_const(1)))
+        # Copy propagation replaces x with const(1) in Return; DSE then removes
+        # the now-dead Copy since x is no longer read anywhere.
+        expected = (tac.Return(val=_const(1)),)
         assert result.body == expected
 
     def test_result_body_matches_input_body(self) -> None:
@@ -370,3 +372,206 @@ class TestDoOptimization:
         assert len(result.top_level) == 2
         assert isinstance(result.top_level[0], tac.Function)
         assert isinstance(result.top_level[1], tac.StaticVariable)
+
+
+# ---------------------------------------------------------------------------
+# optimize_function — constant folding: Copy type normalisation
+# ---------------------------------------------------------------------------
+
+_CF_CP_DSE = Optimizations(
+    fold_constants=True,
+    propagate_copies=True,
+    eliminate_unreachable_code=False,
+    eliminate_dead_stores=True,
+)
+
+
+class TestFoldCopyConstantNormalization:
+    """Tests for same-size reinterpretation ``Copy`` constant normalisation in CF.
+
+    When the TAC generator emits a same-size cast (e.g. ``int`` → ``unsigned int``)
+    as a ``Copy(ConstInt(-1), Var("u": UInt))``, the constant type mismatches the
+    destination type.  ``_fold_copy`` must rewrite the constant to match the
+    destination so that subsequent copy propagation can track and substitute it.
+    """
+
+    def test_int_to_uint_const_propagated_and_dead_copy_removed(self) -> None:
+        """``Copy(ConstInt(-1), u:UInt)`` normalises to ``ConstUInt``; CP propagates it; DSE drops the Copy.
+
+        Simulates ``unsigned int u = (unsigned int)(-1); return u;``.
+        Without normalisation, the signedness mismatch blocks CP and the Copy
+        survives in the output.
+        """
+        from compiler.syntax.ast.constants import ConstUInt
+        from compiler.syntax.ast.types import UIntType
+        from compiler.types.symbols import LocalAttr, SymbolTableEntry
+
+        sym: dict[str, SymbolTableEntry] = {
+            "u": SymbolTableEntry(t=UIntType(), attrs=LocalAttr()),
+        }
+        body = (
+            tac.Copy(src=tac.Constant(ast.ConstInt(-1)), dst=_var("u")),
+            tac.Return(val=_var("u")),
+        )
+        result = optimize_function(_function(body), _CF_CP_DSE, sym)
+        # Copy propagation must have replaced Var("u") with the normalised
+        # constant; DSE then removes the dead Copy.
+        assert result.body == (tac.Return(val=tac.Constant(ConstUInt(4294967295))),)
+
+    def test_long_to_ulong_const_propagated(self) -> None:
+        """``Copy(ConstLong(-1), u:ULong)`` normalises to ``ConstULong``; CP propagates it.
+
+        Simulates ``unsigned long u = (unsigned long)(-1L); return u;``.
+        """
+        from compiler.syntax.ast.constants import ConstULong
+        from compiler.syntax.ast.types import ULongType
+        from compiler.types.symbols import LocalAttr, SymbolTableEntry
+
+        sym: dict[str, SymbolTableEntry] = {
+            "u": SymbolTableEntry(t=ULongType(), attrs=LocalAttr()),
+        }
+        body = (
+            tac.Copy(src=tac.Constant(ast.ConstLong(-1)), dst=_var("u")),
+            tac.Return(val=_var("u")),
+        )
+        result = optimize_function(_function(body), _CF_CP_DSE, sym)
+        assert result.body == (tac.Return(val=tac.Constant(ConstULong(18446744073709551615))),)
+
+    def test_uint_to_int_negative_const_propagated(self) -> None:
+        """``Copy(ConstUInt(large), i:Int)`` normalises to ``ConstInt``; CP propagates it.
+
+        Simulates ``int i = (int)(0xFFFFFFFF); return i;``.
+        """
+        from compiler.syntax.ast.constants import ConstInt
+        from compiler.syntax.ast.types import IntType
+        from compiler.types.symbols import LocalAttr, SymbolTableEntry
+
+        sym: dict[str, SymbolTableEntry] = {
+            "i": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+        body = (
+            tac.Copy(src=tac.Constant(ast.ConstUInt(4294967295)), dst=_var("i")),
+            tac.Return(val=_var("i")),
+        )
+        result = optimize_function(_function(body), _CF_CP_DSE, sym)
+        assert result.body == (tac.Return(val=tac.Constant(ConstInt(-1))),)
+
+
+# ---------------------------------------------------------------------------
+# optimize_function — copy propagation: CopyFromOffset aggregate substitution
+# ---------------------------------------------------------------------------
+
+_CP_DSE = Optimizations(
+    fold_constants=False,
+    propagate_copies=True,
+    eliminate_unreachable_code=False,
+    eliminate_dead_stores=True,
+)
+
+_CP_ONLY = Optimizations(
+    fold_constants=False,
+    propagate_copies=True,
+    eliminate_unreachable_code=False,
+    eliminate_dead_stores=False,
+)
+
+
+class TestCopyFromOffsetPropagation:
+    """Tests for aggregate-copy bypass in ``CopyFromOffset`` rewriting.
+
+    After ``Copy(Var("loc"), Var("glob"))``, a ``CopyFromOffset("glob", n, dst)``
+    can be rewritten to ``CopyFromOffset("loc", n, dst)`` so that the read
+    bypasses the copy and references the original aggregate directly.
+    """
+
+    def test_copyfromoffset_src_replaced_after_aggregate_copy(self) -> None:
+        """``CopyFromOffset("glob", 4, x)`` rewrites to ``CopyFromOffset("loc", 4, x)`` after ``glob = loc``.
+
+        Simulates reading a struct field from a global that was just overwritten
+        from a local copy; the read should bypass the global and read from the local.
+        """
+        body = (
+            tac.Copy(src=_var("loc"), dst=_var("glob")),
+            tac.CopyFromOffset(src="glob", offset=4, dst=_var("x")),
+            tac.Return(val=_var("x")),
+        )
+        result = optimize_function(_function(body), _CP_DSE)
+        instrs = result.body
+        assert not any(isinstance(i, tac.CopyFromOffset) and i.src == "glob" for i in instrs), (
+            "CopyFromOffset should have been rewritten away from 'glob'"
+        )
+        assert any(isinstance(i, tac.CopyFromOffset) and i.src == "loc" for i in instrs), (
+            "CopyFromOffset should reference 'loc' after substitution"
+        )
+
+    def test_copyfromoffset_not_rewritten_without_aggregate_copy(self) -> None:
+        """``CopyFromOffset`` with no reaching aggregate copy is left unchanged."""
+        body = (
+            tac.CopyFromOffset(src="glob", offset=4, dst=_var("x")),
+            tac.Return(val=_var("x")),
+        )
+        result = optimize_function(_function(body), _CP_DSE)
+        assert any(isinstance(i, tac.CopyFromOffset) and i.src == "glob" for i in result.body)
+
+
+# ---------------------------------------------------------------------------
+# optimize_function — copy propagation: CopyToOffset kills aggregate copies
+# ---------------------------------------------------------------------------
+
+
+class TestCopyToOffsetKillsAggregateCopy:
+    """Tests for the ``CopyToOffset`` kill rule in reaching-copies analysis.
+
+    A partial write to an aggregate (``CopyToOffset``) must invalidate any
+    whole-aggregate copy that names that aggregate as src or dst.  Without
+    this kill rule, ``CopyFromOffset`` would be incorrectly substituted after
+    the aggregate is partially overwritten.
+    """
+
+    def test_copyfromoffset_not_substituted_after_copytooffset(self) -> None:
+        """``CopyFromOffset`` is not rewritten after a ``CopyToOffset`` invalidates the aggregate copy.
+
+        Sequence: ``my_struct = loc`` (whole copy) then ``my_struct.c = 100``
+        (partial overwrite).  A subsequent ``CopyFromOffset("my_struct", 0, x)``
+        must NOT be rewritten to ``"loc"`` because the aggregate is now stale.
+        """
+        body = (
+            tac.Copy(src=_var("loc"), dst=_var("my_struct")),
+            tac.CopyToOffset(src=_const(100), dst="my_struct", offset=8),
+            tac.CopyFromOffset(src="my_struct", offset=0, dst=_var("x")),
+            tac.Return(val=_var("x")),
+        )
+        result = optimize_function(_function(body), _CP_DSE)
+        instrs = result.body
+        assert not any(isinstance(i, tac.CopyFromOffset) and i.src == "loc" for i in instrs), (
+            "CopyFromOffset must not reference 'loc' after CopyToOffset invalidated the aggregate copy"
+        )
+        assert any(isinstance(i, tac.CopyFromOffset) and i.src == "my_struct" for i in instrs), (
+            "CopyFromOffset must still reference 'my_struct'"
+        )
+
+    def test_copyfromoffset_substituted_before_copytooffset(self) -> None:
+        """``CopyFromOffset`` before any ``CopyToOffset`` is correctly rewritten.
+
+        Sequence: ``my_struct = loc``, read field 0 (can substitute),
+        then ``my_struct.c = 100`` (kills copy), then read field 0 (cannot substitute).
+        The first read should reference 'loc'; the second should reference 'my_struct'.
+        """
+        body = (
+            tac.Copy(src=_var("loc"), dst=_var("my_struct")),
+            tac.CopyFromOffset(src="my_struct", offset=0, dst=_var("x")),
+            tac.CopyToOffset(src=_const(100), dst="my_struct", offset=8),
+            tac.CopyFromOffset(src="my_struct", offset=0, dst=_var("y")),
+            tac.Return(val=_var("y")),
+        )
+        # Use _CP_ONLY so DSE does not remove the dead CopyFromOffset(x) before we can assert.
+        result = optimize_function(_function(body), _CP_ONLY)
+        instrs = result.body
+        # First CopyFromOffset should have been substituted to "loc".
+        assert any(isinstance(i, tac.CopyFromOffset) and i.src == "loc" and i.dst == _var("x") for i in instrs), (
+            "First CopyFromOffset (before CopyToOffset) should reference 'loc'"
+        )
+        # Second CopyFromOffset must still reference "my_struct".
+        assert any(isinstance(i, tac.CopyFromOffset) and i.src == "my_struct" and i.dst == _var("y") for i in instrs), (
+            "Second CopyFromOffset (after CopyToOffset) must not have been substituted"
+        )

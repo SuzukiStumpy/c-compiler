@@ -352,6 +352,18 @@ def transfer(
             ):
                 current -= {c for c in current if c.src == dst or c.dst == dst}
 
+            case tac.CopyToOffset(dst=agg_name):
+                # A partial write to an aggregate invalidates any aggregate-level
+                # copy that treats the aggregate as a whole (e.g. Copy(loc, glob)
+                # becomes stale if glob.field is subsequently overwritten, so we
+                # can no longer substitute CopyFromOffset("glob", …) with "loc").
+                current -= {
+                    c
+                    for c in current
+                    if (isinstance(c.dst, tac.Var) and c.dst.value == agg_name)
+                    or (isinstance(c.src, tac.Var) and c.src.value == agg_name)
+                }
+
             case _:
                 pass
 
@@ -435,6 +447,14 @@ def _rewrite_secondary(instr: tac.Instruction, r: CopySet) -> tac.Instruction | 
             )
         case tac.CopyToOffset(src=src, dst=dst, offset=offset):
             return tac.CopyToOffset(src=_replace_operand(src, r), dst=dst, offset=offset)
+        case tac.CopyFromOffset(src=src_name, offset=offset, dst=dst):
+            # If the source aggregate is a copy of another aggregate variable,
+            # substitute the original aggregate name so that reads can bypass
+            # the copy (e.g. rewrite glob.b -> loc.b after glob = loc).
+            for copy in r:
+                if isinstance(copy.dst, tac.Var) and copy.dst.value == src_name and isinstance(copy.src, tac.Var):
+                    return tac.CopyFromOffset(src=copy.src.value, offset=offset, dst=dst)
+            return None
         case _:
             return None
 
