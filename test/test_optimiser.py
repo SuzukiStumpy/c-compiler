@@ -575,3 +575,26 @@ class TestCopyToOffsetKillsAggregateCopy:
         assert any(isinstance(i, tac.CopyFromOffset) and i.src == "my_struct" and i.dst == _var("y") for i in instrs), (
             "Second CopyFromOffset (after CopyToOffset) must not have been substituted"
         )
+
+    def test_copytooffset_kills_copy_where_aggregate_is_source(self) -> None:
+        """``CopyToOffset`` on ``my_struct`` also kills ``Copy(my_struct, other)``.
+
+        If ``my_struct`` is the *source* of a whole-aggregate copy, a subsequent
+        partial write to ``my_struct`` makes that copy stale.  A later
+        ``CopyFromOffset("other", 0, y)`` must NOT be rewritten to ``"my_struct"``
+        because ``my_struct`` no longer equals ``other``.
+        """
+        body = (
+            tac.Copy(src=_var("my_struct"), dst=_var("other")),
+            tac.CopyToOffset(src=_const(100), dst="my_struct", offset=8),
+            tac.CopyFromOffset(src="other", offset=0, dst=_var("y")),
+            tac.Return(val=_var("y")),
+        )
+        result = optimize_function(_function(body), _CP_ONLY)
+        instrs = result.body
+        assert not any(isinstance(i, tac.CopyFromOffset) and i.src == "my_struct" for i in instrs), (
+            "CopyFromOffset must not reference 'my_struct' after CopyToOffset invalidated Copy(my_struct, other)"
+        )
+        assert any(isinstance(i, tac.CopyFromOffset) and i.src == "other" for i in instrs), (
+            "CopyFromOffset must still reference 'other'"
+        )
