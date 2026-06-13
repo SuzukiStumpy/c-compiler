@@ -611,7 +611,9 @@ class AsmAdapter:
             case asm.Pop(target=reg):
                 return _def_nodes(reg)
             case asm.Call() | asm.IndirectCall():
-                return set(_CALLER_SAVED_GP) | set(_CALLER_SAVED_FP)
+                gp_clobbers: set[GraphNode] = set(_CALLER_SAVED_GP)
+                fp_clobbers: set[GraphNode] = set(_CALLER_SAVED_FP)
+                return gp_clobbers | fp_clobbers
             case asm.Cvttsd2si(dst=dst) | asm.Cvtsi2sd(dst=dst):
                 return _def_nodes(dst)
             case asm.Lea(dst=dst):

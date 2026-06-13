@@ -372,13 +372,13 @@ def find_used_and_updated(
         case asm.Cvttsd2si(src=src, dst=dst) | asm.Cvtsi2sd(src=src, dst=dst):
             return ([src], [dst])
         case asm.Call(name=name):
-            clobbers = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
+            clobbers: list[asm.Operand] = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
             return (_call_param_regs(name, symbol_table, struct_type_table), clobbers)
         case asm.IndirectCall(target=target):
             # No name → conservative: all GP and FP arg regs used; target (fn ptr) also used.
             used: list[asm.Operand] = [target, *(_hw(r) for r in _GP_ARG_REGS), *(_hw(r) for r in _FP_ARG_REGS)]
-            clobbers = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
-            return (used, clobbers)
+            clobbers2: list[asm.Operand] = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
+            return (used, clobbers2)
         case _:
             return ([], [])
 
@@ -1001,11 +1001,11 @@ def _replace_in_instr(
             )
         case asm.Binary(src1=s1, src2=s2, dst=dst, assembly_type=at):
             w = _asm_type_to_width(at)
-            return dataclasses.replace(  # type: ignore[arg-type]
+            return dataclasses.replace(
                 instr,
                 src1=_resolve_op(s1, reg_map, w),
                 src2=_resolve_op(s2, reg_map, w),
-                dst=_resolve_op(dst, reg_map, w),
+                dst=cast(asm.Register, _resolve_op(dst, reg_map, w)),
             )
         case asm.Unary(operand=op, assembly_type=at):
             return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
@@ -1142,11 +1142,11 @@ def allocate_registers(
     rewritten = replace_pseudoregs(instructions, {**gp_map, **fp_map})
 
     gp_callee_used: list[GPRegisters] = sorted(
-        {reg for reg in gp_map.values() if reg in _GP_CALLEE_SAVED},
+        {reg for reg in gp_map.values() if reg in _GP_CALLEE_SAVED and isinstance(reg, GPRegisters)},
         key=lambda r: list(GPRegisters).index(r),
     )
     fp_callee_used: list[FPRegisters] = sorted(
-        {reg for reg in fp_map.values() if reg in _FP_CALLEE_SAVED},
+        {reg for reg in fp_map.values() if reg in _FP_CALLEE_SAVED and isinstance(reg, FPRegisters)},
         key=lambda r: list(FPRegisters).index(r),
     )
     return rewritten, gp_callee_used, fp_callee_used

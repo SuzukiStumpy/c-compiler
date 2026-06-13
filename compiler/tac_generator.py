@@ -655,6 +655,8 @@ class _TacGenerator:
                             *inner_instrs,
                             tac.AddPtr(ptr=ptr, index=tac.Constant(ast.ConstLong(offset)), scale=1, dst=dst_ptr),
                         ]
+                    case _:
+                        raise CodeGenerationError(f"unexpected abstract object type in Dot: {type(inner_obj).__name__}")
             case ast.Arrow(pointer=pointer, member=member):
                 assert isinstance(pointer.exp_type, ast.Pointer)
                 assert isinstance(pointer.exp_type.referenced, (ast.Structure, ast.Union))
@@ -922,6 +924,7 @@ class _TacGenerator:
             CodeGenerationError: If any block item in the body cannot be translated.
         """
         self._function_name = function.name
+        assert function.body is not None
         instructions = self.translate_block(function.body)
         # Guard return for functions that don't supply a return value; omit if
         # the last emitted instruction is already a Return.
@@ -1228,6 +1231,7 @@ class _TacGenerator:
             case ast.Return(exp=None):
                 return [tac.Return()]
             case ast.Return(exp=exp):
+                assert exp is not None
                 val, extra = self.translate_exp(exp)
                 return [*extra, tac.Return(val=val)]
             case ast.Expression(exp=exp):
@@ -1245,6 +1249,7 @@ class _TacGenerator:
                     label_end,
                 ]
             case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
+                assert else_stmt is not None
                 cond_val, cond_instrs = self.translate_exp(cond)
                 label_else = self._make_label("if_else")
                 label_end = self._make_label("if_end")

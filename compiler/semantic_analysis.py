@@ -1963,8 +1963,14 @@ class SemanticAnalyser:
                     bin_type = typed_left.exp_type
                 else:
                     if either_is_ptr:
-                        if (left_is_ptr and isinstance(typed_left.exp_type.referenced, FunType)) or (
-                            right_is_ptr and isinstance(typed_right.exp_type.referenced, FunType)
+                        if (
+                            left_is_ptr
+                            and isinstance(typed_left.exp_type, Pointer)
+                            and isinstance(typed_left.exp_type.referenced, FunType)
+                        ) or (
+                            right_is_ptr
+                            and isinstance(typed_right.exp_type, Pointer)
+                            and isinstance(typed_right.exp_type.referenced, FunType)
                         ):
                             raise SemanticError("Cannot perform arithmetic on a function pointer type.")
                         tbl = self._struct_type_table
@@ -2045,6 +2051,7 @@ class SemanticAnalyser:
                     raise SemanticError("Invalid type for compound assignment target.")
                 typed_rv = self._typecheck_and_convert(rvalue)
                 lv_type = typed_lv.exp_type
+                assert lv_type is not None
                 if isinstance(lv_type, Pointer) and isinstance(op, (ast.Add, ast.Subtract)):
                     if isinstance(typed_rv.exp_type, Pointer):
                         raise SemanticError("Cannot add or subtract two pointers via compound assignment.")
@@ -2064,12 +2071,14 @@ class SemanticAnalyser:
                 elif isinstance(op, (ast.Remainder, ast.BitwiseAnd, ast.BitwiseOr, ast.BitwiseXor)):
                     if not is_integer(lv_type) or not is_integer(typed_rv.exp_type):
                         raise SemanticError("Operator requires integer operands.")
+                    assert typed_rv.exp_type is not None
                     common = get_common_type(lv_type, typed_rv.exp_type)
                     if typed_rv.exp_type != common:
                         typed_rv = ast.Cast(common, typed_rv, exp_type=common)
                 else:
                     if not is_arithmetic(lv_type) or not is_arithmetic(typed_rv.exp_type):
                         raise SemanticError("Operator requires arithmetic operands.")
+                    assert typed_rv.exp_type is not None
                     common = get_common_type(lv_type, typed_rv.exp_type)
                     if typed_rv.exp_type != common:
                         typed_rv = ast.Cast(common, typed_rv, exp_type=common)
@@ -2656,6 +2665,7 @@ class SemanticAnalyser:
             case ast.If(condition=cond, then=then_stmt, else_=None):
                 return ast.If(self._resolve_condition(cond), self._resolve_statement(then_stmt), None)
             case ast.If(condition=cond, then=then_stmt, else_=else_stmt):
+                assert else_stmt is not None
                 return ast.If(
                     self._resolve_condition(cond),
                     self._resolve_statement(then_stmt),
@@ -2719,7 +2729,7 @@ class SemanticAnalyser:
                 if not self._switch_stack:
                     raise SemanticError("'case' label not within a switch statement.")
                 raw_const = value.value
-                raw_int = raw_const.val if hasattr(raw_const, "val") else int(raw_const)
+                raw_int = int(raw_const.val)
                 truncated = _truncate_case_value(raw_int, self._switch_type_stack[-1])
                 if truncated in self._case_values_stack[-1]:
                     raise SemanticError(f"Duplicate case value {raw_int} in switch statement.")

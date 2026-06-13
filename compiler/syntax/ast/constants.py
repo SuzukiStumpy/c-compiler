@@ -1,12 +1,17 @@
 """Represent various constant types within the AST"""
 
 import struct
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
 class Const(ABC):
     """Abstract base class for all constant AST nodes."""
+
+    @property
+    @abstractmethod
+    def val(self) -> int | float:
+        """The numeric value of this constant."""
 
 
 @dataclass(frozen=True, slots=True)
