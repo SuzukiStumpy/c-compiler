@@ -16,6 +16,7 @@ from compiler.syntax.asm import (
     CondCodes,
     DeallocateStack,
     Function,
+    GPRegisters,
     Imm,
     Instruction,
     Jmp,
@@ -31,7 +32,6 @@ from compiler.syntax.asm import (
     Push,
     Quadword,
     Register,
-    Registers,
     Ret,
     SetCC,
     StaticConstant,
@@ -72,35 +72,35 @@ class TestImm:
 
 
 class TestRegister:
-    """``Register`` wraps a ``Registers`` enum value and an optional ``Width``."""
+    """``Register`` wraps a ``GPRegisters`` enum value and an optional ``Width``."""
 
     def test_construction(self) -> None:
         """``Register`` can be constructed with just a register name."""
-        Register(Registers.AX)
+        Register(GPRegisters.AX)
 
     def test_is_operand(self) -> None:
         """``Register`` is a subclass of ``Operand``."""
-        assert isinstance(Register(Registers.AX), Operand)
+        assert isinstance(Register(GPRegisters.AX), Operand)
 
     def test_equality(self) -> None:
         """Two ``Register`` instances with the same reg and default width are equal."""
-        assert Register(Registers.AX) == Register(Registers.AX)
+        assert Register(GPRegisters.AX) == Register(GPRegisters.AX)
 
     def test_not_equal_to_imm(self) -> None:
         """``Register`` is not equal to an ``Imm`` node."""
-        assert Register(Registers.AX) != Imm(value=0)
+        assert Register(GPRegisters.AX) != Imm(value=0)
 
     def test_default_width_is_dword(self) -> None:
         """The default width for a ``Register`` is ``Width.DWORD``."""
-        assert Register(Registers.AX).width == Width.DWORD
+        assert Register(GPRegisters.AX).width == Width.DWORD
 
     def test_explicit_byte_width(self) -> None:
         """``Register`` can be constructed with ``Width.BYTE``."""
-        assert Register(Registers.AX, Width.BYTE).width == Width.BYTE
+        assert Register(GPRegisters.AX, Width.BYTE).width == Width.BYTE
 
     def test_different_widths_not_equal(self) -> None:
         """``Register`` nodes for the same logical register at different widths are not equal."""
-        assert Register(Registers.AX, Width.DWORD) != Register(Registers.AX, Width.BYTE)
+        assert Register(GPRegisters.AX, Width.DWORD) != Register(GPRegisters.AX, Width.BYTE)
 
 
 # ---------------------------------------------------------------------------
@@ -113,25 +113,29 @@ class TestMov:
 
     def test_construction(self) -> None:
         """``Mov`` stores its source and destination operands."""
-        mov = Mov(src=Imm(value=3), dst=Register(Registers.AX))
+        mov = Mov(src=Imm(value=3), dst=Register(GPRegisters.AX))
         assert mov.src == Imm(value=3)
-        assert mov.dst == Register(Registers.AX)
+        assert mov.dst == Register(GPRegisters.AX)
 
     def test_is_instruction(self) -> None:
         """``Mov`` is a subclass of ``Instruction``."""
-        assert isinstance(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Instruction)
+        assert isinstance(Mov(src=Imm(value=0), dst=Register(GPRegisters.AX)), Instruction)
 
     def test_equality(self) -> None:
         """Two ``Mov`` nodes with identical operands are equal."""
-        assert Mov(src=Imm(value=1), dst=Register(Registers.AX)) == Mov(src=Imm(value=1), dst=Register(Registers.AX))
+        assert Mov(src=Imm(value=1), dst=Register(GPRegisters.AX)) == Mov(
+            src=Imm(value=1), dst=Register(GPRegisters.AX)
+        )
 
     def test_inequality_different_src(self) -> None:
         """``Mov`` nodes with different source operands are not equal."""
-        assert Mov(src=Imm(value=1), dst=Register(Registers.AX)) != Mov(src=Imm(value=2), dst=Register(Registers.AX))
+        assert Mov(src=Imm(value=1), dst=Register(GPRegisters.AX)) != Mov(
+            src=Imm(value=2), dst=Register(GPRegisters.AX)
+        )
 
     def test_immutable(self) -> None:
         """``Mov`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
-        mov = Mov(src=Imm(value=0), dst=Register(Registers.AX))
+        mov = Mov(src=Imm(value=0), dst=Register(GPRegisters.AX))
         with pytest.raises(dataclasses.FrozenInstanceError):
             mov.src = Imm(value=99)  # type: ignore[misc]
 
@@ -153,7 +157,7 @@ class TestRet:
 
     def test_not_equal_to_mov(self) -> None:
         """``Ret`` is not equal to a ``Mov`` node."""
-        assert Ret() != Mov(src=Imm(value=0), dst=Register(Registers.AX))
+        assert Ret() != Mov(src=Imm(value=0), dst=Register(GPRegisters.AX))
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +170,9 @@ class TestFunction:
 
     def test_construction(self) -> None:
         """``Function`` stores its name and instruction tuple."""
-        fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+        fn = Function(
+            name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(GPRegisters.AX)), Ret())
+        )
         assert fn.name == "main"
         assert len(fn.instructions) == 2
 
@@ -217,7 +223,9 @@ class TestFunction:
 
     def test_existing_tests_unaffected_without_source_file(self) -> None:
         """Existing callers that omit ``source_file`` get the same output as before."""
-        fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+        fn = Function(
+            name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(GPRegisters.AX)), Ret())
+        )
         expected = (
             "      .globl main\n"
             "      .text\n"
@@ -263,25 +271,29 @@ class TestCmp:
 
     def test_construction(self) -> None:
         """``Cmp`` stores its two operands."""
-        cmp = Cmp(op1=Imm(value=1), op2=Register(Registers.AX))
+        cmp = Cmp(op1=Imm(value=1), op2=Register(GPRegisters.AX))
         assert cmp.op1 == Imm(value=1)
-        assert cmp.op2 == Register(Registers.AX)
+        assert cmp.op2 == Register(GPRegisters.AX)
 
     def test_is_instruction(self) -> None:
         """``Cmp`` is a subclass of ``Instruction``."""
-        assert isinstance(Cmp(op1=Imm(value=0), op2=Register(Registers.AX)), Instruction)
+        assert isinstance(Cmp(op1=Imm(value=0), op2=Register(GPRegisters.AX)), Instruction)
 
     def test_equality(self) -> None:
         """Two ``Cmp`` nodes with identical operands are equal."""
-        assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)) == Cmp(op1=Imm(value=1), op2=Register(Registers.AX))
+        assert Cmp(op1=Imm(value=1), op2=Register(GPRegisters.AX)) == Cmp(
+            op1=Imm(value=1), op2=Register(GPRegisters.AX)
+        )
 
     def test_inequality_different_op1(self) -> None:
         """``Cmp`` nodes with different ``op1`` values are not equal."""
-        assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)) != Cmp(op1=Imm(value=2), op2=Register(Registers.AX))
+        assert Cmp(op1=Imm(value=1), op2=Register(GPRegisters.AX)) != Cmp(
+            op1=Imm(value=2), op2=Register(GPRegisters.AX)
+        )
 
     def test_immutable(self) -> None:
         """``Cmp`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
-        cmp = Cmp(op1=Imm(value=0), op2=Register(Registers.AX))
+        cmp = Cmp(op1=Imm(value=0), op2=Register(GPRegisters.AX))
         with pytest.raises(dataclasses.FrozenInstanceError):
             cmp.op1 = Imm(value=99)  # type: ignore[misc]
 
@@ -337,25 +349,25 @@ class TestSetCC:
 
     def test_construction(self) -> None:
         """``SetCC`` stores its condition code and operand."""
-        s = SetCC(cond_code=CondCodes.GE, operand=Register(Registers.AX, Width.BYTE))
+        s = SetCC(cond_code=CondCodes.GE, operand=Register(GPRegisters.AX, Width.BYTE))
         assert s.cond_code == CondCodes.GE
-        assert s.operand == Register(Registers.AX, Width.BYTE)
+        assert s.operand == Register(GPRegisters.AX, Width.BYTE)
 
     def test_is_instruction(self) -> None:
         """``SetCC`` is a subclass of ``Instruction``."""
         assert isinstance(
-            SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)),
+            SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-4)),
             Instruction,
         )
 
     def test_equality(self) -> None:
         """Two ``SetCC`` nodes with the same code and operand are equal."""
-        op = Register(Registers.AX, Width.BYTE)
+        op = Register(GPRegisters.AX, Width.BYTE)
         assert SetCC(cond_code=CondCodes.E, operand=op) == SetCC(cond_code=CondCodes.E, operand=op)
 
     def test_inequality_different_cond_code(self) -> None:
         """``SetCC`` nodes with different condition codes are not equal."""
-        op = Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)
+        op = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-4)
         assert SetCC(cond_code=CondCodes.E, operand=op) != SetCC(cond_code=CondCodes.NE, operand=op)
 
 
@@ -438,8 +450,8 @@ class TestPush:
 
     def test_construction(self) -> None:
         """``Push`` stores the operand to push."""
-        p = Push(operand=Register(Registers.AX, Width.QWORD))
-        assert p.operand == Register(Registers.AX, Width.QWORD)
+        p = Push(operand=Register(GPRegisters.AX, Width.QWORD))
+        assert p.operand == Register(GPRegisters.AX, Width.QWORD)
 
     def test_is_instruction(self) -> None:
         """``Push`` is a subclass of ``Instruction``."""
@@ -490,12 +502,12 @@ class TestCall:
 # Byte-width instruction emit
 # ---------------------------------------------------------------------------
 
-_AX_BYTE = Register(Registers.AX, Width.BYTE)
-_AX_DWORD = Register(Registers.AX, Width.DWORD)
-_AX_QWORD = Register(Registers.AX, Width.QWORD)
-_R10_BYTE = Register(Registers.R10, Width.BYTE)
-_R10_DWORD = Register(Registers.R10, Width.DWORD)
-_R10_QWORD = Register(Registers.R10, Width.QWORD)
+_AX_BYTE = Register(GPRegisters.AX, Width.BYTE)
+_AX_DWORD = Register(GPRegisters.AX, Width.DWORD)
+_AX_QWORD = Register(GPRegisters.AX, Width.QWORD)
+_R10_BYTE = Register(GPRegisters.R10, Width.BYTE)
+_R10_DWORD = Register(GPRegisters.R10, Width.DWORD)
+_R10_QWORD = Register(GPRegisters.R10, Width.QWORD)
 
 
 class TestMovByteEmit:

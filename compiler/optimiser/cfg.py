@@ -7,8 +7,7 @@ original TAC function exactly.
 
 Instruction-set-specific knowledge (how to detect labels, returns, and jumps)
 is isolated behind the ``CfgAdapter[I]`` protocol.  ``TacAdapter`` implements
-it for TAC instructions; a future ``AsmAdapter`` would implement it for the
-assembly AST without touching this module.
+it for TAC instructions; ``AsmAdapter`` implements it for the assembly AST.
 
 Each ``BasicBlock`` carries a ``successors`` list populated by ``add_all_edges``,
 which is called automatically by ``make_cfg`` and ``make_control_flow_graph``.
@@ -20,7 +19,18 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Final, Generic, Protocol, TypeAlias, TypeVar
 
+import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
+from compiler.syntax.asm.operands import (
+    ALLOCATABLE_FP,
+    ALLOCATABLE_GP,
+    FPRegisters,
+    GPRegisters,
+    Indexed,
+    Memory,
+    Pseudo,
+    Register,
+)
 
 # ---------------------------------------------------------------------------
 # Graph node identifiers
@@ -306,12 +316,17 @@ def make_cfg(
             current_instrs = [instr]
         else:
             current_instrs.append(instr)
-            # Close the block after a conditional jump so that each block has
-            # exactly one exit.  This prevents instructions on the fall-through
-            # path from appearing to reach the jump target, which would make
-            # the block exit set imprecise for copy-propagation and similar
-            # forward dataflow analyses.
-            if adapter.conditional_jump_target(instr) is not None:
+            # Close the block after any terminator (return, unconditional jump,
+            # or conditional jump) so that each block has exactly one exit and
+            # dead instructions after a return/jump are isolated in their own
+            # unreachable blocks.  This prevents spurious liveness propagation
+            # from dead code (e.g. Ret(); Jmp(end)) that would otherwise poison
+            # the live sets of all predecessor blocks.
+            if (
+                adapter.is_return(instr)
+                or adapter.jump_target(instr) is not None
+                or adapter.conditional_jump_target(instr) is not None
+            ):
                 blocks.append(BasicBlock(label=current_label, instructions=current_instrs))
                 current_label = None
                 current_instrs = []
@@ -377,9 +392,11 @@ def add_all_edges(cfg: ControlFlowGraph[_I], adapter: CfgAdapter[_I]) -> None:
         if adapter.is_return(last):
             block.successors.append(EXIT)
         elif (target := adapter.jump_target(last)) is not None:
-            block.successors.append(label_index[target])
+            dest = label_index.get(target)
+            block.successors.append(dest if dest is not None else EXIT)
         elif (target := adapter.conditional_jump_target(last)) is not None:
-            block.successors.append(label_index[target])
+            dest = label_index.get(target)
+            block.successors.append(dest if dest is not None else EXIT)
             block.successors.append(fallthrough)
         else:
             block.successors.append(fallthrough)
@@ -438,4 +455,242 @@ def cfg_to_instructions(cfg: ControlFlowGraph[tac.Instruction]) -> tac.Function:
         body=tuple(instructions),
         source_file=cfg.source_file,
         source_line=cfg.source_line,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assembly CFG support
+# ---------------------------------------------------------------------------
+
+GraphNode: TypeAlias = str | GPRegisters | FPRegisters
+"""A node in an interference graph: a pseudo-register name or a hardware register."""
+
+# Caller-saved registers that are clobbered by any call instruction.
+# SP, BP, R10, R11 are excluded (not in the allocatable sets).
+_CALLER_SAVED_GP: frozenset[GPRegisters] = frozenset(
+    {
+        GPRegisters.AX,
+        GPRegisters.CX,
+        GPRegisters.DX,
+        GPRegisters.DI,
+        GPRegisters.SI,
+        GPRegisters.R8,
+        GPRegisters.R9,
+    }
+)
+_CALLER_SAVED_FP: frozenset[FPRegisters] = ALLOCATABLE_FP
+
+
+def _def_nodes(operand: asm.Operand) -> set[GraphNode]:
+    """Return the interference-graph node(s) *defined* by writing to ``operand``.
+
+    Only direct register destinations count as definitions; a ``Memory``
+    destination writes to memory through a register but does not redefine
+    that register.
+
+    Args:
+        operand: The destination operand of an assembly instruction.
+
+    Returns:
+        A set containing the single pseudo name (for ``Pseudo``) or hardware
+        register (for an allocatable ``Register``), or the empty set otherwise.
+    """
+    if isinstance(operand, Pseudo):
+        return {operand.name}
+    if isinstance(operand, Register) and (operand.reg in ALLOCATABLE_GP or operand.reg in ALLOCATABLE_FP):
+        return {operand.reg}
+    return set()
+
+
+def _use_nodes(operand: asm.Operand) -> set[GraphNode]:
+    """Return the interference-graph node(s) *used* by reading ``operand``.
+
+    Unlike ``_def_nodes``, ``Memory`` and ``Indexed`` operands contribute the
+    base/index register(s) as uses, since those registers must be live to
+    perform the address calculation.
+
+    Args:
+        operand: The source operand of an assembly instruction.
+
+    Returns:
+        A set of pseudo names and/or hardware registers read by this operand.
+    """
+    if isinstance(operand, Pseudo):
+        return {operand.name}
+    if isinstance(operand, Register) and (operand.reg in ALLOCATABLE_GP or operand.reg in ALLOCATABLE_FP):
+        return {operand.reg}
+    if isinstance(operand, Memory):
+        return _use_nodes(operand.reg)
+    if isinstance(operand, Indexed):
+        return _use_nodes(operand.base) | _use_nodes(operand.index)
+    return set()
+
+
+class AsmAdapter:
+    """``CfgAdapter`` implementation for assembly instructions.
+
+    Recognises ``asm.Label``, ``asm.Ret``, ``asm.Jmp``, and ``asm.JmpCC``
+    for CFG construction, and additionally provides ``defs`` / ``uses``
+    methods that return interference-graph nodes for liveness analysis.
+    """
+
+    def label_name(self, instr: asm.Instruction) -> str | None:
+        """Return the label name when *instr* is an ``asm.Label``, else ``None``.
+
+        Args:
+            instr: The assembly instruction to inspect.
+
+        Returns:
+            The label name string, or ``None``.
+        """
+        return instr.name if isinstance(instr, asm.Label) else None
+
+    def is_return(self, instr: asm.Instruction) -> bool:
+        """Return ``True`` when *instr* is an ``asm.Ret``.
+
+        Args:
+            instr: The assembly instruction to inspect.
+
+        Returns:
+            ``True`` if *instr* is a ``Ret``.
+        """
+        return isinstance(instr, asm.Ret)
+
+    def jump_target(self, instr: asm.Instruction) -> str | None:
+        """Return the target label when *instr* is an unconditional ``asm.Jmp``, else ``None``.
+
+        Args:
+            instr: The assembly instruction to inspect.
+
+        Returns:
+            The ``label`` field of a ``Jmp``, or ``None``.
+        """
+        return instr.label if isinstance(instr, asm.Jmp) else None
+
+    def conditional_jump_target(self, instr: asm.Instruction) -> str | None:
+        """Return the target label when *instr* is an ``asm.JmpCC``, else ``None``.
+
+        Args:
+            instr: The assembly instruction to inspect.
+
+        Returns:
+            The ``label`` field of a ``JmpCC``, or ``None``.
+        """
+        return instr.label if isinstance(instr, asm.JmpCC) else None
+
+    def defs(self, instr: asm.Instruction) -> set[GraphNode]:
+        """Return the set of interference-graph nodes *defined* by ``instr``.
+
+        Covers all instruction forms that write to a register or pseudo-register,
+        including the implicit clobbers of ``Call``/``IndirectCall`` (caller-saved
+        registers) and ``Idiv``/``Div``/``Cdq`` (AX/DX).
+
+        Args:
+            instr: The assembly instruction to analyse.
+
+        Returns:
+            A set of ``GraphNode`` values written by the instruction.
+        """
+        match instr:
+            case asm.Mov(dst=dst):
+                return _def_nodes(dst)
+            case asm.Movsx(dst=dst) | asm.MoveZeroExtend(dst=dst):
+                return _def_nodes(dst)
+            case asm.Unary(operand=op):
+                return _def_nodes(op)
+            case asm.Binary(dst=dst):
+                return _def_nodes(dst)
+            case asm.SetCC(operand=op):
+                return _def_nodes(op)
+            case asm.Shl(operand=op) | asm.Sar(operand=op) | asm.Shr(operand=op):
+                return _def_nodes(op)
+            case asm.Idiv() | asm.Div():
+                return {GPRegisters.AX, GPRegisters.DX}
+            case asm.Cdq():
+                return {GPRegisters.DX}
+            case asm.Pop(target=reg):
+                return _def_nodes(reg)
+            case asm.Call() | asm.IndirectCall():
+                return set(_CALLER_SAVED_GP) | set(_CALLER_SAVED_FP)
+            case asm.Cvttsd2si(dst=dst) | asm.Cvtsi2sd(dst=dst):
+                return _def_nodes(dst)
+            case asm.Lea(dst=dst):
+                return _def_nodes(dst)
+            case _:
+                return set()
+
+    def uses(self, instr: asm.Instruction) -> set[GraphNode]:
+        """Return the set of interference-graph nodes *used* by ``instr``.
+
+        Covers all instruction forms that read from a register or pseudo-register,
+        including implicit uses such as ``Cdq`` (reads AX) and shift instructions
+        (read CX for the count).
+
+        ``Ret`` returns an empty set here — the return-value register(s) that are
+        live at exit are injected by ``_meet`` via ``exit_live``, not by treating
+        ``Ret`` itself as a user of AX/XMM0.  This avoids spuriously propagating
+        the conservative ``{AX, XMM0}`` set through all predecessors of every
+        return block when the function's actual return type only needs one of them.
+
+        Args:
+            instr: The assembly instruction to analyse.
+
+        Returns:
+            A set of ``GraphNode`` values read by the instruction.
+        """
+        match instr:
+            case asm.Mov(src=src):
+                return _use_nodes(src)
+            case asm.Movsx(src=src) | asm.MoveZeroExtend(src=src):
+                return _use_nodes(src)
+            case asm.Unary(operand=op):
+                return _use_nodes(op)
+            case asm.Binary(src1=s1, src2=s2):
+                return _use_nodes(s1) | _use_nodes(s2)
+            case asm.Cmp(op1=o1, op2=o2):
+                return _use_nodes(o1) | _use_nodes(o2)
+            case asm.Idiv(operand=op) | asm.Div(operand=op):
+                return _use_nodes(op) | {GPRegisters.AX, GPRegisters.DX}
+            case asm.Cdq():
+                return {GPRegisters.AX}
+            case asm.Shl(operand=op) | asm.Sar(operand=op) | asm.Shr(operand=op):
+                return _use_nodes(op) | {GPRegisters.CX}
+            case asm.Push(operand=op):
+                return _use_nodes(op)
+            case asm.IndirectCall(target=tgt):
+                return _use_nodes(tgt)
+            case asm.Cvttsd2si(src=src) | asm.Cvtsi2sd(src=src):
+                return _use_nodes(src)
+            case asm.Lea(src=src):
+                return _use_nodes(src)
+            case _:
+                return set()
+
+
+ASM_ADAPTER: Final = AsmAdapter()
+"""Singleton ``AsmAdapter`` for use with assembly-based CFGs."""
+
+
+def make_asm_control_flow_graph(function: asm.Function) -> ControlFlowGraph[asm.Instruction]:
+    """Decompose an assembly function into a control-flow graph of basic blocks.
+
+    Convenience wrapper around ``make_cfg`` that uses ``ASM_ADAPTER`` and
+    extracts the relevant fields from *function*.  Successor edges are wired
+    up before returning.
+
+    Args:
+        function: The assembly function to decompose.
+
+    Returns:
+        A ``ControlFlowGraph[asm.Instruction]`` whose blocks, flattened in
+        order, reproduce the original instruction stream exactly.
+    """
+    return make_cfg(
+        name=function.name,
+        globl=function.globl,
+        params=function.params,
+        body=function.instructions,
+        source_file=function.source_file,
+        source_line=function.source_line,
+        adapter=ASM_ADAPTER,
     )

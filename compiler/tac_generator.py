@@ -1060,30 +1060,55 @@ class _TacGenerator:
                 val, elem_instrs = self.translate_exp(e)
                 instructions.extend(elem_instrs)
                 instructions.append(tac.CopyToOffset(src=val, dst=var_name, offset=byte_offset))
-            case (
-                ast.CompoundInit(initializers=sub_inits, init_type=ast.Structure(tag=tag))
-                | ast.CompoundInit(initializers=sub_inits, init_type=ast.Union(tag=tag))
-            ):
+            case ast.CompoundInit(initializers=sub_inits, init_type=ast.Structure(tag=tag)):
                 entry = self._struct_type_table.get(tag)
                 if entry is None:
                     raise CodeGenerationError(f"unknown aggregate tag '{tag}' in initializer")
-                # Zero-fill the entire struct/union region first so padding bytes are 0.
-                remaining = entry.size
-                fill_off = byte_offset
-                while remaining > 0:
-                    if remaining >= 8:
-                        zero: ast.Const = ast.ConstLong(0)
-                        chunk = 8
-                    elif remaining >= 4:
-                        zero = ast.ConstInt(0)
-                        chunk = 4
-                    else:
-                        zero = ast.ConstChar(0)
-                        chunk = 1
-                    instructions.append(tac.CopyToOffset(src=tac.Constant(zero), dst=var_name, offset=fill_off))
-                    fill_off += chunk
-                    remaining -= chunk
-                # Write member values on top using each member's precise byte offset. ❷
+                # Zero-fill only when some members are missing (C11 §6.7.9p21 requires implicit
+                # zero-init for omitted members).  Padding bytes between/after explicitly-provided
+                # members are "unspecified" per C11 §6.2.6.1p6 and do not need to be zeroed.
+                if len(sub_inits) < len(entry.members):
+                    remaining = entry.size
+                    fill_off = byte_offset
+                    while remaining > 0:
+                        if remaining >= 8:
+                            zero: ast.Const = ast.ConstLong(0)
+                            chunk = 8
+                        elif remaining >= 4:
+                            zero = ast.ConstInt(0)
+                            chunk = 4
+                        else:
+                            zero = ast.ConstChar(0)
+                            chunk = 1
+                        instructions.append(tac.CopyToOffset(src=tac.Constant(zero), dst=var_name, offset=fill_off))
+                        fill_off += chunk
+                        remaining -= chunk
+                for sub_init, member in zip(sub_inits, entry.members):
+                    self._emit_copy_to_offset(var_name, byte_offset + member.offset, sub_init, instructions)
+            case ast.CompoundInit(initializers=sub_inits, init_type=ast.Union(tag=tag)):
+                entry = self._struct_type_table.get(tag)
+                if entry is None:
+                    raise CodeGenerationError(f"unknown aggregate tag '{tag}' in initializer")
+                # For unions, zero-fill when the initializer covers fewer bytes than the union
+                # size, because accessing the union through a larger member would otherwise see
+                # garbage in the upper bytes.
+                total_covered = sum(self._init_byte_size(sub) for sub in sub_inits)
+                if total_covered < entry.size:
+                    remaining = entry.size
+                    fill_off = byte_offset
+                    while remaining > 0:
+                        if remaining >= 8:
+                            zero = ast.ConstLong(0)
+                            chunk = 8
+                        elif remaining >= 4:
+                            zero = ast.ConstInt(0)
+                            chunk = 4
+                        else:
+                            zero = ast.ConstChar(0)
+                            chunk = 1
+                        instructions.append(tac.CopyToOffset(src=tac.Constant(zero), dst=var_name, offset=fill_off))
+                        fill_off += chunk
+                        remaining -= chunk
                 for sub_init, member in zip(sub_inits, entry.members):
                     self._emit_copy_to_offset(var_name, byte_offset + member.offset, sub_init, instructions)
             case ast.CompoundInit(initializers=sub_inits):

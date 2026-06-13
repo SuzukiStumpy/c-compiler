@@ -68,7 +68,7 @@ def test_return_constant_produces_mov_imm_to_register() -> None:
     """``Return(Constant(42))`` produces ``Mov(src=Imm(42), dst=Register())``."""
     result = generate(_simple_tac_program(value=42))
     mov = result.definitions[0].instructions[0]
-    assert mov == asm.Mov(src=asm.Imm(value=42), dst=asm.Register(asm.Registers.AX))
+    assert mov == asm.Mov(src=asm.Imm(value=42), dst=asm.Register(asm.GPRegisters.AX))
 
 
 def test_return_produces_ret_as_second_instruction() -> None:
@@ -91,7 +91,7 @@ def test_mov_destination_is_register() -> None:
     result = generate(_simple_tac_program(value=0))
     mov = result.definitions[0].instructions[0]
     assert isinstance(mov, asm.Mov)
-    assert mov.dst == asm.Register(asm.Registers.AX)
+    assert mov.dst == asm.Register(asm.GPRegisters.AX)
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +114,9 @@ def test_multiple_return_statements_produce_instruction_pairs() -> None:
     )
     result = generate(program)
     assert len(result.definitions[0].instructions) == 4
-    assert result.definitions[0].instructions[0] == asm.Mov(src=asm.Imm(value=1), dst=asm.Register(asm.Registers.AX))
+    assert result.definitions[0].instructions[0] == asm.Mov(src=asm.Imm(value=1), dst=asm.Register(asm.GPRegisters.AX))
     assert result.definitions[0].instructions[1] == asm.Ret()
-    assert result.definitions[0].instructions[2] == asm.Mov(src=asm.Imm(value=2), dst=asm.Register(asm.Registers.AX))
+    assert result.definitions[0].instructions[2] == asm.Mov(src=asm.Imm(value=2), dst=asm.Register(asm.GPRegisters.AX))
     assert result.definitions[0].instructions[3] == asm.Ret()
 
 
@@ -147,14 +147,14 @@ def test_unary_negate_produces_allocate_mov_unary_mov_ret() -> None:
     # AllocateStack, Mov(Imm(5), Stack(-4)), Unary(Neg, Stack(-4)), Mov(Stack(-4), Register()), Ret()
     assert isinstance(instrs[0], asm.AllocateStack)
     assert instrs[1] == asm.Mov(
-        src=asm.Imm(value=5), dst=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)
+        src=asm.Imm(value=5), dst=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4)
     )
     assert instrs[2] == asm.Unary(
-        operator=asm.Neg(), operand=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)
+        operator=asm.Neg(), operand=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4)
     )
     assert instrs[3] == asm.Mov(
-        src=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4),
-        dst=asm.Register(asm.Registers.AX),
+        src=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4),
+        dst=asm.Register(asm.GPRegisters.AX),
     )
     assert instrs[4] == asm.Ret()
 
@@ -306,7 +306,7 @@ def test_binary_add_produces_asm_binary_with_r11_scratch() -> None:
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     binary = result.definitions[0].instructions[1]
     assert isinstance(binary, asm.Binary)
-    assert binary.dst == asm.Register(asm.Registers.R11)
+    assert binary.dst == asm.Register(asm.GPRegisters.R11)
 
 
 def test_binary_add_operator_is_asm_add() -> None:
@@ -339,8 +339,8 @@ def test_binary_add_result_moved_from_r11_to_stack() -> None:
     # AllocateStack, Binary, Mov(R11, Stack(-4)), Mov(Stack(-4), AX), Ret
     mov = result.definitions[0].instructions[2]
     assert mov == asm.Mov(
-        src=asm.Register(asm.Registers.R11),
-        dst=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4),
+        src=asm.Register(asm.GPRegisters.R11),
+        dst=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4),
     )
 
 
@@ -359,7 +359,7 @@ def test_divide_loads_dividend_into_ax() -> None:
     """``Binary(Divide, …)`` moves the dividend into ``%eax`` as the first instruction."""
     result = generate(_binary_tac_program(tac.Divide(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(2))))
     # AllocateStack, Mov(Imm(10), AX), Cdq, Mov(Imm(2), R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
-    assert result.definitions[0].instructions[1] == asm.Mov(src=asm.Imm(value=10), dst=asm.Register(asm.Registers.AX))
+    assert result.definitions[0].instructions[1] == asm.Mov(src=asm.Imm(value=10), dst=asm.Register(asm.GPRegisters.AX))
 
 
 def test_divide_emits_cdq_after_dividend_load() -> None:
@@ -374,7 +374,7 @@ def test_divide_result_comes_from_ax() -> None:
     # After fixup: AllocateStack, Mov(10, AX), Cdq, Mov(2, R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
     quotient_mov = result.definitions[0].instructions[5]
     assert isinstance(quotient_mov, asm.Mov)
-    assert quotient_mov.src == asm.Register(asm.Registers.AX)
+    assert quotient_mov.src == asm.Register(asm.GPRegisters.AX)
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +388,7 @@ def test_remainder_result_comes_from_dx() -> None:
     # AllocateStack, Mov(10, AX), Cdq, Mov(3, R11), Idiv(R11), Mov(DX, Stack), Mov(Stack, AX), Ret
     remainder_mov = result.definitions[0].instructions[5]
     assert isinstance(remainder_mov, asm.Mov)
-    assert remainder_mov.src == asm.Register(asm.Registers.DX)
+    assert remainder_mov.src == asm.Register(asm.GPRegisters.DX)
 
 
 def test_remainder_emits_cdq() -> None:
@@ -408,8 +408,8 @@ def test_idiv_immediate_divisor_routed_through_r11() -> None:
     # AllocateStack, Mov(10, AX), Cdq, Mov(2, R11), Idiv(R11), ...
     mov_r11 = result.definitions[0].instructions[3]
     idiv = result.definitions[0].instructions[4]
-    assert mov_r11 == asm.Mov(src=asm.Imm(value=2), dst=asm.Register(asm.Registers.R11))
-    assert idiv == asm.Idiv(operand=asm.Register(asm.Registers.R11))
+    assert mov_r11 == asm.Mov(src=asm.Imm(value=2), dst=asm.Register(asm.GPRegisters.R11))
+    assert idiv == asm.Idiv(operand=asm.Register(asm.GPRegisters.R11))
 
 
 def test_idiv_memory_divisor_not_routed_through_r11() -> None:
@@ -483,7 +483,7 @@ class TestBitwiseAndOrXorCodeGen:
         """Each bitwise TAC op lowers to ``asm.Binary`` with the correct operator and ``%r11d`` as dst."""
         binary = next(i for i in self._instructions(tac_op) if isinstance(i, asm.Binary))
         assert isinstance(binary.operator, asm_op_type)
-        assert binary.dst == asm.Register(asm.Registers.R11)
+        assert binary.dst == asm.Register(asm.GPRegisters.R11)
 
     @pytest.mark.parametrize(
         ("op", "src1", "src2", "expected"),
@@ -500,7 +500,7 @@ class TestBitwiseAndOrXorCodeGen:
             operator=op,
             src1=asm.Imm(src1),
             src2=asm.Imm(src2),
-            dst=asm.Register(asm.Registers.R11),
+            dst=asm.Register(asm.GPRegisters.R11),
         )
         assert instr.emit() == expected
 
@@ -548,13 +548,13 @@ class TestShiftCodeGen:
         """Each shift direction emits the correct instruction type with ``%r11d`` as its operand."""
         instrs = self._instructions(tac_op)
         shift = next(i for i in instrs if isinstance(i, instr_type))
-        assert shift.operand == asm.Register(asm.Registers.R11)
+        assert shift.operand == asm.Register(asm.GPRegisters.R11)
 
     @pytest.mark.parametrize(
         ("instr", "expected"),
         [
-            (asm.Shl(operand=asm.Register(asm.Registers.R11)), "      shll  %cl, %r11d"),
-            (asm.Sar(operand=asm.Register(asm.Registers.R11)), "      sarl  %cl, %r11d"),
+            (asm.Shl(operand=asm.Register(asm.GPRegisters.R11)), "      shll  %cl, %r11d"),
+            (asm.Sar(operand=asm.Register(asm.GPRegisters.R11)), "      sarl  %cl, %r11d"),
         ],
         ids=["shl", "sar"],
     )
@@ -565,13 +565,13 @@ class TestShiftCodeGen:
     def test_shift_count_moved_to_cx(self) -> None:
         """A ``Mov`` to ``%ecx`` (``CX``) appears before ``Shl`` to load the shift count."""
         instrs = self._instructions(tac.LeftShift())
-        cx_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == asm.Register(asm.Registers.CX)]
+        cx_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == asm.Register(asm.GPRegisters.CX)]
         assert len(cx_movs) == 1
 
     def test_shl_emit_stack_operand(self) -> None:
         """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` — memory operand is valid."""
         assert (
-            asm.Shl(operand=asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=-4)).emit()
+            asm.Shl(operand=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4)).emit()
             == "      shll  %cl, -4(%rbp)"
         )
 
@@ -851,6 +851,8 @@ class TestJumpAndLabelCodeGen:
             self._program(
                 tac.JumpIfZero(condition=tac.Var(value="x"), target="end"),
                 tac.Return(val=tac.Constant(value=ConstInt(0))),
+                tac.Label(name="end"),
+                tac.Return(val=tac.Constant(value=ConstInt(0))),
             )
         )
         jmpcc_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.JmpCC)]
@@ -863,6 +865,8 @@ class TestJumpAndLabelCodeGen:
         result = generate(
             self._program(
                 tac.JumpIfNotZero(condition=tac.Var(value="x"), target="loop"),
+                tac.Return(val=tac.Constant(value=ConstInt(0))),
+                tac.Label(name="loop"),
                 tac.Return(val=tac.Constant(value=ConstInt(0))),
             )
         )
@@ -947,7 +951,7 @@ class TestCmpFixup:
         cmp_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.Cmp)]
         assert len(cmp_instrs) == 1
         cmp = cmp_instrs[0]
-        assert cmp.op2 == asm.Register(asm.Registers.R11), "op2 should be routed through R11"
+        assert cmp.op2 == asm.Register(asm.GPRegisters.R11), "op2 should be routed through R11"
         assert isinstance(cmp.op1, asm.Memory), "op1 (Memory) should be unchanged"
 
 
@@ -1219,7 +1223,7 @@ class TestPushLargeImmFixup:
         mov = instrs[push_idx - 1]
         assert isinstance(mov, asm.Mov), "expected Mov before Push for large-imm fixup"
         assert isinstance(mov.src, asm.Imm) and mov.src.value == _LARGE_LONG
-        assert isinstance(mov.dst, asm.Register) and mov.dst.reg == asm.Registers.R10
+        assert isinstance(mov.dst, asm.Register) and mov.dst.reg == asm.GPRegisters.R10
 
 
 class TestBinaryLargeImmFixup:
@@ -1278,7 +1282,7 @@ class TestBinaryLargeImmFixup:
         mov = instrs[binary_idx - 1]
         assert isinstance(mov, asm.Mov), "expected Mov before Binary for large-imm fixup"
         assert isinstance(mov.src, asm.Imm) and mov.src.value == _LARGE_LONG
-        assert isinstance(mov.dst, asm.Register) and mov.dst.reg == asm.Registers.R10
+        assert isinstance(mov.dst, asm.Register) and mov.dst.reg == asm.GPRegisters.R10
 
 
 class TestCmpBothLargeImmFixup:
@@ -1501,10 +1505,23 @@ class TestZeroExtendCharCodeGen:
 
         ``movl`` to a 32-bit register implicitly zero-extends to 64 bits, so the
         fixup pass replaces ``MoveZeroExtend(Longword, Quadword)`` with a plain
-        ``Mov(Longword)`` instruction.
+        ``Mov(Longword)`` instruction.  ``s_copy`` keeps ``s`` live past ``d``'s
+        definition so the two pseudos interfere and are not coalesced — otherwise
+        the self-move would be eliminated before fixup runs.
         """
-        st = _make_symbol_table(s=UIntType, d=ULongType)
-        program = _zero_extend_program(UIntType, ULongType)
+        st = _make_symbol_table(s=UIntType, d=ULongType, s_copy=UIntType)
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.ZeroExtend(src=tac.Var("s"), dst=tac.Var("d")),
+                        tac.Copy(src=tac.Var("s"), dst=tac.Var("s_copy")),
+                        tac.Return(val=tac.Var("d")),
+                    ),
+                ),
+            )
+        )
         instrs = _fn_instructions_with_table(program, st)
         assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs)
         mov = next(i for i in instrs if isinstance(i, asm.Mov) and i.assembly_type == asm.Longword())
@@ -1516,13 +1533,16 @@ class TestTruncateToCharCodeGen:
 
     def test_truncate_to_schar_emits_movb(self) -> None:
         """``Truncate`` with an ``SChar`` destination uses ``Byte`` assembly type."""
-        st = _make_symbol_table(s=IntType, d=SChar)
+        # s_copy keeps s live past d's definition so s and d interfere, preventing
+        # the byte-move from being eliminated as a self-move after register allocation.
+        st = _make_symbol_table(s=IntType, d=SChar, s_copy=IntType)
         program = tac.Program(
             top_level=(
                 tac.Function(
                     name="main",
                     body=(
                         tac.Truncate(src=tac.Var("s"), dst=tac.Var("d")),
+                        tac.Copy(src=tac.Var("s"), dst=tac.Var("s_copy")),
                         tac.Return(val=tac.Var("d")),
                     ),
                 ),
@@ -1534,13 +1554,16 @@ class TestTruncateToCharCodeGen:
 
     def test_truncate_to_int_still_emits_movl(self) -> None:
         """``Truncate`` with an ``IntType`` destination still uses ``Longword`` (regression guard)."""
-        st = _make_symbol_table(s=LongType, d=IntType)
+        # s_copy keeps s live past d's definition so s and d interfere, preventing
+        # the longword-move from being eliminated as a self-move after register allocation.
+        st = _make_symbol_table(s=LongType, d=IntType, s_copy=LongType)
         program = tac.Program(
             top_level=(
                 tac.Function(
                     name="main",
                     body=(
                         tac.Truncate(src=tac.Var("s"), dst=tac.Var("d")),
+                        tac.Copy(src=tac.Var("s"), dst=tac.Var("s_copy")),
                         tac.Return(val=tac.Var("d")),
                     ),
                 ),
@@ -1607,7 +1630,7 @@ class TestCharArgExtension:
         instrs = _fn_instructions_with_table(program, st)
         for instr in instrs:
             if isinstance(instr, asm.Mov):
-                if isinstance(instr.dst, asm.Register) and instr.dst.reg == asm.Registers.DI:
+                if isinstance(instr.dst, asm.Register) and instr.dst.reg == asm.GPRegisters.DI:
                     assert instr.dst.width != asm.Width.BYTE, "char arg should not use byte-width DI register"
 
     def test_uchar_arg_no_byte_width_register(self) -> None:
@@ -1617,7 +1640,7 @@ class TestCharArgExtension:
         instrs = _fn_instructions_with_table(program, st)
         for instr in instrs:
             if isinstance(instr, asm.Mov):
-                if isinstance(instr.dst, asm.Register) and instr.dst.reg == asm.Registers.DI:
+                if isinstance(instr.dst, asm.Register) and instr.dst.reg == asm.GPRegisters.DI:
                     assert instr.dst.width != asm.Width.BYTE, "uchar arg should not use byte-width DI register"
 
     def test_int_arg_still_uses_mov(self) -> None:
@@ -1659,7 +1682,7 @@ class TestCharArgExtension:
             for i in instrs
             if isinstance(i, asm.Mov)
             and isinstance(i.dst, asm.Register)
-            and i.dst.reg == asm.Registers.SI
+            and i.dst.reg == asm.GPRegisters.SI
             and i.assembly_type == asm.Longword()
         ]
         assert edi_movl, "expected a Mov(Longword) into %esi for the duplicate arg"
@@ -1693,7 +1716,7 @@ class TestCharArgExtension:
             for i in instrs
             if isinstance(i, asm.Mov)
             and isinstance(i.dst, asm.Register)
-            and i.dst.reg == asm.Registers.SI
+            and i.dst.reg == asm.GPRegisters.SI
             and i.assembly_type == asm.Longword()
         ]
         assert esi_movl, "expected a Mov(Longword) into %esi for the duplicate arg"

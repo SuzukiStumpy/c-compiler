@@ -3,11 +3,26 @@
 Defines the ``Operand`` abstract base class and its concrete variants. Each
 operand form supported by the code generator is represented as a subclass of
 ``Operand``.
+
+Register layout
+---------------
+General-purpose and SIMD registers are separated into ``GPRegisters`` and
+``FPRegisters`` enums so that callers can constrain types to one class or the
+other.  The combined type alias ``Registers = GPRegisters | FPRegisters``
+preserves backward compatibility for annotations.
+
+Only a subset of hardware registers are valid targets for register allocation.
+``ALLOCATABLE_GP`` and ``ALLOCATABLE_FP`` enumerate those subsets:
+
+* **Excluded from GP allocation**: ``SP`` and ``BP`` (stack management);
+  ``R10`` and ``R11`` (reserved as scratch registers by the code generator).
+* **FP registers** ``XMM0``–``XMM13`` are allocatable; ``XMM14`` and ``XMM15`` are reserved as scratch registers.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, IntEnum
+from typing import TypeAlias
 
 
 class Width(IntEnum):
@@ -22,20 +37,16 @@ class Width(IntEnum):
     QWORD = 8
 
 
-class Registers(Enum):
-    """Logical hardware registers and their width-specific assembly names.
+class GPRegisters(Enum):
+    """General-purpose hardware registers and their width-specific assembly names.
 
     Each member's value is a ``{Width: str}`` mapping from access width to the
-    AT&T register name for that width.  Add a new entry to the dict to support
-    additional widths without touching any other code.
-
-    SIMD registers (``XMM0``–``XMM7``, ``XMM14``, ``XMM15``) map all widths to
-    the same name because SSE instructions encode the operand size in the
-    mnemonic rather than the register name.  By convention, always construct
-    XMM ``Register`` operands with ``Width.QWORD``.
+    AT&T register name for that width.  ``SP`` and ``BP`` map all widths to the
+    same name because they are only ever addressed at full 64-bit width.
     """
 
     AX = {Width.QWORD: "rax", Width.DWORD: "eax", Width.BYTE: "al"}
+    BX = {Width.QWORD: "rbx", Width.DWORD: "ebx", Width.BYTE: "bl"}
     CX = {Width.QWORD: "rcx", Width.DWORD: "ecx", Width.BYTE: "cl"}
     DX = {Width.QWORD: "rdx", Width.DWORD: "edx", Width.BYTE: "dl"}
     DI = {Width.QWORD: "rdi", Width.DWORD: "edi", Width.BYTE: "dil"}
@@ -44,9 +55,22 @@ class Registers(Enum):
     R9 = {Width.QWORD: "r9", Width.DWORD: "r9d", Width.BYTE: "r9b"}
     R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.BYTE: "r10b"}
     R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.BYTE: "r11b"}
+    R12 = {Width.QWORD: "r12", Width.DWORD: "r12d", Width.BYTE: "r12b"}
+    R13 = {Width.QWORD: "r13", Width.DWORD: "r13d", Width.BYTE: "r13b"}
+    R14 = {Width.QWORD: "r14", Width.DWORD: "r14d", Width.BYTE: "r14b"}
+    R15 = {Width.QWORD: "r15", Width.DWORD: "r15d", Width.BYTE: "r15b"}
     SP = {Width.QWORD: "rsp", Width.DWORD: "rsp", Width.BYTE: "rsp"}
     BP = {Width.QWORD: "rbp", Width.DWORD: "rbp", Width.BYTE: "rbp"}
-    # SIMD floating-point registers — name is the same at every width.
+
+
+class FPRegisters(Enum):
+    """SIMD floating-point registers and their assembly names.
+
+    All widths map to the same name because SSE instructions encode the
+    operand size in the mnemonic rather than the register name.  By convention,
+    always construct XMM ``Register`` operands with ``Width.QWORD``.
+    """
+
     XMM0 = {Width.QWORD: "xmm0", Width.DWORD: "xmm0", Width.BYTE: "xmm0"}
     XMM1 = {Width.QWORD: "xmm1", Width.DWORD: "xmm1", Width.BYTE: "xmm1"}
     XMM2 = {Width.QWORD: "xmm2", Width.DWORD: "xmm2", Width.BYTE: "xmm2"}
@@ -55,8 +79,42 @@ class Registers(Enum):
     XMM5 = {Width.QWORD: "xmm5", Width.DWORD: "xmm5", Width.BYTE: "xmm5"}
     XMM6 = {Width.QWORD: "xmm6", Width.DWORD: "xmm6", Width.BYTE: "xmm6"}
     XMM7 = {Width.QWORD: "xmm7", Width.DWORD: "xmm7", Width.BYTE: "xmm7"}
+    XMM8 = {Width.QWORD: "xmm8", Width.DWORD: "xmm8", Width.BYTE: "xmm8"}
+    XMM9 = {Width.QWORD: "xmm9", Width.DWORD: "xmm9", Width.BYTE: "xmm9"}
+    XMM10 = {Width.QWORD: "xmm10", Width.DWORD: "xmm10", Width.BYTE: "xmm10"}
+    XMM11 = {Width.QWORD: "xmm11", Width.DWORD: "xmm11", Width.BYTE: "xmm11"}
+    XMM12 = {Width.QWORD: "xmm12", Width.DWORD: "xmm12", Width.BYTE: "xmm12"}
+    XMM13 = {Width.QWORD: "xmm13", Width.DWORD: "xmm13", Width.BYTE: "xmm13"}
     XMM14 = {Width.QWORD: "xmm14", Width.DWORD: "xmm14", Width.BYTE: "xmm14"}
     XMM15 = {Width.QWORD: "xmm15", Width.DWORD: "xmm15", Width.BYTE: "xmm15"}
+
+
+Registers: TypeAlias = GPRegisters | FPRegisters
+"""Combined type alias for any hardware register.  Use for annotations where
+either GP or FP register is acceptable; use ``GPRegisters`` / ``FPRegisters``
+directly when you need to constrain to one class."""
+
+ALLOCATABLE_GP: frozenset[GPRegisters] = frozenset(
+    {
+        GPRegisters.AX,
+        GPRegisters.BX,
+        GPRegisters.CX,
+        GPRegisters.DX,
+        GPRegisters.DI,
+        GPRegisters.SI,
+        GPRegisters.R8,
+        GPRegisters.R9,
+        GPRegisters.R12,
+        GPRegisters.R13,
+        GPRegisters.R14,
+        GPRegisters.R15,
+    }
+)
+"""General-purpose registers eligible for allocation.  SP, BP (stack management)
+and R10, R11 (code-generator scratch registers) are excluded."""
+
+ALLOCATABLE_FP: frozenset[FPRegisters] = frozenset(FPRegisters) - {FPRegisters.XMM14, FPRegisters.XMM15}
+"""SIMD registers eligible for allocation.  XMM14 and XMM15 are excluded (reserved as scratch registers)."""
 
 
 class Operand(ABC):
@@ -99,15 +157,15 @@ class Imm(Operand):
 class Register(Operand):
     """A hardware register operand at a specific byte width.
 
-    Wraps a ``Registers`` enum value and a ``Width`` so that both the logical
-    register and its access size are explicit in the AST.
+    Wraps a ``GPRegisters`` or ``FPRegisters`` enum value and a ``Width`` so
+    that both the logical register and its access size are explicit in the AST.
 
     Attributes:
-        reg: The logical register (e.g. ``Registers.AX``).
+        reg: The logical register (e.g. ``GPRegisters.AX``).
         width: The access width; defaults to ``Width.DWORD`` (32-bit).
     """
 
-    reg: Registers
+    reg: GPRegisters | FPRegisters
     width: Width = Width.DWORD
 
     def emit(self) -> str:

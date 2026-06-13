@@ -29,6 +29,7 @@ for the supported assembly subset:
                         | AllocateStack(int)
                         | DeallocateStack(int)
                         | Push(operand)
+                        | Pop(reg)
                         | Call(identifier)
                         | Ret
                         | Cvttsd2si(assembly_type dst_type, operand src, operand dst)
@@ -45,9 +46,9 @@ for the supported assembly subset:
                         | Indexed(reg base, reg index, int scale)
                         | PseudoMem(identifier, int)
     cond_code           = E | NE | G | GE | L | LE | A | AE | B | BE
-    reg                 = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP | BP
+    reg                 = AX | BX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | SP | BP
                         | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7
-                        | XMM14 | XMM15
+                        | XMM8 | XMM9 | XMM10 | XMM11 | XMM12 | XMM13 | XMM14 | XMM15
 
 Nodes are organised into submodules by logical role:
 
@@ -92,6 +93,7 @@ from compiler.syntax.asm.instructions import (
     Mov,
     MoveZeroExtend,
     Movsx,
+    Pop,
     Push,
     Ret,
     Sar,
@@ -101,7 +103,11 @@ from compiler.syntax.asm.instructions import (
     Unary,
 )
 from compiler.syntax.asm.operands import (
+    ALLOCATABLE_FP,
+    ALLOCATABLE_GP,
     Data,
+    FPRegisters,
+    GPRegisters,
     Imm,
     Indexed,
     Memory,
@@ -168,6 +174,7 @@ __all__ = [
     "MoveZeroExtend",
     "Movsx",
     "Push",
+    "Pop",
     "Ret",
     "Sar",
     "SetCC",
@@ -192,7 +199,11 @@ __all__ = [
     "Xor",
     "XorDouble",
     # operands
+    "ALLOCATABLE_FP",
+    "ALLOCATABLE_GP",
     "Data",
+    "FPRegisters",
+    "GPRegisters",
     "Imm",
     "Indexed",
     "Operand",

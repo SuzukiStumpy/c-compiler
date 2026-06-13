@@ -434,9 +434,12 @@ def _rewrite_secondary(instr: tac.Instruction, r: CopySet) -> tac.Instruction | 
         case tac.Load(src_ptr=src_ptr, dst=dst):
             return tac.Load(src_ptr=_replace_operand(src_ptr, r), dst=dst)
         case tac.Store(src=src, dst_ptr=dst_ptr):
+            # Do not propagate into dst_ptr: the Mov(ptr, AX) pattern in the generated
+            # assembly relies on ptr being the Mov source so the coalescing exemption
+            # prevents a spurious ptr↔AX interference edge in the register allocator.
             return tac.Store(
                 src=_replace_operand(src, r),
-                dst_ptr=_replace_operand(dst_ptr, r),
+                dst_ptr=dst_ptr,
             )
         case tac.AddPtr(ptr=ptr, index=index, scale=scale, dst=dst):
             return tac.AddPtr(

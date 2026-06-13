@@ -53,11 +53,13 @@ Unsigned variants (selected when the source operand has an unsigned C type):
 
 # ruff: noqa: C901 - ignore complexity warnings for entire file (since there's lots of them)
 
+import dataclasses
 import itertools
 from enum import Enum, auto
 
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
+from compiler.optimiser.asm_main import allocate_registers
 from compiler.semantic_analysis import type_size
 from compiler.syntax.ast.constants import ConstChar, ConstDouble, ConstInt, ConstLong, ConstUChar, ConstUInt, ConstULong
 from compiler.syntax.ast.types import Array as ArrayType
@@ -82,24 +84,24 @@ from compiler.utils.exceptions import CodeGenerationError
 
 # System V AMD64 ABI integer argument registers, in order.
 _ABI_REGS = [
-    asm.Registers.DI,
-    asm.Registers.SI,
-    asm.Registers.DX,
-    asm.Registers.CX,
-    asm.Registers.R8,
-    asm.Registers.R9,
+    asm.GPRegisters.DI,
+    asm.GPRegisters.SI,
+    asm.GPRegisters.DX,
+    asm.GPRegisters.CX,
+    asm.GPRegisters.R8,
+    asm.GPRegisters.R9,
 ]
 
 # System V AMD64 ABI floating-point argument registers, in order.
 _XMM_REGS = [
-    asm.Registers.XMM0,
-    asm.Registers.XMM1,
-    asm.Registers.XMM2,
-    asm.Registers.XMM3,
-    asm.Registers.XMM4,
-    asm.Registers.XMM5,
-    asm.Registers.XMM6,
-    asm.Registers.XMM7,
+    asm.FPRegisters.XMM0,
+    asm.FPRegisters.XMM1,
+    asm.FPRegisters.XMM2,
+    asm.FPRegisters.XMM3,
+    asm.FPRegisters.XMM4,
+    asm.FPRegisters.XMM5,
+    asm.FPRegisters.XMM6,
+    asm.FPRegisters.XMM7,
 ]
 
 # 2^63 as a double — the threshold used by DoubleToUInt for unsigned-long destinations.
@@ -362,8 +364,8 @@ def classify_parameters(
 
 
 # Return-value register sequences per the SysV AMD64 ABI.
-_GP_RETURN_REGS = [asm.Registers.AX, asm.Registers.DX]
-_XMM_RETURN_REGS = [asm.Registers.XMM0, asm.Registers.XMM1]
+_GP_RETURN_REGS = [asm.GPRegisters.AX, asm.GPRegisters.DX]
+_XMM_RETURN_REGS = [asm.FPRegisters.XMM0, asm.FPRegisters.XMM1]
 
 
 def classify_return_value(
@@ -405,13 +407,13 @@ def classify_return_value(
         case VoidType():
             return [], [], False
         case IntType() | UIntType():
-            return [asm.Register(asm.Registers.AX, asm.Width.DWORD)], [], False
+            return [asm.Register(asm.GPRegisters.AX, asm.Width.DWORD)], [], False
         case LongType() | ULongType() | Pointer():
-            return [asm.Register(asm.Registers.AX, asm.Width.QWORD)], [], False
+            return [asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)], [], False
         case Char() | SChar() | UChar():
-            return [asm.Register(asm.Registers.AX, asm.Width.BYTE)], [], False
+            return [asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)], [], False
         case DoubleType():
-            return [], [asm.Register(asm.Registers.XMM0, asm.Width.QWORD)], False
+            return [], [asm.Register(asm.FPRegisters.XMM0, asm.Width.QWORD)], False
         case Structure(tag=tag) | Union(tag=tag):
             classes = classify_struct(tag, struct_type_table)
             if classes == [EightbyteClass.MEMORY]:
@@ -439,8 +441,17 @@ def generate(
 ) -> asm.Program:
     """Translate a TAC ``Program`` into an assembly ``Program``.
 
-    Applies all three translation passes (TAC lowering, pseudo replacement,
-    and instruction fixup) and returns a fully resolved assembly AST.
+    Applies the following translation passes in order:
+
+    1. **TAC → pseudo-asm**: each TAC instruction is lowered to assembly
+       instructions with ``Pseudo`` operands for named temporaries.
+    2. **Register allocation**: graph-colouring register allocation replaces
+       allocatable ``Pseudo`` operands with hardware registers; spilled pseudos
+       remain as ``Pseudo`` for the next pass.
+    3. **Pseudo replacement**: remaining ``Pseudo`` operands are assigned
+       unique stack-frame slots.
+    4. **Instruction fixup**: invalid two-memory-operand forms are rewritten
+       via scratch registers.
 
     The ``symbol_table`` is used to identify every name with static storage
     duration, including ``extern``-only (``NoInitializer``) declarations that
@@ -483,9 +494,29 @@ def generate(
         match item:
             case tac.Function():
                 raw_fn = _translate_function(item, symbol_table, constants, struct_type_table)
-                resolved_fn, stack_size = _replace_pseudos(raw_fn, static_names, symbol_table, struct_type_table)
-                fixed_fn = _fix_instructions(resolved_fn)
-                definitions.append(_add_stack_allocation(fixed_fn, stack_size))
+                allocated, gp_callee, fp_callee = allocate_registers(
+                    list(raw_fn.instructions), symbol_table, fn_name=raw_fn.name, struct_type_table=struct_type_table
+                )
+                raw_fn = dataclasses.replace(raw_fn, instructions=tuple(allocated))
+                gp_callee_size = 8 * len(gp_callee)
+                callee_saved_size = gp_callee_size + 8 * len(fp_callee)
+                resolved_fn, stack_size = _replace_pseudos(
+                    raw_fn,
+                    static_names,
+                    symbol_table,
+                    struct_type_table,
+                    callee_saved_size=callee_saved_size,
+                )
+                fn_with_saves = _insert_callee_saves(resolved_fn, gp_callee, fp_callee)
+                fn_with_gp = dataclasses.replace(fn_with_saves, gp_callee_saved=tuple(gp_callee))
+                fixed_fn = _fix_instructions(fn_with_gp)
+                definitions.append(
+                    _add_stack_allocation(
+                        fixed_fn,
+                        stack_size - gp_callee_size,
+                        gp_callee_size=gp_callee_size,
+                    )
+                )
             case tac.StaticVariable(name=name, globl=globl, t=t, init=init):
                 definitions.append(
                     asm.StaticVariable(
@@ -625,7 +656,7 @@ def _translate_function(
     """
     instructions: list[asm.Instruction] = []
     stt: StructTypeTable = struct_type_table or {}
-    bp = asm.Register(asm.Registers.BP, asm.Width.QWORD)
+    bp = asm.Register(asm.GPRegisters.BP, asm.Width.QWORD)
 
     # Classify all parameters up-front so register-spill decisions for struct
     # parameters can be made before any instructions are emitted.
@@ -644,7 +675,7 @@ def _translate_function(
         ret_ptr_name = ".__ret_ptr"
         instructions.append(
             asm.Mov(
-                src=asm.Register(asm.Registers.DI, asm.Width.QWORD),
+                src=asm.Register(asm.GPRegisters.DI, asm.Width.QWORD),
                 dst=asm.Pseudo(ret_ptr_name),
                 assembly_type=asm.Quadword(),
             )
@@ -783,7 +814,7 @@ def _translate_binary(
         case tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor():
             at = _asm_type(dst, symbol_table)
             if at == asm.Double():
-                xmm15 = asm.Register(asm.Registers.XMM15, asm.Width.QWORD)
+                xmm15 = asm.Register(asm.FPRegisters.XMM15, asm.Width.QWORD)
                 return [
                     asm.Binary(
                         operator=_translate_binary_op_double(op),
@@ -794,7 +825,7 @@ def _translate_binary(
                     ),
                     asm.Mov(src=xmm15, dst=dst_asm, assembly_type=at),
                 ]
-            r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+            r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
             return [
                 asm.Binary(
                     operator=_translate_binary_op(op),
@@ -807,8 +838,8 @@ def _translate_binary(
             ]
         case tac.LeftShift():
             at = _asm_type(dst, symbol_table)
-            r11 = asm.Register(asm.Registers.R11, _reg_width(at))
-            cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
+            r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
+            cx = asm.Register(asm.GPRegisters.CX, asm.Width.DWORD)
             return [
                 asm.Mov(src=src1_asm, dst=r11, assembly_type=at),
                 asm.Mov(src=src2_asm, dst=cx, assembly_type=asm.Longword()),
@@ -817,8 +848,8 @@ def _translate_binary(
             ]
         case tac.RightShift():
             at = _asm_type(dst, symbol_table)
-            r11 = asm.Register(asm.Registers.R11, _reg_width(at))
-            cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
+            r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
+            cx = asm.Register(asm.GPRegisters.CX, asm.Width.DWORD)
             # Unsigned right shift is logical (shr); signed is arithmetic (sar).
             shift: asm.Instruction = (
                 asm.Shr(operand=r11, assembly_type=at)
@@ -834,7 +865,7 @@ def _translate_binary(
         case tac.Divide():
             at = _asm_type(dst, symbol_table)
             if at == asm.Double():
-                xmm15 = asm.Register(asm.Registers.XMM15, asm.Width.QWORD)
+                xmm15 = asm.Register(asm.FPRegisters.XMM15, asm.Width.QWORD)
                 return [
                     asm.Binary(
                         operator=asm.DivDouble(),
@@ -845,8 +876,8 @@ def _translate_binary(
                     ),
                     asm.Mov(src=xmm15, dst=dst_asm, assembly_type=at),
                 ]
-            ax = asm.Register(asm.Registers.AX, _reg_width(at))
-            dx = asm.Register(asm.Registers.DX, _reg_width(at))
+            ax = asm.Register(asm.GPRegisters.AX, _reg_width(at))
+            dx = asm.Register(asm.GPRegisters.DX, _reg_width(at))
             if _is_unsigned(src1, symbol_table):
                 return [
                     asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
@@ -862,8 +893,8 @@ def _translate_binary(
             ]
         case tac.Remainder():
             at = _asm_type(dst, symbol_table)
-            ax = asm.Register(asm.Registers.AX, _reg_width(at))
-            dx = asm.Register(asm.Registers.DX, _reg_width(at))
+            ax = asm.Register(asm.GPRegisters.AX, _reg_width(at))
+            dx = asm.Register(asm.GPRegisters.DX, _reg_width(at))
             if _is_unsigned(src1, symbol_table):
                 return [
                     asm.Mov(src=src1_asm, dst=ax, assembly_type=at),
@@ -946,9 +977,9 @@ def _translate_instruction(
             at = _asm_type(val, symbol_table)
             val_asm = _translate_val(val, constants, symbol_table)
             if at == asm.Double():
-                xmm0 = asm.Register(asm.Registers.XMM0, asm.Width.QWORD)
+                xmm0 = asm.Register(asm.FPRegisters.XMM0, asm.Width.QWORD)
                 return [asm.Mov(src=val_asm, dst=xmm0, assembly_type=at), asm.Ret()]
-            ax = asm.Register(asm.Registers.AX, _reg_width(at))
+            ax = asm.Register(asm.GPRegisters.AX, _reg_width(at))
             return [asm.Mov(src=val_asm, dst=ax, assembly_type=at), asm.Ret()]
         case tac.Jump(target=target):
             return [asm.Jmp(target)]
@@ -1020,13 +1051,13 @@ def _translate_instruction(
                     remaining = size - offset
                     if remaining >= 8:
                         chunk, at_chunk = 8, asm.Quadword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                     elif remaining >= 4:
                         chunk, at_chunk = 4, asm.Longword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
                     else:
                         chunk, at_chunk = 1, asm.Byte()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                     chunk_instrs.append(
                         asm.Mov(
                             src=_struct_src_operand(src.value, offset, src_is_static), dst=reg, assembly_type=at_chunk
@@ -1093,7 +1124,7 @@ def _translate_instruction(
                                 constants[existing_idx] = asm.StaticConstant(
                                     identifier=sign_mask_label, alignment=16, init=asm.DoubleInit(-0.0)
                                 )
-                    xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+                    xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
                     return [
                         asm.Binary(
                             operator=asm.XorDouble(),
@@ -1145,8 +1176,8 @@ def _translate_instruction(
             at = _asm_type(dst, symbol_table)
             if at == asm.Byte():
                 # cvttsd2si has no byte form; convert to int32 then truncate the low byte.
-                r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-                r10b = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+                r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                 return [
                     asm.Cvttsd2si(
                         src=_translate_val(src, constants, symbol_table), dst=r10d, assembly_type=asm.Longword()
@@ -1165,8 +1196,8 @@ def _translate_instruction(
             at = _asm_type(src, symbol_table)
             if at == asm.Byte():
                 # cvtsi2sd has no byte form; sign-extend to int32 first then convert.
-                r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-                xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+                r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+                xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
                 return [
                     asm.Movsx(
                         src_type=asm.Byte(),
@@ -1190,7 +1221,7 @@ def _translate_instruction(
         case tac.DoubleToUInt(src=src, dst=dst):
             return _translate_double_to_uint(src, dst, symbol_table, constants)
         case tac.Load(src_ptr=src_ptr, dst=dst):
-            ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            ax = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
             load_ptr = asm.Mov(
                 src=_translate_val(src_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()
             )
@@ -1212,13 +1243,13 @@ def _translate_instruction(
                     remaining = size - i
                     if remaining >= 8:
                         chunk, at_c = 8, asm.Quadword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                     elif remaining >= 4:
                         chunk, at_c = 4, asm.Longword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
                     else:
                         chunk, at_c = 1, asm.Byte()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                     load_instrs.append(asm.Mov(src=asm.Memory(ax, i), dst=reg, assembly_type=at_c))
                     load_instrs.append(
                         asm.Mov(src=reg, dst=_struct_src_operand(dst.value, i, dst_is_static), assembly_type=at_c)
@@ -1229,7 +1260,7 @@ def _translate_instruction(
             dst_asm = _translate_val(dst, constants, symbol_table)
             return [load_ptr, asm.Mov(src=asm.Memory(reg=ax, offset=0), dst=dst_asm, assembly_type=at)]
         case tac.Store(src=src, dst_ptr=dst_ptr):
-            ax = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+            ax = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
             store_ptr = asm.Mov(
                 src=_translate_val(dst_ptr, constants, symbol_table), dst=ax, assembly_type=asm.Quadword()
             )
@@ -1251,13 +1282,13 @@ def _translate_instruction(
                     remaining = size - i
                     if remaining >= 8:
                         chunk, at_c = 8, asm.Quadword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                     elif remaining >= 4:
                         chunk, at_c = 4, asm.Longword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
                     else:
                         chunk, at_c = 1, asm.Byte()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                     store_instrs.append(
                         asm.Mov(src=_struct_src_operand(src.value, i, src_is_static), dst=reg, assembly_type=at_c)
                     )
@@ -1298,13 +1329,13 @@ def _translate_instruction(
                     remaining = size - i
                     if remaining >= 8:
                         chunk, at_c = 8, asm.Quadword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                     elif remaining >= 4:
                         chunk, at_c = 4, asm.Longword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
                     else:
                         chunk, at_c = 1, asm.Byte()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                     cto_instrs.append(
                         asm.Mov(src=_struct_src_operand(src.value, i, src_is_static), dst=reg, assembly_type=at_c)
                     )
@@ -1344,13 +1375,13 @@ def _translate_instruction(
                     remaining = size - i
                     if remaining >= 8:
                         chunk, at_c = 8, asm.Quadword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                     elif remaining >= 4:
                         chunk, at_c = 4, asm.Longword()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
                     else:
                         chunk, at_c = 1, asm.Byte()
-                        reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                        reg = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                     cfo_instrs.append(
                         asm.Mov(
                             src=_struct_src_operand(src_name, offset + i, src_is_static), dst=reg, assembly_type=at_c
@@ -1365,8 +1396,8 @@ def _translate_instruction(
             dst_asm = _translate_val(dst, constants, symbol_table)
             return [asm.Mov(src=asm.PseudoMem(src_name, offset), dst=dst_asm, assembly_type=at)]
         case tac.AddPtr(ptr=ptr, index=index, scale=scale, dst=dst):
-            r10 = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-            r11 = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+            r10 = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+            r11 = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
             ptr_asm = _translate_val(ptr, constants, symbol_table)
             dst_asm = _translate_val(dst, constants, symbol_table)
             # When the index is a compile-time integer constant, fold index * scale
@@ -1431,11 +1462,11 @@ def _translate_uint_to_double(
     src_asm = _translate_val(src)
     dst_asm = _translate_val(dst)
 
-    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-    rcxq = asm.Register(asm.Registers.CX, asm.Width.QWORD)
-    xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+    r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
+    rcxq = asm.Register(asm.GPRegisters.CX, asm.Width.QWORD)
+    xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
 
     if src_at == asm.Byte():
         # All unsigned char values (0..255) fit in a signed int32; zero-extend to Longword
@@ -1515,9 +1546,9 @@ def _translate_double_to_uint(
     src_asm = _translate_val(src, constants)
     dst_asm = _translate_val(dst, constants)
 
-    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-    r10b = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+    r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
 
     if dst_at == asm.Byte():
         # All unsigned char values (0..255) fit in a signed int32; convert via cvttsd2sil
@@ -1552,8 +1583,8 @@ def _translate_double_to_uint(
     done_label = f"dbl_to_ulong_done.{uid}"
 
     threshold_op = asm.Data(_THRESHOLD_LABEL)
-    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-    xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+    r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
+    xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
 
     return [
         # Load src into xmm14; ucomisd requires op2 to be an XMM register.
@@ -1617,10 +1648,10 @@ def _load_partial_eightbyte(
         ``size``-byte value in ``%r10``, zero-extended to 64 bits.
     """
     assert 1 <= size <= 7
-    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-    r11d = asm.Register(asm.Registers.R11, asm.Width.DWORD)
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+    r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
+    r11d = asm.Register(asm.GPRegisters.R11, asm.Width.DWORD)
 
     instrs: list[asm.Instruction] = []
     remaining = size
@@ -1682,10 +1713,10 @@ def _store_partial_eightbyte(
         A list of assembly instructions that write exactly ``size`` bytes to memory.
     """
     assert 1 <= size <= 7
-    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-    r10b = asm.Register(asm.Registers.R10, asm.Width.BYTE)
-    cx = asm.Register(asm.Registers.CX, asm.Width.DWORD)
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+    r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
+    cx = asm.Register(asm.GPRegisters.CX, asm.Width.DWORD)
 
     instrs: list[asm.Instruction] = [asm.Mov(src=src_reg, dst=r10q, assembly_type=asm.Quadword())]
 
@@ -1741,9 +1772,9 @@ def _translate_struct_return(
         symbol_table and name in symbol_table and isinstance(symbol_table[name].attrs, (StaticAttr, FunAttr))
     )
     instrs: list[asm.Instruction] = []
-    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-    r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
-    rax_q = asm.Register(asm.Registers.AX, asm.Width.QWORD)
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
+    rax_q = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
 
     if ret_in_memory:
         assert ret_ptr_name is not None, "ret_ptr_name required for MEMORY struct return"
@@ -1754,13 +1785,13 @@ def _translate_struct_return(
             remaining = size - offset
             if remaining >= 8:
                 chunk, at_c = 8, asm.Quadword()
-                reg = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                reg = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
             elif remaining >= 4:
                 chunk, at_c = 4, asm.Longword()
-                reg = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+                reg = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
             else:
                 chunk, at_c = 1, asm.Byte()
-                reg = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                reg = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
             instrs.append(asm.Mov(src=_struct_src_operand(name, offset, is_static), dst=reg, assembly_type=at_c))
             instrs.append(asm.Mov(src=reg, dst=asm.Memory(r11q, offset), assembly_type=at_c))
             offset += chunk
@@ -1851,8 +1882,8 @@ def _translate_funcall(
         symbol_table is not None and fn_name in symbol_table and isinstance(symbol_table[fn_name].attrs, FunAttr)
     )
     instrs: list[asm.Instruction] = []
-    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
 
     # ------------------------------------------------------------------ #
     # Determine return-value classification so we know whether DI is free.
@@ -2046,7 +2077,7 @@ def _translate_funcall(
     # (so earlier integer-register loads cannot have clobbered it).
     # ------------------------------------------------------------------ #
     if ret_in_memory and dst is not None:
-        instrs.append(asm.Lea(src=dst, dst=asm.Register(asm.Registers.DI, asm.Width.QWORD)))
+        instrs.append(asm.Lea(src=dst, dst=asm.Register(asm.GPRegisters.DI, asm.Width.QWORD)))
 
     # ------------------------------------------------------------------ #
     # Emit the call instruction.
@@ -2118,7 +2149,7 @@ def _translate_funcall(
                 else:
                     at = _asm_type(tac.Var(dst_name) if dst_name else tac.Constant(ConstInt(0)), symbol_table)
                     instrs.append(
-                        asm.Mov(src=asm.Register(asm.Registers.AX, _reg_width(at)), dst=dst, assembly_type=at)
+                        asm.Mov(src=asm.Register(asm.GPRegisters.AX, _reg_width(at)), dst=dst, assembly_type=at)
                     )
         else:
             # Void: no return value (dst should be None, but guard just in case).
@@ -2396,31 +2427,37 @@ def _replace_pseudos(
     static_names: frozenset[str],
     symbol_table: SymbolTable | None = None,
     struct_type_table: StructTypeTable | None = None,
+    callee_saved_size: int = 0,
 ) -> tuple[asm.Function, int]:
     """Replace every ``Pseudo`` operand with a concrete operand.
 
     Pseudo operands whose names appear in ``static_names`` become RIP-relative
     ``Data`` operands (preserving any ``PseudoMem`` byte offset).  All other
     pseudos are assigned a unique slot in the stack frame, starting just below
-    ``%rbp`` and growing downward.  Struct pseudos use ``StructEntry.size`` for
-    allocation size and ``StructEntry.alignment`` for alignment.
+    the callee-saved register save area (``%rbp - callee_saved_size``) and
+    growing downward.  Struct pseudos use ``StructEntry.size`` for allocation
+    size and ``StructEntry.alignment`` for alignment.
 
     Args:
         fn: The assembly function whose pseudo operands are to be resolved.
         static_names: Names of all static/global variables in the program.
         symbol_table: Used to determine the storage size for each pseudo.
         struct_type_table: Required to size struct-typed pseudo variables.
+        callee_saved_size: Number of bytes at the top of the frame already
+            reserved for callee-saved register saves.  Local spill slots start
+            below this area.  Defaults to ``0``.
 
     Returns:
         A tuple ``(resolved_function, stack_bytes)`` where ``stack_bytes`` is
-        the total frame space required (positive, pre-alignment).
+        the total frame space required (positive, pre-alignment), including
+        ``callee_saved_size`` if provided.
 
     Raises:
         CodeGenerationError: If the function contains an unrecognised
             instruction shape that cannot be rewritten.
     """
     pseudo_offsets: dict[str, int] = {}
-    next_offset: list[int] = [0]
+    next_offset: list[int] = [-callee_saved_size]
 
     def resolve(operand: asm.Operand) -> asm.Operand:
         """Map Pseudo/PseudoMem to concrete operands; pass through everything else."""
@@ -2444,7 +2481,7 @@ def _replace_pseudos(
                 next_offset[0] = (next_offset[0] // alignment) * alignment
                 pseudo_offsets[name] = next_offset[0]
             return asm.Memory(
-                reg=asm.Register(asm.Registers.BP, asm.Width.QWORD),
+                reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD),
                 offset=pseudo_offsets[name] + elem_offset,
             )
         if not isinstance(operand, asm.Pseudo):
@@ -2462,7 +2499,7 @@ def _replace_pseudos(
                     size = 1
             next_offset[0] -= size
             pseudo_offsets[operand.name] = next_offset[0]
-        return asm.Memory(reg=asm.Register(asm.Registers.BP, asm.Width.QWORD), offset=pseudo_offsets[operand.name])
+        return asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=pseudo_offsets[operand.name])
 
     new_instructions: list[asm.Instruction] = []
     for instr in fn.instructions:
@@ -2544,8 +2581,8 @@ def _fix_movsx(
         fixed: The output instruction list to append into.
         is_mem: Callable that returns ``True`` for ``Stack``/``Data`` operands.
     """
-    r10_src = asm.Register(asm.Registers.R10, _reg_width(src_type))
-    r11_dst = asm.Register(asm.Registers.R11, _reg_width(dst_type))
+    r10_src = asm.Register(asm.GPRegisters.R10, _reg_width(src_type))
+    r11_dst = asm.Register(asm.GPRegisters.R11, _reg_width(dst_type))
     if isinstance(src, asm.Imm):
         fixed.append(asm.Mov(src=src, dst=r10_src, assembly_type=src_type))
         if is_mem(dst):  # type: ignore[operator]
@@ -2637,7 +2674,7 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 dst
             ) and not _fits_in_int32(v):
                 # movq cannot encode a 64-bit immediate to a memory operand.
-                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
                 fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=asm.Quadword()))
             case asm.Mov(assembly_type=asm.Longword(), src=asm.Imm(value=v), dst=dst) if not _fits_in_int32(v):
@@ -2654,19 +2691,19 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 fixed.append(asm.Mov(src=asm.Imm(reduced), dst=dst, assembly_type=asm.Byte()))
             case asm.Mov(assembly_type=asm.Double(), src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
                 # movsd cannot route through a GP register; use %xmm14 as the scratch.
-                xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+                xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=src, dst=xmm14, assembly_type=asm.Double()))
                 fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
             case asm.Mov(assembly_type=at, src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
-                r10 = asm.Register(asm.Registers.R10, _reg_width(at))
+                r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=src, dst=r10, assembly_type=at))
                 fixed.append(asm.Mov(src=r10, dst=dst, assembly_type=at))
             case asm.Idiv(assembly_type=at, operand=asm.Imm() as imm):
-                r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=imm, dst=r11, assembly_type=at))
                 fixed.append(asm.Idiv(operand=r11, assembly_type=at))
             case asm.Div(assembly_type=at, operand=asm.Imm() as imm):
-                r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=imm, dst=r11, assembly_type=at))
                 fixed.append(asm.Div(operand=r11, assembly_type=at))
             case asm.MoveZeroExtend(src_type=asm.Longword(), dst_type=dt, src=src, dst=dst):
@@ -2676,17 +2713,17 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 # Route through %r10d so the zero-extension happens in the register, then
                 # store the full 64-bit %r10 to dst.  Covers both-mem and reg-src+mem-dst.
                 if _is_mem(dst):
-                    r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-                    r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                    r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+                    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                     fixed.append(asm.Mov(src=src, dst=r10d, assembly_type=asm.Longword()))
                     fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=dt))
                 else:
                     fixed.append(asm.Mov(src=src, dst=dst, assembly_type=asm.Longword()))
             case asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=asm.Imm() as imm, dst=dst):
                 # movzbl/movzbq src must not be an immediate; load into %r10b first.
-                r10b = asm.Register(asm.Registers.R10, asm.Width.BYTE)
+                r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
                 if _is_mem(dst):
-                    r11 = asm.Register(asm.Registers.R11, _reg_width(dt))
+                    r11 = asm.Register(asm.GPRegisters.R11, _reg_width(dt))
                     fixed.append(asm.Mov(src=imm, dst=r10b, assembly_type=asm.Byte()))
                     fixed.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=r10b, dst=r11))
                     fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=dt))
@@ -2695,14 +2732,14 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                     fixed.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=r10b, dst=dst))
             case asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=src, dst=dst) if _is_mem(dst):
                 # movzbl/movzbq dst must be a register; route through %r11 of the destination width.
-                r11 = asm.Register(asm.Registers.R11, _reg_width(dt))
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(dt))
                 fixed.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=src, dst=r11))
                 fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=dt))
             case asm.Binary(assembly_type=asm.Quadword(), operator=op, src1=src1, src2=asm.Imm(value=v), dst=dst) if (
                 not _fits_in_int32(v)
             ):
                 # addq/subq/imulq cannot encode a 64-bit immediate; route src2 through %r10.
-                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
                 fixed.append(asm.Binary(operator=op, src1=src1, src2=r10q, dst=dst, assembly_type=asm.Quadword()))
             case asm.Cmp(assembly_type=asm.Quadword(), op1=asm.Imm(value=v), op2=asm.Imm() as op2_imm) if (
@@ -2710,29 +2747,29 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
             ):
                 # Both operands are immediates and op1 is large: the generic op2-is-Imm case would fire
                 # first and leave Cmp(Imm(large), reg) unprocessed. Handle both upfront.
-                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
-                r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
                 fixed.append(asm.Mov(src=op2_imm, dst=r11q, assembly_type=asm.Quadword()))
                 fixed.append(asm.Cmp(op1=r10q, op2=r11q, assembly_type=asm.Quadword()))
             case asm.Cmp(assembly_type=at, op1=op1, op2=asm.Imm() as op2):
-                r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
                 fixed.append(asm.Mov(src=op2, dst=r11, assembly_type=at))
                 fixed.append(asm.Cmp(op1=op1, op2=r11, assembly_type=at))
             case asm.Cmp(assembly_type=asm.Quadword(), op1=asm.Imm(value=v), op2=op2) if not _fits_in_int32(v):
-                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
                 fixed.append(asm.Cmp(op1=r10q, op2=op2, assembly_type=asm.Quadword()))
             case asm.Cmp(assembly_type=asm.Double(), op1=op1, op2=op2) if _is_mem(op2):
                 # ucomisd requires op2 (the XMM "destination" in Intel terms) to be a
                 # hardware register. Route op2 through %xmm15 when it is a memory slot.
-                xmm15 = asm.Register(asm.Registers.XMM15, asm.Width.QWORD)
+                xmm15 = asm.Register(asm.FPRegisters.XMM15, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=op2, dst=xmm15, assembly_type=asm.Double()))
                 fixed.append(asm.Cmp(op1=op1, op2=xmm15, assembly_type=asm.Double()))
             case asm.Cmp(assembly_type=at, op1=op1, op2=op2) if _is_mem(op1) and at != asm.Double():
                 # For integer cmpl/cmpq both operands cannot be memory; route op1 through
                 # %r10/%r10d.  (ucomisd CAN accept op1 as m64, so doubles are excluded.)
-                r10 = asm.Register(asm.Registers.R10, _reg_width(at))
+                r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=op1, dst=r10, assembly_type=at))
                 fixed.append(asm.Cmp(op1=r10, op2=op2, assembly_type=at))
             case asm.Movsx(src_type=st, dst_type=dt, src=src, dst=dst):
@@ -2740,22 +2777,22 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
             case asm.Cvttsd2si(assembly_type=at, src=src, dst=dst) if _is_mem(dst):
                 # cvttsd2si dst must be a register; route through %r11d/%r11 then store with
                 # the correct width so we do not clobber adjacent bytes on the stack.
-                r11 = asm.Register(asm.Registers.R11, _reg_width(at))
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
                 fixed.append(asm.Cvttsd2si(src=src, dst=r11, assembly_type=at))
                 fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=at))
             case asm.Cvtsi2sd(assembly_type=at, src=asm.Imm() as imm, dst=dst):
                 # cvtsi2sd src must be a register or memory, not an immediate; load into %r10/%r10d first.
-                r10 = asm.Register(asm.Registers.R10, _reg_width(at))
+                r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=imm, dst=r10, assembly_type=at))
                 if _is_mem(dst):
-                    xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+                    xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
                     fixed.append(asm.Cvtsi2sd(src=r10, dst=xmm14, assembly_type=at))
                     fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
                 else:
                     fixed.append(asm.Cvtsi2sd(src=r10, dst=dst, assembly_type=at))
             case asm.Cvtsi2sd(assembly_type=at, src=src, dst=dst) if _is_mem(dst):
                 # cvtsi2sd dst must be an XMM register; route through %xmm14 then movsd to memory.
-                xmm14 = asm.Register(asm.Registers.XMM14, asm.Width.QWORD)
+                xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
                 fixed.append(asm.Cvtsi2sd(src=src, dst=xmm14, assembly_type=at))
                 fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
             case asm.Push(assembly_type=asm.Longword(), operand=asm.Imm(value=v)) if not _fits_in_int32(v):
@@ -2766,48 +2803,102 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 truncated = v & 0xFFFFFFFF
                 if truncated >= (1 << 31):
                     truncated -= 1 << 32
-                r10d = asm.Register(asm.Registers.R10, asm.Width.DWORD)
-                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                r10d = asm.Register(asm.GPRegisters.R10, asm.Width.DWORD)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(truncated), dst=r10d, assembly_type=asm.Longword()))
                 fixed.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
             case asm.Push(assembly_type=asm.Quadword(), operand=asm.Imm(value=v)) if not _fits_in_int32(v):
                 # pushq only accepts 8-bit or 32-bit sign-extended immediates; a 64-bit long
                 # constant that doesn't fit in 32 bits must be routed through %r10.
-                r10q = asm.Register(asm.Registers.R10, asm.Width.QWORD)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=asm.Imm(v), dst=r10q, assembly_type=asm.Quadword()))
                 fixed.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
             case asm.Push(assembly_type=asm.Double(), operand=asm.Register() as xmm_reg):
                 # pushq %xmmN is not encodable; write explicitly through the stack pointer.
-                rsp = asm.Register(asm.Registers.SP, asm.Width.QWORD)
+                rsp = asm.Register(asm.GPRegisters.SP, asm.Width.QWORD)
                 fixed.append(asm.AllocateStack(8))
                 fixed.append(asm.Mov(src=xmm_reg, dst=asm.Memory(reg=rsp, offset=0), assembly_type=asm.Double()))
             case asm.Push(assembly_type=asm.Double(), operand=operand) if _is_mem(operand):
                 # movsd cannot move to a GP register, but the double's bits can be
                 # loaded as a raw quadword with movq and then pushed normally.
-                axq = asm.Register(asm.Registers.AX, asm.Width.QWORD)
-                fixed.append(asm.Mov(src=operand, dst=axq, assembly_type=asm.Quadword()))
-                fixed.append(asm.Push(operand=axq, assembly_type=asm.Quadword()))
+                # Use R10 (not AX) — R10 is excluded from register allocation so it
+                # cannot hold a pseudo that is live across this push.
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=operand, dst=r10q, assembly_type=asm.Quadword()))
+                fixed.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
             case asm.Push(assembly_type=at, operand=operand) if _is_mem(operand):
                 # pushq cannot address a memory slot directly.
                 # Load via movl (zero-extends) for ints, movq for longs, then push the 64-bit register.
-                ax = asm.Register(asm.Registers.AX, _reg_width(at))
-                fixed.append(asm.Mov(src=operand, dst=ax, assembly_type=at))
-                fixed.append(asm.Push(operand=asm.Register(asm.Registers.AX, asm.Width.QWORD), assembly_type=at))
+                # Use R10 (not AX) — R10 is excluded from register allocation so it
+                # cannot hold a pseudo that is live across this push.
+                r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
+                fixed.append(asm.Mov(src=operand, dst=r10, assembly_type=at))
+                fixed.append(asm.Push(operand=asm.Register(asm.GPRegisters.R10, asm.Width.QWORD), assembly_type=at))
             case asm.Lea(src=src, dst=dst) if _is_mem(dst):
                 # leaq destination must be a register; route through %r11 then store.
-                r11q = asm.Register(asm.Registers.R11, asm.Width.QWORD)
+                r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
                 fixed.append(asm.Lea(src=src, dst=r11q))
                 fixed.append(asm.Mov(src=r11q, dst=dst, assembly_type=asm.Quadword()))
             case _:
                 fixed.append(instr)
-    return asm.Function(
-        name=fn.name,
-        globl=fn.globl,
-        params=fn.params,
-        instructions=tuple(fixed),
-        source_file=fn.source_file,
-        source_line=fn.source_line,
-    )
+    return dataclasses.replace(fn, instructions=tuple(fixed))
+
+
+# ==============================================================================
+# Callee-saved register save / restore
+# ==============================================================================
+
+
+def _insert_callee_saves(
+    fn: asm.Function,
+    gp_callee: list[asm.GPRegisters],
+    fp_callee: list[asm.FPRegisters],
+) -> asm.Function:
+    """Insert FP callee-saved register saves at function entry and restores before each ``Ret``.
+
+    GP callee-saved registers are handled by ``Function.emit()`` via the
+    ``gp_callee_saved`` field (emitted as ``pushq``/``popq``), so this function
+    only inserts ``movsd`` saves and restores for XMM registers.  FP save slots
+    begin immediately below the GP save area (``-8 * (len(gp_callee) + 1)``
+    relative to ``%rbp``).
+
+    Args:
+        fn: The assembly function to rewrite.
+        gp_callee: Sorted list of callee-saved GP registers (used only to
+            compute the starting offset for FP saves; no GP instructions are
+            emitted here).
+        fp_callee: Sorted list of callee-saved FP (XMM) registers that were
+            assigned to pseudos during register allocation.
+
+    Returns:
+        A new ``asm.Function`` with FP save instructions prepended and FP
+        restore instructions inserted before every ``Ret``.  Returns ``fn``
+        unchanged when ``fp_callee`` is empty.
+    """
+    if not fp_callee:
+        return fn
+
+    bp = asm.Register(asm.GPRegisters.BP, asm.Width.QWORD)
+
+    saves: list[asm.Instruction] = []
+    restores: list[asm.Instruction] = []
+
+    offset = -8 * (len(gp_callee) + 1)
+    for reg in fp_callee:
+        mem = asm.Memory(bp, offset)
+        saves.append(asm.Mov(src=asm.Register(reg, asm.Width.QWORD), dst=mem, assembly_type=asm.Double()))
+        restores.append(asm.Mov(src=mem, dst=asm.Register(reg, asm.Width.QWORD), assembly_type=asm.Double()))
+        offset -= 8
+
+    restores.reverse()
+
+    new_instrs: list[asm.Instruction] = list(saves)
+    for instr in fn.instructions:
+        if isinstance(instr, asm.Ret):
+            new_instrs.extend(restores)
+        new_instrs.append(instr)
+
+    return dataclasses.replace(fn, instructions=tuple(new_instrs))
 
 
 # ==============================================================================
@@ -2815,28 +2906,32 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
 # ==============================================================================
 
 
-def _add_stack_allocation(fn: asm.Function, stack_size: int) -> asm.Function:
+def _add_stack_allocation(fn: asm.Function, stack_size: int, *, gp_callee_size: int = 0) -> asm.Function:
     """Prepend an ``AllocateStack`` instruction when the function uses the stack.
 
-    The size is rounded up to the nearest multiple of 16 bytes to preserve
-    16-byte stack alignment required by the System V AMD64 ABI.
+    The allocated size is chosen so that ``gp_callee_size + AllocateStack`` is
+    a multiple of 16, preserving the 16-byte stack alignment required by the
+    System V AMD64 ABI.  When ``gp_callee_size`` is an odd multiple of 8 (i.e.
+    the function pushes an odd number of callee-saved GP registers), an extra 8
+    bytes of padding are added.
 
     Args:
         fn: The assembly function to modify.
-        stack_size: The raw number of stack bytes needed (0 if none).
+        stack_size: The raw number of stack bytes needed for locals and FP callee saves.
+        gp_callee_size: Bytes already consumed on the stack by ``pushq`` saves
+            (``8 * len(gp_callee)``).  Used to compute alignment padding.
 
     Returns:
         An ``asm.Function`` with an ``AllocateStack`` prepended, or the
-        original function unchanged when ``stack_size`` is zero.
+        original function unchanged when no allocation is required.
     """
-    if stack_size == 0:
+    needed_mod = (-gp_callee_size) % 16  # 0 or 8: how much AllocateStack must be (mod 16)
+    if needed_mod == 0:
+        aligned = (stack_size + 15) & ~15
+    else:
+        # Odd number of pushq saves: AllocateStack must be ≡ 8 (mod 16) so that the
+        # combined push+alloc is 0 (mod 16).
+        aligned = ((stack_size + 7) // 16) * 16 + 8
+    if aligned == 0:
         return fn
-    aligned = (stack_size + 15) & ~15
-    return asm.Function(
-        name=fn.name,
-        globl=fn.globl,
-        params=fn.params,
-        instructions=(asm.AllocateStack(size=aligned), *fn.instructions),
-        source_file=fn.source_file,
-        source_line=fn.source_line,
-    )
+    return dataclasses.replace(fn, instructions=(asm.AllocateStack(size=aligned), *fn.instructions))

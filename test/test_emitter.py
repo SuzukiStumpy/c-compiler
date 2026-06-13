@@ -16,6 +16,7 @@ from compiler.syntax.asm import (
     CondCodes,
     DeallocateStack,
     Function,
+    GPRegisters,
     Imm,
     Jmp,
     JmpCC,
@@ -25,7 +26,6 @@ from compiler.syntax.asm import (
     Program,
     Push,
     Register,
-    Registers,
     Ret,
     SetCC,
     Width,
@@ -47,23 +47,23 @@ def test_imm_emit_zero() -> None:
 
 
 def test_register_emit() -> None:
-    """``Register(Registers.AX).emit()`` produces ``%eax``."""
-    assert Register(Registers.AX).emit() == "%eax"
+    """``Register(GPRegisters.AX).emit()`` produces ``%eax``."""
+    assert Register(GPRegisters.AX).emit() == "%eax"
 
 
 @pytest.mark.parametrize(
     ("reg", "width", "expected"),
     [
-        (Registers.AX, Width.DWORD, "%eax"),
-        (Registers.AX, Width.BYTE, "%al"),
-        (Registers.CX, Width.DWORD, "%ecx"),
-        (Registers.CX, Width.BYTE, "%cl"),
-        (Registers.DX, Width.DWORD, "%edx"),
-        (Registers.DX, Width.BYTE, "%dl"),
-        (Registers.R10, Width.DWORD, "%r10d"),
-        (Registers.R10, Width.BYTE, "%r10b"),
-        (Registers.R11, Width.DWORD, "%r11d"),
-        (Registers.R11, Width.BYTE, "%r11b"),
+        (GPRegisters.AX, Width.DWORD, "%eax"),
+        (GPRegisters.AX, Width.BYTE, "%al"),
+        (GPRegisters.CX, Width.DWORD, "%ecx"),
+        (GPRegisters.CX, Width.BYTE, "%cl"),
+        (GPRegisters.DX, Width.DWORD, "%edx"),
+        (GPRegisters.DX, Width.BYTE, "%dl"),
+        (GPRegisters.R10, Width.DWORD, "%r10d"),
+        (GPRegisters.R10, Width.BYTE, "%r10b"),
+        (GPRegisters.R11, Width.DWORD, "%r11d"),
+        (GPRegisters.R11, Width.BYTE, "%r11b"),
     ],
     ids=[
         "ax-dword",
@@ -78,7 +78,7 @@ def test_register_emit() -> None:
         "r11-byte",
     ],
 )
-def test_register_emit_all_widths(reg: Registers, width: Width, expected: str) -> None:
+def test_register_emit_all_widths(reg: GPRegisters, width: Width, expected: str) -> None:
     """``Register.emit()`` returns the correct AT&T name for every register/width combination."""
     assert Register(reg, width).emit() == expected
 
@@ -90,7 +90,7 @@ def test_register_emit_all_widths(reg: Registers, width: Width, expected: str) -
 
 def test_mov_emit() -> None:
     """``Mov`` emits ``movl <src>, <dst>`` at column 6 with operands at column 12."""
-    assert Mov(src=Imm(value=2), dst=Register(Registers.AX)).emit() == "      movl  $2, %eax"
+    assert Mov(src=Imm(value=2), dst=Register(GPRegisters.AX)).emit() == "      movl  $2, %eax"
 
 
 def test_ret_emit() -> None:
@@ -118,7 +118,7 @@ def test_function_emit_label() -> None:
 
 def test_function_emit_instructions() -> None:
     """Instruction lines follow the prologue in order."""
-    fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=2), dst=Register(Registers.AX)), Ret()))
+    fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=2), dst=Register(GPRegisters.AX)), Ret()))
     lines = fn.emit().splitlines()
     # lines[0] = .globl, [1] = .text, [2] = label, [3] = pushq, [4] = movq (prologue)
     assert lines[5] == "      movl  $2, %eax"
@@ -127,7 +127,7 @@ def test_function_emit_instructions() -> None:
 
 def test_function_emit_full() -> None:
     """Full function emission matches the expected template exactly."""
-    fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(Registers.AX)), Ret()))
+    fn = Function(name="main", globl=True, instructions=(Mov(src=Imm(value=0), dst=Register(GPRegisters.AX)), Ret()))
     expected = (
         "      .globl main\n"
         "      .text\n"
@@ -149,7 +149,7 @@ def test_function_emit_full() -> None:
 
 def test_emit_program_linux_content(tmp_path: Path) -> None:
     """On Linux the file contains the expected instructions."""
-    mov = Mov(src=Imm(value=3), dst=Register(Registers.AX))
+    mov = Mov(src=Imm(value=3), dst=Register(GPRegisters.AX))
     program = Program(definitions=(Function(name="main", globl=True, instructions=(mov, Ret())),))
     out = tmp_path / "main.s"
     emit_program(program, out, platform="linux")
@@ -248,13 +248,13 @@ def test_emit_program_bad_path_raises(tmp_path: Path) -> None:
 
 def test_cmp_emit() -> None:
     """``Cmp`` emits ``cmpl <op1>, <op2>`` at column 6 with operands at column 12."""
-    assert Cmp(op1=Imm(value=1), op2=Register(Registers.AX)).emit() == "      cmpl  $1, %eax"
+    assert Cmp(op1=Imm(value=1), op2=Register(GPRegisters.AX)).emit() == "      cmpl  $1, %eax"
 
 
 def test_cmp_emit_memory_operands() -> None:
     """``Cmp`` with a stack op2 emits the correct memory reference."""
     assert (
-        Cmp(op1=Imm(value=0), op2=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)).emit()
+        Cmp(op1=Imm(value=0), op2=Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-4)).emit()
         == "      cmpl  $0, -4(%rbp)"
     )
 
@@ -295,13 +295,13 @@ def test_jmpcc_emit(cond_code: CondCodes, expected: str) -> None:
 )
 def test_setcc_emit(cond_code: CondCodes, expected: str) -> None:
     """``SetCC`` emits ``  set<cc> <operand>`` for every condition code."""
-    assert SetCC(cond_code=cond_code, operand=Register(Registers.AX, Width.BYTE)).emit() == expected
+    assert SetCC(cond_code=cond_code, operand=Register(GPRegisters.AX, Width.BYTE)).emit() == expected
 
 
 def test_setcc_emit_stack_operand() -> None:
     """``SetCC`` with a stack operand emits the memory reference correctly."""
     assert (
-        SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(Registers.BP, Width.QWORD), offset=-4)).emit()
+        SetCC(cond_code=CondCodes.E, operand=Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-4)).emit()
         == "      sete  -4(%rbp)"
     )
 
@@ -313,7 +313,7 @@ def test_label_emit() -> None:
 
 def test_push_emit() -> None:
     """``Push`` emits ``pushq <operand>`` at column 6 with operand at column 12."""
-    assert Push(operand=Register(Registers.AX, Width.QWORD)).emit() == "      pushq %rax"
+    assert Push(operand=Register(GPRegisters.AX, Width.QWORD)).emit() == "      pushq %rax"
 
 
 def test_allocate_stack_emit() -> None:

@@ -313,18 +313,21 @@ class TestRewriteSecondary:
         result = _rewrite_instruction(instr, reaching)
         assert result == tac.Load(src_ptr=ptr_a, dst=_DST)
 
-    def test_store_src_and_dst_ptr_are_substituted(self) -> None:
-        """Both operands of ``Store`` are replaced."""
+    def test_store_src_is_substituted_dst_ptr_is_not(self) -> None:
+        """Only the src operand of ``Store`` is replaced; dst_ptr is preserved
+        so the assembler's Mov-coalescing exemption can prevent a spurious
+        ptr↔AX interference edge in the register allocator."""
         ptr = _var("p")
+        q = _var("q")
         reaching = frozenset(
             {
                 tac.Copy(src=_ci(99), dst=_X),
-                tac.Copy(src=ptr, dst=_var("q")),
+                tac.Copy(src=ptr, dst=q),
             }
         )
-        instr = tac.Store(src=_X, dst_ptr=_var("q"))
+        instr = tac.Store(src=_X, dst_ptr=q)
         result = _rewrite_instruction(instr, reaching)
-        assert result == tac.Store(src=_ci(99), dst_ptr=ptr)
+        assert result == tac.Store(src=_ci(99), dst_ptr=q)
 
     def test_add_ptr_operands_are_substituted(self) -> None:
         """Both ptr and index operands of ``AddPtr`` are replaced."""

@@ -9,7 +9,7 @@ import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.optimiser import do_optimization
 from compiler.optimiser.cfg import ControlFlowGraph, cfg_to_instructions, make_control_flow_graph
-from compiler.optimiser.main import optimize_function
+from compiler.optimiser.tac_main import optimize_function
 from compiler.types.optimizations import Optimizations
 
 # ---------------------------------------------------------------------------

@@ -8,8 +8,8 @@ one form.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from compiler.syntax.asm.instructions import Instruction, _asm_line
-from compiler.syntax.asm.operands import Operand
+from compiler.syntax.asm.instructions import Instruction, Ret, _asm_line
+from compiler.syntax.asm.operands import GPRegisters, Operand, Width
 from compiler.syntax.asm.values import (
     CharInit,
     DoubleInit,
@@ -74,6 +74,10 @@ class Function(TopLevel):
         instructions: The ordered sequence of instructions in the function
             body. May be empty before code generation fills it in, but will
             contain at least one instruction in fully generated output.
+        gp_callee_saved: GP registers that were assigned to pseudos and must be
+            preserved across calls.  Saved with ``pushq`` immediately after the
+            frame-pointer prologue and restored with ``leaq``/``popq`` before
+            each ``Ret``.  Empty for functions that use no callee-saved GP registers.
         source_file: Path of the source file where this function was declared.
             Propagated from ``ast.Function`` via the TAC stage; empty string
             when not available (e.g. hand-constructed in tests).
@@ -85,6 +89,7 @@ class Function(TopLevel):
     globl: bool
     params: tuple[Operand, ...] = ()
     instructions: tuple[Instruction, ...] = ()
+    gp_callee_saved: tuple[GPRegisters, ...] = ()
     source_file: str = ""
     source_line: int = 0
 
@@ -95,14 +100,11 @@ class Function(TopLevel):
         (if required), a label, and the emitted text of each instruction, all
         joined by newlines.
 
-        When ``source_file`` is non-empty a blank line followed by a ``###`` /
-        ``# Function:`` / ``# Source:`` / ``###`` block is prepended so the
-        assembly file identifies each function's origin.
-
-        When the instruction list contains an ``AllocateStack`` instruction,
-        a standard frame-pointer prologue (``pushq %rbp; movq %rsp, %rbp``) is
-        inserted immediately after the label, and a matching epilogue
-        (``movq %rbp, %rsp; popq %rbp``) is inserted before every ``Ret``.
+        Always emits a standard frame-pointer prologue (``pushq %rbp;
+        movq %rsp, %rbp``) immediately after the label.  When
+        ``gp_callee_saved`` is non-empty, ``pushq`` instructions for each
+        register follow the prologue immediately, and matching ``leaq``/
+        ``popq`` restore sequences are inserted before every ``Ret``.
 
         Returns:
             A multi-line string of the form::
@@ -114,12 +116,15 @@ class Function(TopLevel):
                 [###]
                   .globl <name>
                 <name>:
-                  [pushq %rbp]
-                  [movq %rsp, %rbp]
+                  pushq %rbp
+                  movq %rsp, %rbp
+                  [pushq <callee-saved-reg> ...]
                   <instruction 1>
                   ...
-                  [movq %rbp, %rsp]
-                  [popq %rbp]
+                  [leaq -N(%rbp), %rsp]
+                  [popq <callee-saved-reg> ...]
+                  movq %rbp, %rsp
+                  popq %rbp
                   ret
         """
         lines: list[str] = []
@@ -138,7 +143,14 @@ class Function(TopLevel):
                 _asm_line("movq", "%rsp", "%rbp"),
             ]
         )
+        for gp_reg in self.gp_callee_saved:
+            lines.append(_asm_line("pushq", f"%{gp_reg.value[Width.QWORD]}"))
+        n_gp = len(self.gp_callee_saved)
         for instr in self.instructions:
+            if isinstance(instr, Ret) and n_gp:
+                lines.append(_asm_line("leaq", f"-{8 * n_gp}(%rbp)", "%rsp"))
+                for gp_reg in reversed(self.gp_callee_saved):
+                    lines.append(_asm_line("popq", f"%{gp_reg.value[Width.QWORD]}"))
             lines.append(instr.emit())
         return "\n".join(lines)
 

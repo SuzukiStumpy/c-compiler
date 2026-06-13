@@ -598,7 +598,10 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
             return ast.CompoundInit([_zero_initializer(elem_t, struct_type_table) for _ in range(size)])
         case Structure(tag=tag):
             struct_def = struct_type_table[tag]
-            return ast.CompoundInit([_zero_initializer(m.member_type, struct_type_table) for m in struct_def.members])
+            return ast.CompoundInit(
+                [_zero_initializer(m.member_type, struct_type_table) for m in struct_def.members],
+                init_type=Structure(tag=tag),
+            )
         case Union(tag=tag):
             # C11 §6.7.9p10: union zero-initialisation initialises the first named member.
             union_def = struct_type_table[tag]

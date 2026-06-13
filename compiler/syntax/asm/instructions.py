@@ -675,6 +675,25 @@ class Push(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class Pop(Instruction):
+    """A ``popq`` instruction that pops the topmost value from the stack into a register
+
+    Attributes:
+        target: The register into which the value will be popped
+    """
+
+    target: Register
+
+    def emit(self) -> str:
+        """Return a ``popq`` instruction which pops the topmost value from the stack
+
+        Returns:
+            A string of the form ``"  popq <register>"``.
+        """
+        return _asm_line("popq", self.target.emit())
+
+
+@dataclass(frozen=True, slots=True)
 class Call(Instruction):
     """A ``call`` instruction that transfers control to a named function.
 

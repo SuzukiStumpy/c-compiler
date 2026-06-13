@@ -233,11 +233,18 @@ def compiler(
     Args:
         source: Path to the C source file to compile.
         c: Don't link an executable file, just produce object file.
+        s: Don't assemble or link, just produce the assembly file.
+        libraries: Libraries to link into the compiled binary.
         lex: Stop the pipeline after lexing.
         parse: Stop the pipeline after parsing; print the AST.
         validate: Stop after semantic analysis; print the resolved AST.
         tacky: Stop the pipeline after TAC generation; print the TAC AST.
         codegen: Stop after code generation; emit assembly but do not link.
+        fold_constants: Enable TAC-level constant folding.
+        propagate_copies: Enable TAC-level copy propagation.
+        eliminate_unreachable_code: Enable TAC-level unreachable code elimination.
+        eliminate_dead_stores: Enable TAC-level dead store elimination.
+        optimize: Enable all optimizations.
     """
     if codegen:
         stages = Stage.LEX | Stage.PARSE | Stage.VALIDATE | Stage.TACKY | Stage.CODEGEN
