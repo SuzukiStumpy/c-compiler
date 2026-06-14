@@ -301,18 +301,20 @@ def _binary_tac_program(op: tac.BinaryOperator, src1: tac.Val, src2: tac.Val) ->
 # ---------------------------------------------------------------------------
 
 
-def test_binary_add_produces_asm_binary_with_r11_scratch() -> None:
-    """``Binary(Add, …)`` uses ``%r11d`` as the scratch accumulator register."""
+def test_binary_add_src1_loaded_into_dst_slot() -> None:
+    """``Binary(Add, …)`` first copies src1 into the result slot via an explicit ``Mov``."""
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
-    binary = result.definitions[0].instructions[1]
-    assert isinstance(binary, asm.Binary)
-    assert binary.dst == asm.Register(asm.GPRegisters.R11)
+    # AllocateStack, Mov(src1, dst), Binary(Add, dst, src2, dst), Mov(dst, AX), Ret
+    mov = result.definitions[0].instructions[1]
+    assert isinstance(mov, asm.Mov)
+    assert mov.src == asm.Imm(value=1)
 
 
 def test_binary_add_operator_is_asm_add() -> None:
     """``tac.Add()`` maps to ``asm.Add()`` inside the ``Binary`` instruction."""
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
-    binary = result.definitions[0].instructions[1]
+    # AllocateStack, Mov(src1, dst), Binary(Add, dst, src2, dst), Mov(dst, AX), Ret
+    binary = result.definitions[0].instructions[2]
     assert isinstance(binary, asm.Binary)
     assert binary.operator == asm.Add()
 
@@ -320,7 +322,7 @@ def test_binary_add_operator_is_asm_add() -> None:
 def test_binary_subtract_operator_is_asm_sub() -> None:
     """``tac.Subtract()`` maps to ``asm.Sub()`` inside the ``Binary`` instruction."""
     result = generate(_binary_tac_program(tac.Subtract(), tac.Constant(ConstInt(5)), tac.Constant(ConstInt(3))))
-    binary = result.definitions[0].instructions[1]
+    binary = result.definitions[0].instructions[2]
     assert isinstance(binary, asm.Binary)
     assert binary.operator == asm.Sub()
 
@@ -328,24 +330,22 @@ def test_binary_subtract_operator_is_asm_sub() -> None:
 def test_binary_multiply_operator_is_asm_mult() -> None:
     """``tac.Multiply()`` maps to ``asm.Mult()`` inside the ``Binary`` instruction."""
     result = generate(_binary_tac_program(tac.Multiply(), tac.Constant(ConstInt(4)), tac.Constant(ConstInt(3))))
-    binary = result.definitions[0].instructions[1]
-    assert isinstance(binary, asm.Binary)
+    binary = next(i for i in result.definitions[0].instructions if isinstance(i, asm.Binary))
     assert binary.operator == asm.Mult()
 
 
-def test_binary_add_result_moved_from_r11_to_stack() -> None:
-    """After the ``Binary`` instruction, the result is moved from ``%r11d`` to the stack slot."""
+def test_binary_add_binary_uses_dst_as_inplace_accumulator() -> None:
+    """The ``Binary`` instruction uses ``dst`` as both src1 and the accumulator (in-place operation)."""
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
-    # AllocateStack, Binary, Mov(R11, Stack(-4)), Mov(Stack(-4), AX), Ret
-    mov = result.definitions[0].instructions[2]
-    assert mov == asm.Mov(
-        src=asm.Register(asm.GPRegisters.R11),
-        dst=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4),
-    )
+    # AllocateStack, Mov(src1, dst), Binary(Add, dst, src2, dst), Mov(dst, AX), Ret
+    binary = result.definitions[0].instructions[2]
+    assert isinstance(binary, asm.Binary)
+    assert binary.src1 == binary.dst
 
 
 def test_binary_add_instruction_count() -> None:
     """``Binary(Add, c, c)`` + ``Return`` produces exactly 5 instructions."""
+    # AllocateStack, Mov(src1, dst), Binary(Add, dst, src2, dst), Mov(dst, AX), Ret
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     assert len(result.definitions[0].instructions) == 5
 
@@ -460,7 +460,7 @@ def test_no_pseudo_operands_after_binary_code_gen() -> None:
 
 
 class TestBitwiseAndOrXorCodeGen:
-    """``tac.Binary`` with And/Or/Xor operators lowers to ``asm.Binary`` using ``%r11d``."""
+    """``tac.Binary`` with And/Or/Xor operators lowers to ``asm.Binary`` using in-place accumulation."""
 
     def _instructions(self, op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
         """Generate instructions for ``return 3 <op> 5;`` with two constants."""
@@ -479,11 +479,11 @@ class TestBitwiseAndOrXorCodeGen:
         ],
         ids=["and", "or", "xor"],
     )
-    def test_operator_and_r11_routing(self, tac_op: tac.BinaryOperator, asm_op_type: type) -> None:
-        """Each bitwise TAC op lowers to ``asm.Binary`` with the correct operator and ``%r11d`` as dst."""
+    def test_operator_and_inplace_accumulation(self, tac_op: tac.BinaryOperator, asm_op_type: type) -> None:
+        """Each bitwise TAC op lowers to ``asm.Binary`` with the correct operator and src1 == dst."""
         binary = next(i for i in self._instructions(tac_op) if isinstance(i, asm.Binary))
         assert isinstance(binary.operator, asm_op_type)
-        assert binary.dst == asm.Register(asm.GPRegisters.R11)
+        assert binary.src1 == binary.dst
 
     @pytest.mark.parametrize(
         ("op", "src1", "src2", "expected"),
@@ -1505,9 +1505,10 @@ class TestZeroExtendCharCodeGen:
 
         ``movl`` to a 32-bit register implicitly zero-extends to 64 bits, so the
         fixup pass replaces ``MoveZeroExtend(Longword, Quadword)`` with a plain
-        ``Mov(Longword)`` instruction.  ``s_copy`` keeps ``s`` live past ``d``'s
-        definition so the two pseudos interfere and are not coalesced — otherwise
-        the self-move would be eliminated before fixup runs.
+        ``Mov(Longword)`` instruction.  A ``Negate`` into ``s_copy`` (a non-copy
+        instruction) keeps ``s`` live past ``d``'s definition, so ``s`` and ``d``
+        interfere and cannot be coalesced away — a plain ``Copy`` would get
+        the copy-pair exception and fail to create the needed interference edge.
         """
         st = _make_symbol_table(s=UIntType, d=ULongType, s_copy=UIntType)
         program = tac.Program(
@@ -1516,7 +1517,7 @@ class TestZeroExtendCharCodeGen:
                     name="main",
                     body=(
                         tac.ZeroExtend(src=tac.Var("s"), dst=tac.Var("d")),
-                        tac.Copy(src=tac.Var("s"), dst=tac.Var("s_copy")),
+                        tac.Unary(operator=tac.Negate(), src=tac.Var("s"), dst=tac.Var("s_copy")),
                         tac.Return(val=tac.Var("d")),
                     ),
                 ),
@@ -1532,17 +1533,22 @@ class TestTruncateToCharCodeGen:
     """``tac.Truncate`` to a char destination generates ``Mov(Byte)`` not ``Mov(Longword)``."""
 
     def test_truncate_to_schar_emits_movb(self) -> None:
-        """``Truncate`` with an ``SChar`` destination uses ``Byte`` assembly type."""
-        # s_copy keeps s live past d's definition so s and d interfere, preventing
-        # the byte-move from being eliminated as a self-move after register allocation.
-        st = _make_symbol_table(s=IntType, d=SChar, s_copy=IntType)
+        """``Truncate`` with an ``SChar`` destination uses ``Byte`` assembly type.
+
+        A ``Negate(d, d)`` before the ``Truncate`` creates a non-copy definition of
+        ``d`` while ``s`` is live (``s`` is used by the subsequent ``Truncate``).
+        This adds an interference edge between ``s`` and ``d`` so the coalescer
+        cannot merge them — a plain ``Copy`` would get the copy-pair exception and
+        fail to produce the required edge.
+        """
+        st = _make_symbol_table(s=IntType, d=SChar)
         program = tac.Program(
             top_level=(
                 tac.Function(
                     name="main",
                     body=(
+                        tac.Unary(operator=tac.Negate(), src=tac.Var("d"), dst=tac.Var("d")),
                         tac.Truncate(src=tac.Var("s"), dst=tac.Var("d")),
-                        tac.Copy(src=tac.Var("s"), dst=tac.Var("s_copy")),
                         tac.Return(val=tac.Var("d")),
                     ),
                 ),
@@ -1553,17 +1559,20 @@ class TestTruncateToCharCodeGen:
         assert any(m.assembly_type == asm.Byte() for m in movs), "expected a Mov(Byte) for Truncate → SChar"
 
     def test_truncate_to_int_still_emits_movl(self) -> None:
-        """``Truncate`` with an ``IntType`` destination still uses ``Longword`` (regression guard)."""
-        # s_copy keeps s live past d's definition so s and d interfere, preventing
-        # the longword-move from being eliminated as a self-move after register allocation.
-        st = _make_symbol_table(s=LongType, d=IntType, s_copy=LongType)
+        """``Truncate`` with an ``IntType`` destination still uses ``Longword`` (regression guard).
+
+        A ``Negate(d, d)`` before the ``Truncate`` creates a non-copy definition of
+        ``d`` while ``s`` is live, adding an interference edge so the coalescer
+        cannot merge them and eliminate the ``Mov(Longword)``.
+        """
+        st = _make_symbol_table(s=LongType, d=IntType)
         program = tac.Program(
             top_level=(
                 tac.Function(
                     name="main",
                     body=(
+                        tac.Unary(operator=tac.Negate(), src=tac.Var("d"), dst=tac.Var("d")),
                         tac.Truncate(src=tac.Var("s"), dst=tac.Var("d")),
-                        tac.Copy(src=tac.Var("s"), dst=tac.Var("s_copy")),
                         tac.Return(val=tac.Var("d")),
                     ),
                 ),

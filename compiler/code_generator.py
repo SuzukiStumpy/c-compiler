@@ -814,27 +814,30 @@ def _translate_binary(
         case tac.Add() | tac.Subtract() | tac.Multiply() | tac.BitwiseAnd() | tac.BitwiseOr() | tac.BitwiseXor():
             at = _asm_type(dst, symbol_table)
             if at == asm.Double():
-                xmm15 = asm.Register(asm.FPRegisters.XMM15, asm.Width.QWORD)
+                # FP: Mov(src1, dst) makes the copy visible to the coalescer; Binary
+                # uses dst as both src1 and accumulator so the internal movsd is
+                # suppressed (src1 == dst).
                 return [
+                    asm.Mov(src=src1_asm, dst=dst_asm, assembly_type=at),
                     asm.Binary(
                         operator=_translate_binary_op_double(op),
-                        src1=src1_asm,
+                        src1=dst_asm,
                         src2=src2_asm,
-                        dst=xmm15,
+                        dst=dst_asm,
                         assembly_type=at,
                     ),
-                    asm.Mov(src=xmm15, dst=dst_asm, assembly_type=at),
                 ]
-            r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
+            # GP: emit an explicit Mov so the coalescer can merge src1 with dst,
+            # then an in-place Binary (src1 == dst suppresses the internal movl/movq).
             return [
+                asm.Mov(src=src1_asm, dst=dst_asm, assembly_type=at),
                 asm.Binary(
                     operator=_translate_binary_op(op),
-                    src1=src1_asm,
+                    src1=dst_asm,
                     src2=src2_asm,
-                    dst=r11,
+                    dst=dst_asm,
                     assembly_type=at,
                 ),
-                asm.Mov(src=r11, dst=dst_asm, assembly_type=at),
             ]
         case tac.LeftShift():
             at = _asm_type(dst, symbol_table)
@@ -865,16 +868,15 @@ def _translate_binary(
         case tac.Divide():
             at = _asm_type(dst, symbol_table)
             if at == asm.Double():
-                xmm15 = asm.Register(asm.FPRegisters.XMM15, asm.Width.QWORD)
                 return [
+                    asm.Mov(src=src1_asm, dst=dst_asm, assembly_type=at),
                     asm.Binary(
                         operator=asm.DivDouble(),
-                        src1=src1_asm,
+                        src1=dst_asm,
                         src2=src2_asm,
-                        dst=xmm15,
+                        dst=dst_asm,
                         assembly_type=at,
                     ),
-                    asm.Mov(src=xmm15, dst=dst_asm, assembly_type=at),
                 ]
             ax = asm.Register(asm.GPRegisters.AX, _reg_width(at))
             dx = asm.Register(asm.GPRegisters.DX, _reg_width(at))
@@ -2516,7 +2518,7 @@ def _replace_pseudos(
                 new_instructions.append(asm.Unary(operator=op, operand=resolve(operand), assembly_type=at))
             case asm.Binary(assembly_type=at, operator=op, src1=src1, src2=src2, dst=dst):
                 new_instructions.append(
-                    asm.Binary(operator=op, src1=resolve(src1), src2=resolve(src2), dst=dst, assembly_type=at)
+                    asm.Binary(operator=op, src1=resolve(src1), src2=resolve(src2), dst=resolve(dst), assembly_type=at)
                 )
             case asm.Idiv(assembly_type=at, operand=operand):
                 new_instructions.append(asm.Idiv(operand=resolve(operand), assembly_type=at))
@@ -2735,6 +2737,33 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 r11 = asm.Register(asm.GPRegisters.R11, _reg_width(dt))
                 fixed.append(asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=src, dst=r11))
                 fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=dt))
+            case asm.Binary(assembly_type=at, operator=asm.Mult(), src1=src1, src2=src2, dst=dst) if _is_mem(dst):
+                # imull dst must be a register. Load the accumulator (src1/dst) into %r11,
+                # multiply, then store the result back.  When src2 is also a large 64-bit
+                # immediate that imulq cannot encode directly, route it through %r10 first so
+                # the newly-emitted inner instruction never needs another fixup pass.
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
+                fixed.append(asm.Mov(src=src1, dst=r11, assembly_type=at))
+                if at == asm.Quadword() and isinstance(src2, asm.Imm) and not _fits_in_int32(src2.value):
+                    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                    fixed.append(asm.Mov(src=src2, dst=r10q, assembly_type=asm.Quadword()))
+                    fixed.append(asm.Binary(operator=asm.Mult(), src1=r11, src2=r10q, dst=r11, assembly_type=at))
+                else:
+                    fixed.append(asm.Binary(operator=asm.Mult(), src1=r11, src2=src2, dst=r11, assembly_type=at))
+                fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=at))
+            case asm.Binary(assembly_type=asm.Double(), operator=op, src1=src1, src2=src2, dst=dst) if _is_mem(dst):
+                # SSE binary dst must be an XMM register; route through %xmm14.
+                xmm14 = asm.Register(asm.FPRegisters.XMM14, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=src1, dst=xmm14, assembly_type=asm.Double()))
+                fixed.append(asm.Binary(operator=op, src1=xmm14, src2=src2, dst=xmm14, assembly_type=asm.Double()))
+                fixed.append(asm.Mov(src=xmm14, dst=dst, assembly_type=asm.Double()))
+            case asm.Binary(assembly_type=at, operator=op, src1=src1, src2=src2, dst=dst) if _is_mem(dst) and _is_mem(
+                src2
+            ):
+                # addl/subl/etc. cannot have both src2 and dst in memory; route src2 through %r10.
+                r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
+                fixed.append(asm.Mov(src=src2, dst=r10, assembly_type=at))
+                fixed.append(asm.Binary(operator=op, src1=src1, src2=r10, dst=dst, assembly_type=at))
             case asm.Binary(assembly_type=asm.Quadword(), operator=op, src1=src1, src2=asm.Imm(value=v), dst=dst) if (
                 not _fits_in_int32(v)
             ):

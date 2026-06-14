@@ -299,25 +299,34 @@ class Binary(Instruction):
         operator: The specific binary operation to perform.
         src1: The left (first) source operand.
         src2: The right (second) source operand.
-        dst: The destination register (also the accumulator for the operation).
+        dst: The destination operand (also the accumulator for the operation).  When
+            ``src1 == dst`` the copy prefix is suppressed so the instruction emits as
+            a single in-place operation (e.g. ``addl %ecx, %eax`` rather than
+            ``movl %eax, %eax; addl %ecx, %eax``).
         assembly_type: Selects the 32-bit or 64-bit form; defaults to ``Longword``.
     """
 
     operator: BinaryOperator
     src1: Operand
     src2: Operand
-    dst: Register
+    dst: Operand
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
         """Return a binary instruction sequence in AT&T syntax.
 
-        Moves ``src1`` into ``dst``, then applies the operator with ``src2``.
+        When ``src1 != dst`` first copies ``src1`` into ``dst``, then applies the
+        operator with ``src2``.  When ``src1 == dst`` the copy is suppressed and
+        only the operator instruction is emitted — the caller is responsible for
+        ensuring ``dst`` already holds ``src1``'s value (typically via a preceding
+        ``Mov`` that the register allocator may coalesce away).
+
         Integer operators use ``movl``/``movq`` and the operator's integer mnemonic.
         SSE operators use ``movsd`` and the operator's scalar-double mnemonic.
 
         Returns:
-            A two-line string: ``mov? src1, dst`` followed by ``op src2, dst``.
+            A one- or two-line string: optionally ``mov? src1, dst`` followed by
+            ``op src2, dst``.
 
         Raises:
             CodeGenerationError: If the operator is not one of the supported variants.
@@ -330,19 +339,17 @@ class Binary(Instruction):
                     suffix = "l"
                 else:
                     suffix = "q"
-                return "\n".join(
-                    [
-                        _asm_line(f"mov{suffix}", self.src1.emit(), self.dst.emit()),
-                        _asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()),
-                    ]
-                )
+                lines = []
+                if self.src1 != self.dst:
+                    lines.append(_asm_line(f"mov{suffix}", self.src1.emit(), self.dst.emit()))
+                lines.append(_asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()))
+                return "\n".join(lines)
             case AddDouble() | SubDouble() | MultDouble() | DivDouble() | XorDouble():
-                return "\n".join(
-                    [
-                        _asm_line("movsd", self.src1.emit(), self.dst.emit()),
-                        _asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()),
-                    ]
-                )
+                lines = []
+                if self.src1 != self.dst:
+                    lines.append(_asm_line("movsd", self.src1.emit(), self.dst.emit()))
+                lines.append(_asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()))
+                return "\n".join(lines)
             case _:
                 raise CodeGenerationError(f"unsupported binary operator in emit: {type(self.operator).__name__}")
 

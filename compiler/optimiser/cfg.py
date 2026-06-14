@@ -480,6 +480,44 @@ _CALLER_SAVED_GP: frozenset[GPRegisters] = frozenset(
 )
 _CALLER_SAVED_FP: frozenset[FPRegisters] = ALLOCATABLE_FP
 
+# Argument-passing registers (x86-64 System V ABI).
+_GP_ARG_REGS: frozenset[GPRegisters] = frozenset(
+    {GPRegisters.DI, GPRegisters.SI, GPRegisters.DX, GPRegisters.CX, GPRegisters.R8, GPRegisters.R9}
+)
+_FP_ARG_REGS: frozenset[FPRegisters] = frozenset(
+    {
+        FPRegisters.XMM0,
+        FPRegisters.XMM1,
+        FPRegisters.XMM2,
+        FPRegisters.XMM3,
+        FPRegisters.XMM4,
+        FPRegisters.XMM5,
+        FPRegisters.XMM6,
+        FPRegisters.XMM7,
+    }
+)
+
+
+def _dst_base_nodes(operand: asm.Operand) -> set[GraphNode]:
+    """Return register nodes *used* when writing to a ``Memory`` or ``Indexed`` destination.
+
+    A ``Memory`` or ``Indexed`` destination requires reading the base/index
+    register(s) to compute the effective address before writing.  ``Pseudo`` and
+    ``Register`` destinations do not; they are pure writes.
+
+    Args:
+        operand: The destination operand of a write instruction.
+
+    Returns:
+        The base/index register nodes read by the address calculation, or the
+        empty set for non-memory destinations.
+    """
+    if isinstance(operand, Memory):
+        return _use_nodes(operand.reg)
+    if isinstance(operand, Indexed):
+        return _use_nodes(operand.base) | _use_nodes(operand.index)
+    return set()
+
 
 def _def_nodes(operand: asm.Operand) -> set[GraphNode]:
     """Return the interference-graph node(s) *defined* by writing to ``operand``.
@@ -641,14 +679,14 @@ class AsmAdapter:
             A set of ``GraphNode`` values read by the instruction.
         """
         match instr:
-            case asm.Mov(src=src):
-                return _use_nodes(src)
-            case asm.Movsx(src=src) | asm.MoveZeroExtend(src=src):
-                return _use_nodes(src)
+            case asm.Mov(src=src, dst=dst):
+                return _use_nodes(src) | _dst_base_nodes(dst)
+            case asm.Movsx(src=src, dst=dst) | asm.MoveZeroExtend(src=src, dst=dst):
+                return _use_nodes(src) | _dst_base_nodes(dst)
             case asm.Unary(operand=op):
                 return _use_nodes(op)
-            case asm.Binary(src1=s1, src2=s2):
-                return _use_nodes(s1) | _use_nodes(s2)
+            case asm.Binary(src1=s1, src2=s2, dst=dst):
+                return _use_nodes(s1) | _use_nodes(s2) | _dst_base_nodes(dst)
             case asm.Cmp(op1=o1, op2=o2):
                 return _use_nodes(o1) | _use_nodes(o2)
             case asm.Idiv(operand=op) | asm.Div(operand=op):
@@ -659,8 +697,12 @@ class AsmAdapter:
                 return _use_nodes(op) | {GPRegisters.CX}
             case asm.Push(operand=op):
                 return _use_nodes(op)
+            case asm.Call():
+                # Conservative: all GP and FP argument registers may carry arguments.
+                # Without the callee's type, we cannot know which are actually used.
+                return set(_GP_ARG_REGS) | set(_FP_ARG_REGS)
             case asm.IndirectCall(target=tgt):
-                return _use_nodes(tgt)
+                return _use_nodes(tgt) | set(_GP_ARG_REGS) | set(_FP_ARG_REGS)
             case asm.Cvttsd2si(src=src) | asm.Cvtsi2sd(src=src):
                 return _use_nodes(src)
             case asm.Lea(src=src):

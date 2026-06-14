@@ -21,7 +21,15 @@ from compiler.optimiser.cfg import (
     make_cfg,
 )
 from compiler.optimiser.interference_graph import InterferenceGraph
-from compiler.syntax.asm.operands import ALLOCATABLE_FP, ALLOCATABLE_GP, FPRegisters, GPRegisters, Width
+from compiler.syntax.asm.operands import (
+    ALLOCATABLE_FP,
+    ALLOCATABLE_GP,
+    FPRegisters,
+    GPRegisters,
+    Pseudo,
+    Register,
+    Width,
+)
 from compiler.syntax.asm.values import AssemblyType, Byte, Longword
 from compiler.syntax.ast.types import (
     Char,
@@ -37,6 +45,7 @@ from compiler.syntax.ast.types import (
     ULongType,
     Union,
 )
+from compiler.types.disjoint_set import DisjointSet
 from compiler.types.symbols import ConstantAttr, LocalAttr, StaticAttr, StructTypeTable, SymbolTable
 
 # ---------------------------------------------------------------------------
@@ -696,7 +705,15 @@ def _add_edges(
             updated_nodes = _operands_to_nodes(updated) & tracked_nodes
 
             # Pre-compute Mov source nodes once per instruction (❷ optimisation).
-            mov_src_nodes: set[GraphNode] = _operands_to_nodes([instr.src]) if isinstance(instr, asm.Mov) else set()
+            # The copy exception applies only when src is a direct register or pseudo
+            # (i.e. a true value copy).  A Memory/Indexed src means the register(s)
+            # embedded in the address are *address* operands, not the value being
+            # copied — they must still interfere with the destination.
+            mov_src_nodes: set[GraphNode] = (
+                _operands_to_nodes([instr.src])
+                if isinstance(instr, asm.Mov) and isinstance(instr.src, (Pseudo, Register))
+                else set()
+            )
 
             for live in live_after:  # ❶ live registers after this instruction
                 if live in mov_src_nodes:  # ❷ skip Mov source → no edge with dst
@@ -1005,7 +1022,7 @@ def _replace_in_instr(
                 instr,
                 src1=_resolve_op(s1, reg_map, w),
                 src2=_resolve_op(s2, reg_map, w),
-                dst=cast(asm.Register, _resolve_op(dst, reg_map, w)),
+                dst=_resolve_op(dst, reg_map, w),
             )
         case asm.Unary(operand=op, assembly_type=at):
             return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
@@ -1093,6 +1110,530 @@ def replace_pseudoregs(
 
 
 # ---------------------------------------------------------------------------
+# Coalescing operand resolver
+# ---------------------------------------------------------------------------
+
+
+def _resolve_coalesced_op(
+    op: asm.Operand,
+    coalesced_regs: DisjointSet[GraphNode],
+    width: Width,
+) -> asm.Operand:
+    """Resolve a ``Pseudo`` operand to its canonical representative after coalescing.
+
+    If the operand is a ``Pseudo`` whose name has been merged, the canonical
+    representative is looked up via ``coalesced_regs.find``.  When the canonical
+    is another pseudo the operand becomes ``Pseudo(canonical)``.  When it is a
+    hardware register the operand becomes ``Register(canonical, width)``.
+    Non-pseudo operands are returned unchanged.
+
+    Args:
+        op: The operand to resolve.
+        coalesced_regs: The disjoint set produced by ``coalesce``.
+        width: The ``Width`` to use if the canonical is a hardware register.
+
+    Returns:
+        A resolved ``Pseudo`` or ``Register`` when a merge exists; ``op`` itself
+        otherwise.
+    """
+    if not isinstance(op, asm.Pseudo):
+        return op
+    canonical = coalesced_regs.find(op.name)
+    if isinstance(canonical, str):
+        return asm.Pseudo(canonical)
+    return asm.Register(canonical, width)
+
+
+def _replace_coalesced_in_instr(
+    instr: asm.Instruction,
+    coalesced_regs: DisjointSet[GraphNode],
+) -> asm.Instruction:
+    """Rewrite the operands of a single instruction using the coalescing map.
+
+    Mirrors ``_replace_in_instr`` but resolves pseudos through ``coalesced_regs``
+    rather than a final hardware-register map, so the output may still contain
+    ``Pseudo`` operands for registers not yet coalesced.
+
+    Args:
+        instr: The instruction to transform.
+        coalesced_regs: The disjoint set produced by ``coalesce``.
+
+    Returns:
+        A new instruction with all ``Pseudo`` operands that appear in
+        ``coalesced_regs`` replaced by their canonical operand; ``instr``
+        itself when no operand changes.
+    """
+
+    def r(op: asm.Operand, w: Width) -> asm.Operand:
+        return _resolve_coalesced_op(op, coalesced_regs, w)
+
+    match instr:
+        case asm.Mov(src=src, dst=dst, assembly_type=at):
+            w = _asm_type_to_width(at)
+            return dataclasses.replace(instr, src=r(src, w), dst=r(dst, w))
+        case asm.Movsx(src_type=st, dst_type=dt, src=src, dst=dst):
+            return dataclasses.replace(instr, src=r(src, _asm_type_to_width(st)), dst=r(dst, _asm_type_to_width(dt)))
+        case asm.MoveZeroExtend(src_type=st, dst_type=dt, src=src, dst=dst):
+            src_w = _asm_type_to_width(st)
+            dst_w = src_w if not isinstance(st, Byte) else _asm_type_to_width(dt)
+            return dataclasses.replace(instr, src=r(src, src_w), dst=r(dst, dst_w))
+        case asm.Binary(src1=s1, src2=s2, dst=dst, assembly_type=at):
+            w = _asm_type_to_width(at)
+            return dataclasses.replace(instr, src1=r(s1, w), src2=r(s2, w), dst=r(dst, w))
+        case asm.Unary(operand=op, assembly_type=at):
+            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
+        case asm.Idiv(operand=op, assembly_type=at):
+            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
+        case asm.Div(operand=op, assembly_type=at):
+            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
+        case asm.Shl(operand=op, assembly_type=at):
+            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
+        case asm.Sar(operand=op, assembly_type=at):
+            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
+        case asm.Shr(operand=op, assembly_type=at):
+            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
+        case asm.Cmp(op1=o1, op2=o2, assembly_type=at):
+            w = _asm_type_to_width(at)
+            return dataclasses.replace(instr, op1=r(o1, w), op2=r(o2, w))
+        case asm.SetCC(operand=op):
+            return dataclasses.replace(instr, operand=r(op, Width.BYTE))
+        case asm.Push(operand=op):
+            return dataclasses.replace(instr, operand=r(op, Width.QWORD))
+        case asm.IndirectCall(target=t):
+            return dataclasses.replace(instr, target=r(t, Width.QWORD))
+        case asm.Lea(src=src, dst=dst):
+            return dataclasses.replace(instr, src=r(src, Width.QWORD), dst=r(dst, Width.QWORD))
+        case asm.Cvttsd2si(src=src, dst=dst, assembly_type=at):
+            return dataclasses.replace(instr, src=r(src, Width.QWORD), dst=r(dst, _asm_type_to_width(at)))
+        case asm.Cvtsi2sd(src=src, dst=dst, assembly_type=at):
+            return dataclasses.replace(instr, src=r(src, _asm_type_to_width(at)), dst=r(dst, Width.QWORD))
+        case _:
+            return instr
+
+
+# ---------------------------------------------------------------------------
+# Coalescing helpers and implementation
+# ---------------------------------------------------------------------------
+
+
+def _operand_to_node(operand: asm.Operand) -> GraphNode | None:
+    """Extract the ``GraphNode`` key from an assembly operand.
+
+    Args:
+        operand: An assembly operand from the instruction stream.
+
+    Returns:
+        The ``str`` name for a ``Pseudo`` operand, the ``GPRegisters`` /
+        ``FPRegisters`` enum value for a ``Register`` operand, or ``None``
+        for any other operand type (immediate, memory, etc.).
+    """
+    if isinstance(operand, asm.Pseudo):
+        return operand.name
+    if isinstance(operand, asm.Register):
+        return operand.reg
+    return None
+
+
+def _graph_k(graph: InterferenceGraph) -> int:
+    """Return the number of allocatable colours (``k``) for this graph.
+
+    Counts hardware-register nodes, which are pre-populated and never removed
+    during coalescing.
+
+    Args:
+        graph: An interference graph for either the GP or FP allocation pass.
+
+    Returns:
+        The number of hardware-register nodes currently in ``graph``.
+    """
+    return sum(1 for n in graph.nodes if isinstance(n, (GPRegisters, FPRegisters)))
+
+
+def _natural_size_bytes(node: GraphNode, symbol_table: SymbolTable | None) -> int:
+    """Return the natural stack-slot size in bytes for a pseudo-register node.
+
+    Mirrors the size logic in ``_replace_pseudos`` so that coalescing can
+    compare pseudo widths before merging.
+
+    Args:
+        node: A graph node; only ``str`` pseudo names are looked up.
+        symbol_table: The program symbol table, or ``None`` when unavailable.
+
+    Returns:
+        8 for long/unsigned-long/double/pointer types; 1 for char variants;
+        4 for all other named types and for nodes not found in
+        ``symbol_table``.
+    """
+    if not isinstance(node, str) or symbol_table is None or node not in symbol_table:
+        return 4
+    t = symbol_table[node].t
+    if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
+        return 8
+    if isinstance(t, (Char, UChar, SChar)):
+        return 1
+    return 4
+
+
+def _briggs_test(graph: InterferenceGraph, x: GraphNode, y: GraphNode) -> bool:
+    """Return ``True`` if merging ``x`` and ``y`` passes the Briggs conservative test.
+
+    The combined neighbor set of the merged node has fewer than ``k`` neighbors
+    with significant degree (degree >= k), where degree is adjusted downward by 1
+    for any neighbor that is adjacent to *both* ``x`` and ``y`` (because merging
+    eliminates one of their two edges).
+
+    Args:
+        graph: The interference graph for the current allocation pass.
+        x: One endpoint of the candidate copy edge.
+        y: The other endpoint of the candidate copy edge.
+
+    Returns:
+        ``True`` if the number of significant combined neighbors is less than ``k``.
+    """
+    k = _graph_k(graph)
+    combined_neighbors = graph.neighbours(x) | graph.neighbours(y)
+    significant = 0
+    for n in combined_neighbors:
+        # Pre-colored hardware registers permanently occupy a color slot and can
+        # never be simplified away, so they always count as significant regardless
+        # of their actual degree in the current graph.
+        if isinstance(n, (GPRegisters, FPRegisters)):
+            significant += 1
+            continue
+        degree = len(graph.neighbours(n))
+        # If n is adjacent to both x and y, merging them reduces n's degree by 1.
+        if frozenset({n, x}) in graph.edges and frozenset({n, y}) in graph.edges:
+            degree -= 1
+        if degree >= k:
+            significant += 1
+    return significant < k
+
+
+def _is_copy_source_for(
+    src_canonical: GraphNode,
+    dst: GraphNode,
+    instructions: list[asm.Instruction],
+    coalesced_regs: DisjointSet[GraphNode],
+) -> bool:
+    """Return ``True`` if any ``Mov`` makes ``src_canonical`` a copy source for ``dst``.
+
+    After merging a pseudo into a hardreg, any ``Mov(pseudo, n)`` in the instruction
+    stream becomes ``Mov(hardreg, n)``.  The copy exception then prevents a new
+    ``(hardreg, n)`` interference edge.  This helper checks whether such a ``Mov``
+    exists, enabling the projected-degree check in ``_george_test``.
+
+    Args:
+        src_canonical: The canonical graph node to test as a copy source.
+        dst: The destination node to test.
+        instructions: The flat instruction list to scan.
+        coalesced_regs: Union-find state for resolving canonical representatives.
+
+    Returns:
+        ``True`` if a qualifying ``Mov`` instruction exists.
+    """
+    for instr in instructions:
+        if not isinstance(instr, asm.Mov):
+            continue
+        s = _operand_to_node(instr.src)
+        d = _operand_to_node(instr.dst)
+        if s is None or d is None:
+            continue
+        if coalesced_regs.find(s) == src_canonical and coalesced_regs.find(d) == dst:
+            return True
+    return False
+
+
+def _george_test(
+    graph: InterferenceGraph,
+    hardreg: GraphNode,
+    pseudoreg: GraphNode,
+    instructions: list[asm.Instruction] | None = None,
+    coalesced_regs: DisjointSet[GraphNode] | None = None,
+) -> bool:
+    """Return ``True`` if merging ``pseudoreg`` into ``hardreg`` passes the George test.
+
+    Every neighbor of ``pseudoreg`` must either already interfere with ``hardreg``
+    (so the merge adds no new constraint) or have fewer than ``k`` neighbors
+    (so it is not significant and cannot cause a spill).
+
+    When ``instructions`` and ``coalesced_regs`` are provided, neighbors whose
+    *projected* post-merge degree falls below ``k`` are also accepted.  A neighbor
+    ``n`` has a projected degree of ``degree(n) - 1`` when a ``Mov`` instruction
+    makes ``pseudoreg`` (or ``hardreg``) a copy source for ``n``: after the merge the
+    copy exception prevents the new ``(hardreg, n)`` interference edge, so ``n``
+    loses the ``(pseudoreg, n)`` edge without gaining a replacement.
+
+    Args:
+        graph: The interference graph for the current allocation pass.
+        hardreg: The hardware register endpoint of the candidate copy edge.
+        pseudoreg: The pseudo-register endpoint of the candidate copy edge.
+        instructions: Optional flat instruction list; enables the projected-degree
+            check when provided alongside ``coalesced_regs``.
+        coalesced_regs: Optional union-find state for resolving canonicals in the
+            projected-degree check.
+
+    Returns:
+        ``True`` if all neighbors of ``pseudoreg`` satisfy the George criterion.
+    """
+    k = _graph_k(graph)
+    for n in graph.neighbours(pseudoreg):
+        if frozenset({n, hardreg}) in graph.edges:
+            continue
+        degree = len(graph.neighbours(n))
+        if degree < k:
+            continue
+        # Projected-degree check: after merging pseudoreg into hardreg, any
+        # Mov(pseudoreg, n) becomes Mov(hardreg, n).  The copy exception then
+        # prevents a new (hardreg, n) interference edge, so n's net degree drops
+        # by one.  If that projected degree is still below k, n remains safely
+        # colourable and the merge is permitted.
+        if (
+            instructions is not None
+            and coalesced_regs is not None
+            and (
+                _is_copy_source_for(pseudoreg, n, instructions, coalesced_regs)
+                or _is_copy_source_for(hardreg, n, instructions, coalesced_regs)
+            )
+        ):
+            if degree - 1 < k:
+                continue
+        return False
+    return True
+
+
+def conservative_coalesceable(
+    graph: InterferenceGraph,
+    src: GraphNode,
+    dst: GraphNode,
+    instructions: list[asm.Instruction] | None = None,
+    coalesced_regs: DisjointSet[GraphNode] | None = None,
+) -> bool:
+    """Return ``True`` if ``src`` and ``dst`` may be merged under the conservative criterion.
+
+    Applies the Briggs test first (safe for any pair of nodes).  If that fails
+    and one endpoint is a hardware register, applies the George test, which is
+    stronger when one side has a fixed color.
+
+    Args:
+        graph: The interference graph for the current allocation pass.
+        src: One endpoint of the candidate copy edge.
+        dst: The other endpoint of the candidate copy edge.
+        instructions: Optional flat instruction list forwarded to the George test
+            for projected-degree analysis.  Pass ``None`` to skip that extension.
+        coalesced_regs: Optional union-find state forwarded alongside ``instructions``.
+
+    Returns:
+        ``True`` if at least one applicable conservative test permits the merge.
+    """
+    if _briggs_test(graph, src, dst):  # ❶
+        return True
+    if isinstance(src, (GPRegisters, FPRegisters)):  # ❷
+        return _george_test(graph, src, dst, instructions, coalesced_regs)
+    if isinstance(dst, (GPRegisters, FPRegisters)):
+        return _george_test(graph, dst, src, instructions, coalesced_regs)
+    return False
+
+
+def update_graph(graph: InterferenceGraph, x: GraphNode, y: GraphNode) -> None:
+    """Merge node ``x`` into node ``y`` in the interference graph.
+
+    Transfers all interference edges from ``x`` to ``y`` then removes ``x``.
+    Edges that would become self-loops (``y`` already neighbours ``x``) are
+    silently dropped by ``InterferenceGraph.add_edge``.
+
+    Args:
+        graph: The interference graph to mutate in-place.
+        x: The node being eliminated (the merged-away register).
+        y: The node being kept (the canonical register).
+    """
+    neighbors = graph.neighbours(x)
+    for neighbor in neighbors:
+        graph.add_edge(y, neighbor)
+        graph.edges.discard(frozenset({x, neighbor}))
+    graph.nodes.discard(x)
+
+
+def _apply_copy_exception_after_merge(
+    graph: InterferenceGraph,
+    hardreg: GraphNode,
+    instructions: list[asm.Instruction],
+    coalesced_regs: DisjointSet[GraphNode],
+    pre_merge_hardreg_neighbors: frozenset[GraphNode],
+) -> None:
+    """Remove spurious interference edges introduced by ``update_graph``.
+
+    ``update_graph`` blindly transfers every edge of the merged pseudo to the
+    surviving hardreg, without honouring copy-exception semantics.  When hardreg
+    is a copy source for some node ``n`` — i.e. a ``Mov(hardreg, n)`` instruction
+    exists (possibly because the pseudo that was just merged into hardreg was
+    itself a copy source for ``n``) — the copy exception prevents ``(hardreg, n)``
+    interference in a fresh graph.  This function removes any such edge **that was
+    newly introduced by the merge** (i.e. was not already present before the merge).
+
+    An edge ``(hardreg, n)`` that already existed before the merge reflects genuine
+    interference from some other instruction (e.g. a call site where ``n`` is live
+    and ``hardreg`` is clobbered) and must **not** be removed.
+
+    Args:
+        graph: The interference graph to clean up, mutated in-place.
+        hardreg: The hardware register that was the merge target.
+        instructions: The flat instruction list to scan for copy relations.
+        coalesced_regs: Union-find state for resolving canonical representatives.
+        pre_merge_hardreg_neighbors: The set of ``hardreg``'s neighbours
+            **before** ``update_graph`` was called.  Nodes already present here
+            had genuine pre-existing interference and are not touched.
+    """
+    for instr in instructions:
+        if not isinstance(instr, asm.Mov):
+            continue
+        s = _operand_to_node(instr.src)
+        d = _operand_to_node(instr.dst)
+        if s is None or d is None:
+            continue
+        resolved_src = coalesced_regs.find(s)
+        resolved_dst = coalesced_regs.find(d)
+        if resolved_src == hardreg and resolved_dst in graph.nodes and resolved_dst != hardreg:
+            if resolved_dst in pre_merge_hardreg_neighbors:
+                # Edge existed before the merge — genuine interference, keep it.
+                continue
+            graph.edges.discard(frozenset({hardreg, resolved_dst}))
+
+
+def coalesce(
+    interference_graph: InterferenceGraph,
+    instructions: list[asm.Instruction],
+    symbol_table: SymbolTable | None = None,
+) -> DisjointSet[GraphNode]:
+    """Identify pseudo-register pairs that can be merged without introducing spills.
+
+    Walks ``instructions`` looking for ``Mov`` copies.  For each copy whose
+    source and destination are both live nodes that do not interfere, and that
+    pass ``conservative_coalesceable``, the two nodes are merged: the disjoint
+    set is updated and ``update_graph`` rewires the interference graph in-place.
+    Prior merges within the same call are resolved via ``find`` before each
+    check (step ❶ in the algorithm).
+
+    Only ``Mov`` instructions that are true value copies are eligible: a ``Mov``
+    whose assembly type is narrower than the source pseudo's natural stack size
+    is a truncating copy (e.g. ``Truncate`` in TAC produces ``Mov(long, int, LW)``)
+    and is skipped.  Coalescing across a size boundary would cause the merged
+    pseudo's stack slot to be undersized, corrupting adjacent stack data on spill.
+
+    Args:
+        interference_graph: The interference graph for the current pass (GP or FP),
+            as produced by ``build_gp_graph`` or ``build_fp_graph``.  Mutated
+            in-place by each successful merge.
+        instructions: The flat instruction list for the function being compiled.
+        symbol_table: Used to determine the natural stack-slot size of each
+            pseudo so that truncating copies are not coalesced.  Pass ``None``
+            to skip the size check (conservative fallback: no coalescing).
+
+    Returns:
+        A ``DisjointSet[GraphNode]`` recording all merges performed.  Falsy if
+        nothing was coalesced this iteration.
+    """
+    coalesced_regs: DisjointSet[GraphNode] = DisjointSet()
+
+    for instr in instructions:
+        if not isinstance(instr, asm.Mov):
+            continue
+
+        src_node = _operand_to_node(instr.src)
+        dst_node = _operand_to_node(instr.dst)
+        if src_node is None or dst_node is None:
+            continue
+
+        # ❶ Resolve to canonical representatives — prior iterations within this
+        #    call may have already merged one of these nodes.
+        src = coalesced_regs.find(src_node)
+        dst = coalesced_regs.find(dst_node)
+
+        # Two hard registers already have fixed colors; merging them is
+        # meaningless and would leave a Mov(hwA, hwB) that _resolve_coalesced_op
+        # cannot rewrite (it only touches Pseudo operands), causing an infinite
+        # coalescing loop on the next iteration.
+        if isinstance(src, (GPRegisters, FPRegisters)) and isinstance(dst, (GPRegisters, FPRegisters)):
+            continue
+
+        # Skip truncating copies.  When the source pseudo's natural stack size
+        # is larger than the Mov's assembly type, the instruction discards the
+        # high bits (e.g. Truncate: long → int yields Mov(long, int, LW)).
+        # Merging such a pair would give the canonical pseudo a slot sized for
+        # the smaller type, causing an out-of-bounds write on spill.
+        # Hardware registers are not pseudo names (they are enum values, not
+        # strings), so the natural-size check does not apply to them — their
+        # access width is always determined by the Mov's assembly_type.
+        at_bytes = _asm_type_to_width(instr.assembly_type).value
+        if isinstance(src, str) and _natural_size_bytes(src, symbol_table) > at_bytes:
+            continue
+
+        # ❷ Both must be live graph nodes, ❸ must not already interfere,
+        # ❹ and must pass the conservative coalescability test.
+        if (
+            src in interference_graph.nodes
+            and dst in interference_graph.nodes
+            and src != dst
+            and frozenset({src, dst}) not in interference_graph.edges
+            and conservative_coalesceable(interference_graph, src, dst, instructions, coalesced_regs)
+        ):
+            # Prefer the hard register as the canonical representative so that
+            # the coalesced pseudo is assigned that register by the colouring pass.
+            if isinstance(src, (GPRegisters, FPRegisters)):
+                to_keep: GraphNode = src
+                to_merge: GraphNode = dst
+            else:
+                to_keep = dst
+                to_merge = src
+
+            # ❺ Record the merge and rewire the graph.
+            coalesced_regs.union(to_merge, to_keep)
+            update_graph(interference_graph, to_merge, to_keep)
+
+    return coalesced_regs
+
+
+def nothing_was_coalesced(coalesced_regs: DisjointSet[GraphNode]) -> bool:
+    """Return ``True`` when the coalescing pass produced no merges.
+
+    Args:
+        coalesced_regs: The ``DisjointSet`` returned by ``coalesce``.
+
+    Returns:
+        ``True`` if ``coalesced_regs`` is empty (no unions were recorded),
+        ``False`` otherwise.
+    """
+    return not coalesced_regs
+
+
+def rewrite_coalesced(
+    instructions: list[asm.Instruction],
+    coalesced_regs: DisjointSet[GraphNode],
+) -> list[asm.Instruction]:
+    """Rewrite instructions, replacing eliminated pseudos with their merge targets.
+
+    Resolves every ``Pseudo`` operand to its canonical representative via
+    ``coalesced_regs.find``.  ``Mov`` instructions that become self-moves after
+    resolution are discarded (step ❶).
+
+    Args:
+        instructions: The flat instruction list to transform.
+        coalesced_regs: The ``DisjointSet`` produced by ``coalesce``, recording
+            all merges performed in the last coalescing iteration.
+
+    Returns:
+        A new instruction list with coalesced pseudo-register operands rewritten
+        and redundant self-moves removed.
+    """
+    result: list[asm.Instruction] = []
+    for instr in instructions:
+        new_instr = _replace_coalesced_in_instr(instr, coalesced_regs)
+        if isinstance(new_instr, asm.Mov) and new_instr.src == new_instr.dst:  # ❶
+            continue
+        result.append(new_instr)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -1106,9 +1647,11 @@ def allocate_registers(
     """Run the full register allocation pipeline on a function's instruction list.
 
     Executes two independent passes — one for GP registers, one for FP
-    registers — then combines the resulting maps and rewrites the instruction
-    list.  Pseudo-registers with static storage duration are excluded from
-    allocation and left untouched in the output.
+    registers — each preceded by an iterative register-coalescing loop that
+    merges copy-related pseudos until no further merges are possible.  The
+    resulting maps are then combined and the instruction list is rewritten.
+    Pseudo-registers with static storage duration are excluded from allocation
+    and left untouched in the output.
 
     Args:
         instructions: The flat list of assembly instructions for a single function,
@@ -1118,6 +1661,8 @@ def allocate_registers(
         fn_name: The name of the function being compiled, used to determine
             which registers are live at function exit based on the return type.
             Pass ``None`` for the conservative fallback (both AX and XMM0 live).
+        struct_type_table: Used to resolve struct member types during liveness
+            analysis.  Pass ``None`` when struct types are not needed.
 
     Returns:
         A three-tuple ``(rewritten_instructions, gp_callee_saved, fp_callee_saved)``
@@ -1129,12 +1674,22 @@ def allocate_registers(
     """
     exit_live = _compute_exit_live(fn_name, symbol_table)
 
-    gp_graph = build_gp_graph(instructions, symbol_table, exit_live, struct_type_table)
+    while True:
+        gp_graph = build_gp_graph(instructions, symbol_table, exit_live, struct_type_table)
+        coalesced_gp = coalesce(gp_graph, instructions, symbol_table)
+        if nothing_was_coalesced(coalesced_gp):
+            break
+        instructions = rewrite_coalesced(instructions, coalesced_gp)
     add_spill_costs(gp_graph, instructions)
     color_graph(gp_graph)
     gp_map = create_register_map(gp_graph)
 
-    fp_graph = build_fp_graph(instructions, symbol_table, exit_live, struct_type_table)
+    while True:
+        fp_graph = build_fp_graph(instructions, symbol_table, exit_live, struct_type_table)
+        coalesced_fp = coalesce(fp_graph, instructions, symbol_table)
+        if nothing_was_coalesced(coalesced_fp):
+            break
+        instructions = rewrite_coalesced(instructions, coalesced_fp)
     add_spill_costs(fp_graph, instructions)
     color_graph(fp_graph)
     fp_map = create_register_map(fp_graph)
