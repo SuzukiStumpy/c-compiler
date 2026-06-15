@@ -211,7 +211,7 @@ class TestFileScopeVariableDeclarations:
     def test_file_static_then_block_extern_is_valid(self) -> None:
         """A block-scope ``extern`` after a file-scope ``static`` declaration is valid.
 
-        C11 §6.2.2p4: an ``extern`` declaration in a scope where a prior
+        C11 sec. 6.2.2p4: an ``extern`` declaration in a scope where a prior
         declaration is visible inherits the established linkage.  The block-scope
         ``extern int x`` therefore refers to the same internal-linkage object as
         ``static int x`` and is not a conflict.
@@ -236,7 +236,7 @@ class TestFileScopeVariableDeclarations:
     def test_file_scope_static_then_extern_specifier_is_valid(self) -> None:
         """A file-scope ``extern`` declaration after a ``static`` declaration of the same name is valid.
 
-        C11 §6.2.2p4: the ``extern`` declaration inherits the prior internal
+        C11 sec. 6.2.2p4: the ``extern`` declaration inherits the prior internal
         linkage; it is not a redeclaration with a conflicting linkage.
         """
         analyser = SemanticAnalyser()
@@ -406,7 +406,7 @@ class TestBlockScopeStorageClass:
         ``"a"`` that exists in the enclosing function scope.
         """
         body: tuple[ast.BlockItem, ...] = (
-            # int a = 3;  — outer local, will be renamed to something like ".Va.0"
+            # int a = 3;  - outer local, will be renamed to something like ".Va.0"
             ast.D(ast.VarDecl(ast.VariableDeclaration("a", ast.Constant(ConstInt(3)), ast.IntType()))),
             # { extern int a;  return a; }
             ast.S(
@@ -420,7 +420,7 @@ class TestBlockScopeStorageClass:
         )
         resolved = _resolved_body(body)
 
-        # The outer local must have been renamed — its name should not be the bare "a".
+        # The outer local must have been renamed - its name should not be the bare "a".
         outer_local_name = resolved[0].declaration.variable_declaration.name
         assert outer_local_name != "a", "outer local 'a' was not renamed"
 
@@ -430,7 +430,7 @@ class TestBlockScopeStorageClass:
         ret = compound.body[1].statement
         assert isinstance(ret, ast.Return)
         assert ret.exp == ast.Var("a"), (
-            f"expected return of global 'a', got {ret.exp!r} — outer local was {outer_local_name!r}"
+            f"expected return of global 'a', got {ret.exp!r} - outer local was {outer_local_name!r}"
         )
 
     def test_block_scope_static_non_constant_init_raises(self) -> None:
@@ -463,7 +463,7 @@ class TestBlockScopeStorageClass:
     def test_block_scope_extern_after_static_local_raises(self) -> None:
         """A block-scope ``extern`` after a ``static`` local of the same name raises ``SemanticError``.
 
-        A block-scope ``static`` variable has no linkage (C11 §6.2.2p3 only
+        A block-scope ``static`` variable has no linkage (C11 sec. 6.2.2p3 only
         confers internal linkage on *file-scope* ``static``).  A subsequent
         ``extern`` declaration in the same block therefore conflicts, exactly
         as it would with a plain local variable.
@@ -508,7 +508,7 @@ class TestBlockScopeStorageClass:
 
 
 # ---------------------------------------------------------------------------
-# Cross-kind redeclaration: function ↔ variable in the same scope
+# Cross-kind redeclaration: function <-> variable in the same scope
 # ---------------------------------------------------------------------------
 
 
@@ -815,7 +815,7 @@ class TestStaticPointerInitialisers:
         assert entry.attrs.init == PointerInit(str_name)
 
     def test_file_scope_signed_char_pointer_string_literal_raises(self) -> None:
-        """``signed char *s = "hello";`` raises ``SemanticError`` — string literals have type ``char *``."""
+        """``signed char *s = "hello";`` raises ``SemanticError`` - string literals have type ``char *``."""
         analyser = SemanticAnalyser()
         with pytest.raises(SemanticError, match="char"):
             analyser._resolve_file_scope_variable_declaration(
@@ -823,7 +823,7 @@ class TestStaticPointerInitialisers:
             )
 
     def test_file_scope_unsigned_char_pointer_string_literal_raises(self) -> None:
-        """``unsigned char *s = "hello";`` raises ``SemanticError`` — string literals have type ``char *``."""
+        """``unsigned char *s = "hello";`` raises ``SemanticError`` - string literals have type ``char *``."""
         analyser = SemanticAnalyser()
         with pytest.raises(SemanticError, match="char"):
             analyser._resolve_file_scope_variable_declaration(
@@ -831,7 +831,7 @@ class TestStaticPointerInitialisers:
             )
 
     def test_file_scope_int_pointer_string_literal_raises(self) -> None:
-        """``int *p = "hello";`` raises ``SemanticError`` — string literals have type ``char *``."""
+        """``int *p = "hello";`` raises ``SemanticError`` - string literals have type ``char *``."""
         analyser = SemanticAnalyser()
         with pytest.raises(SemanticError, match="char"):
             analyser._resolve_file_scope_variable_declaration(
@@ -926,11 +926,11 @@ class TestStaticArrayInitialisers:
         """``static int arr[3][2] = {{100}, {200, 300}}`` stores the correct flat initial list.
 
         The expected layout (row-major, int = 4 bytes):
-        - arr[0][0] = 100 → IntInit(100)
-        - arr[0][1] = 0   → ZeroInit(4)
-        - arr[1][0] = 200 → IntInit(200)
-        - arr[1][1] = 300 → IntInit(300)
-        - arr[2][0..1]= 0 → ZeroInit(8)
+        - arr[0][0] = 100 -> IntInit(100)
+        - arr[0][1] = 0   -> ZeroInit(4)
+        - arr[1][0] = 200 -> IntInit(200)
+        - arr[1][1] = 300 -> IntInit(300)
+        - arr[2][0..1]= 0 -> ZeroInit(8)
         """
         analyser = SemanticAnalyser()
         result = analyser.resolve_variable_declaration(

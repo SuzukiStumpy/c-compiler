@@ -927,8 +927,8 @@ class TestFunctionLinkage:
     def test_static_then_non_static_declaration_is_valid(self) -> None:
         """A non-``static`` declaration after a ``static`` declaration of the same function is valid.
 
-        C11 §6.2.2p5: a function declaration with no storage-class specifier is
-        treated exactly as ``extern``.  §6.2.2p4: ``extern`` inherits the linkage
+        C11 sec. 6.2.2p5: a function declaration with no storage-class specifier is
+        treated exactly as ``extern``.  sec. 6.2.2p4: ``extern`` inherits the linkage
         of the prior visible declaration.  ``int foo(void);`` after
         ``static int foo(void) {...}`` therefore inherits internal linkage and is
         not a conflict.
@@ -957,7 +957,7 @@ class TestFunctionLinkage:
     def test_block_scope_function_declaration_inherits_internal_linkage(self) -> None:
         """A block-scope function declaration inherits the internal linkage of a prior file-scope declaration.
 
-        C11 §6.2.2p4/p5: the block-scope ``int my_fun(void);`` (treated as
+        C11 sec. 6.2.2p4/p5: the block-scope ``int my_fun(void);`` (treated as
         ``extern``) inherits the internal linkage established by the earlier
         ``static int my_fun(void);`` at file scope.
         """

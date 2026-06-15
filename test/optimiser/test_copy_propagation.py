@@ -84,7 +84,7 @@ class TestReplaceOperand:
         assert _replace_operand(_X, reaching) == _ci(42)
 
     def test_transitive_chain_is_followed_to_constant(self) -> None:
-        """A two-link chain X → Y → const is collapsed to the constant in one call."""
+        """A two-link chain X -> Y -> const is collapsed to the constant in one call."""
         reaching = frozenset(
             {
                 tac.Copy(src=_Y, dst=_X),
@@ -94,12 +94,12 @@ class TestReplaceOperand:
         assert _replace_operand(_X, reaching) == _ci(99)
 
     def test_transitive_chain_stops_at_unresolved_var(self) -> None:
-        """A chain X → Y stops at Y when Y has no reaching copy (Y is not a dst)."""
+        """A chain X -> Y stops at Y when Y has no reaching copy (Y is not a dst)."""
         reaching = frozenset({tac.Copy(src=_Y, dst=_X)})
         assert _replace_operand(_X, reaching) == _Y
 
     def test_cycle_does_not_loop_forever(self) -> None:
-        """A cyclic reaching set (X → Y, Y → X) is handled without infinite recursion."""
+        """A cyclic reaching set (X -> Y, Y -> X) is handled without infinite recursion."""
         reaching = frozenset(
             {
                 tac.Copy(src=_Y, dst=_X),
@@ -170,7 +170,7 @@ class TestTypesCompatible:
 
 
 # ---------------------------------------------------------------------------
-# _rewrite_instruction — Copy
+# _rewrite_instruction - Copy
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +187,7 @@ class TestRewriteCopy:
 
     def test_copy_src_is_substituted(self) -> None:
         """The src operand of a ``Copy`` is replaced when a matching reaching copy exists."""
-        # Copy(x, dst): x is dst of Copy(y, x) → new Copy(y, dst)
+        # Copy(x, dst): x is dst of Copy(y, x) -> new Copy(y, dst)
         instr = tac.Copy(src=_X, dst=_DST)
         result = _rewrite_instruction(instr, _REACHING)
         assert result == tac.Copy(src=_Y, dst=_DST)
@@ -200,7 +200,7 @@ class TestRewriteCopy:
 
 
 # ---------------------------------------------------------------------------
-# _rewrite_instruction — arithmetic / comparison instructions
+# _rewrite_instruction - arithmetic / comparison instructions
 # ---------------------------------------------------------------------------
 
 
@@ -233,7 +233,7 @@ class TestRewriteArithmetic:
 
 
 # ---------------------------------------------------------------------------
-# _rewrite_instruction — control-flow instructions
+# _rewrite_instruction - control-flow instructions
 # ---------------------------------------------------------------------------
 
 
@@ -274,7 +274,7 @@ class TestRewriteControlFlow:
 
 
 # ---------------------------------------------------------------------------
-# _rewrite_instruction — type-cast and memory instructions
+# _rewrite_instruction - type-cast and memory instructions
 # ---------------------------------------------------------------------------
 
 
@@ -316,7 +316,7 @@ class TestRewriteSecondary:
     def test_store_src_is_substituted_dst_ptr_is_not(self) -> None:
         """Only the src operand of ``Store`` is replaced; dst_ptr is preserved
         so the assembler's Mov-coalescing exemption can prevent a spurious
-        ptr↔AX interference edge in the register allocator."""
+        ptr<->AX interference edge in the register allocator."""
         ptr = _var("p")
         q = _var("q")
         reaching = frozenset(
@@ -357,7 +357,7 @@ class TestRewriteSecondary:
 
 
 # ---------------------------------------------------------------------------
-# copy_propagation — end-to-end
+# copy_propagation - end-to-end
 # ---------------------------------------------------------------------------
 
 
@@ -413,7 +413,7 @@ class TestCopyPropagation:
 
     def test_copy_propagates_through_conditional_branch(self) -> None:
         """A copy that reaches all predecessors of a join point is propagated there."""
-        # Both branches copy y→x, so x==y is known at the return.
+        # Both branches copy y->x, so x==y is known at the return.
         body = (
             tac.JumpIfZero(condition=_Z, target="else"),
             tac.Copy(src=_Y, dst=_X),

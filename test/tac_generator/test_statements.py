@@ -184,7 +184,7 @@ class TestTacGeneratorIfStatement:
     """``ast.If`` translates to the correct conditional jump sequence."""
 
     def test_if_without_else_full_sequence(self) -> None:
-        """``if (1) return 2;`` → ``JumpIfZero``, then-body, end-label, guard."""
+        """``if (1) return 2;`` -> ``JumpIfZero``, then-body, end-label, guard."""
         instrs = _if_instrs(
             ast.If(
                 condition=ast.Constant(value=ast.ConstInt(1)),
@@ -200,7 +200,7 @@ class TestTacGeneratorIfStatement:
         )
 
     def test_if_with_else_full_sequence(self) -> None:
-        """``if (1) return 2; else return 3;`` → ``JumpIfZero``,
+        """``if (1) return 2; else return 3;`` -> ``JumpIfZero``,
         then-body, ``Jump``, else-label, else-body, end-label, guard."""
         instrs = _if_instrs(
             ast.If(
@@ -234,7 +234,7 @@ class TestTacGeneratorIfStatement:
         assert instrs[1].condition == instrs[0].dst
 
     def test_null_then_clause_emits_no_then_instructions(self) -> None:
-        """``if (1);`` — a ``Null`` then-branch contributes no instructions between the jump and the end-label."""
+        """``if (1);`` - a ``Null`` then-branch contributes no instructions between the jump and the end-label."""
         instrs = _if_instrs(
             ast.If(
                 condition=ast.Constant(value=ast.ConstInt(1)),
@@ -249,7 +249,7 @@ class TestTacGeneratorIfStatement:
         )
 
     def test_null_else_clause_emits_no_else_instructions(self) -> None:
-        """``if (1) return 2; else;`` — a ``Null`` else-branch produces adjacent labels."""
+        """``if (1) return 2; else;`` - a ``Null`` else-branch produces adjacent labels."""
         instrs = _if_instrs(
             ast.If(
                 condition=ast.Constant(value=ast.ConstInt(1)),
@@ -293,7 +293,7 @@ class TestTacGeneratorGotoStatement:
     """``ast.Goto`` translates to an unconditional ``tac.Jump``."""
 
     def test_goto_produces_jump(self) -> None:
-        """``goto foo;`` → ``Jump("main.foo")`` followed by the function guard."""
+        """``goto foo;`` -> ``Jump("main.foo")`` followed by the function guard."""
         instrs = _stmt_instrs(ast.Goto(target="foo"))
         assert instrs == (
             tac.Jump(target="main.foo"),
@@ -322,7 +322,7 @@ class TestTacGeneratorLabeledStatement:
     """``ast.Label`` emits a ``tac.Label`` instruction followed by the inner statement."""
 
     def test_label_wrapping_null_produces_only_label(self) -> None:
-        """``foo:;`` → ``Label("main.foo")`` then the function guard."""
+        """``foo:;`` -> ``Label("main.foo")`` then the function guard."""
         instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Null()))
         assert instrs == (
             tac.Label(name="main.foo"),
@@ -330,7 +330,7 @@ class TestTacGeneratorLabeledStatement:
         )
 
     def test_label_wrapping_return_full_sequence(self) -> None:
-        """``foo: return 1;`` → ``Label("main.foo")``, ``Return(1)``."""
+        """``foo: return 1;`` -> ``Label("main.foo")``, ``Return(1)``."""
         instrs = _stmt_instrs(ast.Label(name="foo", statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(1)))))
         assert instrs == (
             tac.Label(name="main.foo"),
@@ -345,7 +345,7 @@ class TestTacGeneratorLabeledStatement:
         assert label_instr.name == "main.my_label"
 
     def test_nested_labels_produce_two_consecutive_label_instructions(self) -> None:
-        """``foo: bar: return 0;`` → ``Label("main.foo")``, ``Label("main.bar")``, ``Return(0)``."""
+        """``foo: bar: return 0;`` -> ``Label("main.foo")``, ``Label("main.bar")``, ``Return(0)``."""
         instrs = _stmt_instrs(
             ast.Label(
                 name="foo",
@@ -372,7 +372,7 @@ class TestTacGeneratorLabeledStatement:
         )
 
     def test_label_wrapping_compound_block(self) -> None:
-        """``foo: { return 0; }`` → ``Label("main.foo")``, ``Return(0)``."""
+        """``foo: { return 0; }`` -> ``Label("main.foo")``, ``Return(0)``."""
         instrs = _stmt_instrs(
             ast.Label(
                 name="foo",
@@ -621,7 +621,7 @@ class TestTacGeneratorStringInit:
     """String-literal initialisers for automatic ``char`` arrays emit packed ``CopyToOffset`` instructions."""
 
     def test_four_byte_array_emits_single_const_int(self) -> None:
-        """``char arr[4] = "hi"`` → one ``ConstInt`` covering all 4 bytes (string + NUL + pad)."""
+        """``char arr[4] = "hi"`` -> one ``ConstInt`` covering all 4 bytes (string + NUL + pad)."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"hi", 4),))
         expected_val = int.from_bytes(b"hi\x00\x00", "little")
         assert instrs == (
@@ -630,7 +630,7 @@ class TestTacGeneratorStringInit:
         )
 
     def test_six_byte_array_emits_int_then_two_chars(self) -> None:
-        """``char arr[6] = "hello"`` → ``ConstInt`` for first 4 bytes, ``ConstChar`` for 'o' and NUL."""
+        """``char arr[6] = "hello"`` -> ``ConstInt`` for first 4 bytes, ``ConstChar`` for 'o' and NUL."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"hello", 6),))
         expected_int = int.from_bytes(b"hell", "little")
         assert instrs == (
@@ -641,7 +641,7 @@ class TestTacGeneratorStringInit:
         )
 
     def test_exact_fit_no_nul_terminator(self) -> None:
-        """``char arr[5] = "hello"`` (array exactly fits string, no NUL) → ``ConstInt`` + ``ConstChar``."""
+        """``char arr[5] = "hello"`` (array exactly fits string, no NUL) -> ``ConstInt`` + ``ConstChar``."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"hello", 5),))
         expected_int = int.from_bytes(b"hell", "little")
         assert instrs == (
@@ -651,7 +651,7 @@ class TestTacGeneratorStringInit:
         )
 
     def test_empty_string_in_one_byte_array(self) -> None:
-        """``char arr[1] = ""`` → single ``ConstChar(0)`` for the NUL terminator."""
+        """``char arr[1] = ""`` -> single ``ConstChar(0)`` for the NUL terminator."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"", 1),))
         assert instrs == (
             tac.CopyToOffset(src=tac.Constant(ast.ConstChar(0)), dst="arr", offset=0),
@@ -659,7 +659,7 @@ class TestTacGeneratorStringInit:
         )
 
     def test_sixteen_byte_array_emits_two_const_longs(self) -> None:
-        """``char arr[16] = "hello, world!!!"`` → two ``ConstLong`` covering 8 bytes each."""
+        """``char arr[16] = "hello, world!!!"`` -> two ``ConstLong`` covering 8 bytes each."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"hello, world!!!", 16),))
         lo = int.from_bytes(b"hello, w", "little")
         hi = int.from_bytes(b"orld!!!\x00", "little")
@@ -670,7 +670,7 @@ class TestTacGeneratorStringInit:
         )
 
     def test_nine_byte_exact_fit_emits_long_then_char(self) -> None:
-        """``char arr[9] = "abcdefghi"`` (exact fit) → ``ConstLong`` for first 8 bytes + ``ConstChar``."""
+        """``char arr[9] = "abcdefghi"`` (exact fit) -> ``ConstLong`` for first 8 bytes + ``ConstChar``."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"abcdefghi", 9),))
         expected_long = int.from_bytes(b"abcdefgh", "little")
         assert instrs == (
@@ -680,7 +680,7 @@ class TestTacGeneratorStringInit:
         )
 
     def test_thirteen_byte_exact_fit_emits_long_int_char(self) -> None:
-        """13-byte exact-fit string → ``ConstLong`` (8) + ``ConstInt`` (4) + ``ConstChar`` (1)."""
+        """13-byte exact-fit string -> ``ConstLong`` (8) + ``ConstInt`` (4) + ``ConstChar`` (1)."""
         instrs = _instrs_for_body((_string_init_decl("arr", b"hello world!!", 13),))
         expected_long = int.from_bytes(b"hello wo", "little")
         expected_int = int.from_bytes(b"rld!", "little")

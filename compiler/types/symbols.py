@@ -30,14 +30,14 @@ or ``extern`` variables.
 
 ``FunAttr`` is attached to every function declaration or definition.
 
-``Initial(inits)``  — the variable was given a constant initialiser; ``inits`` is
+``Initial(inits)``  - the variable was given a constant initialiser; ``inits`` is
                       a flat ordered tuple of ``StaticInit`` elements.  For scalar
                       objects this is a single-element tuple; for arrays it is a
                       flat sequence with consecutive zero regions coalesced into
                       ``ZeroInit`` nodes.
-``Tentative``       — the variable is a tentative definition (no initialiser);
+``Tentative``       - the variable is a tentative definition (no initialiser);
                       it will be zero-initialised at link time.
-``NoInitializer``   — the name appears only in a non-defining declaration (e.g.
+``NoInitializer``   - the name appears only in a non-defining declaration (e.g.
                       ``extern int x;`` with no preceding definition); it will
                       not generate any data-section output.
 """
@@ -62,7 +62,7 @@ class IntInit(StaticInit):
     """4-byte integer initialiser element (C ``int`` / ``unsigned int``).
 
     Attributes:
-        value: The integer value to store.  Never zero — use ``ZeroInit(4)``
+        value: The integer value to store.  Never zero - use ``ZeroInit(4)``
             for a zero-valued 4-byte element.
     """
 
@@ -74,7 +74,7 @@ class LongInit(StaticInit):
     """8-byte integer initialiser element (C ``long`` / ``unsigned long``).
 
     Attributes:
-        value: The integer value to store.  Never zero — use ``ZeroInit(8)``
+        value: The integer value to store.  Never zero - use ``ZeroInit(8)``
             for a zero-valued 8-byte element.
     """
 
@@ -86,7 +86,7 @@ class DoubleInit(StaticInit):
     """8-byte floating-point initialiser element (C ``double``).
 
     Attributes:
-        value: The double value to store.  Never zero — use ``ZeroInit(8)``
+        value: The double value to store.  Never zero - use ``ZeroInit(8)``
             for a zero-valued 8-byte element.
     """
 
@@ -98,7 +98,7 @@ class CharInit(StaticInit):
     """1-byte signed character initialiser element (C ``char`` / ``signed char``).
 
     Attributes:
-        value: The integer value to store.  Never zero — use ``ZeroInit(1)``
+        value: The integer value to store.  Never zero - use ``ZeroInit(1)``
             for a zero-valued 1-byte signed character element.
     """
 
@@ -110,7 +110,7 @@ class UCharInit(StaticInit):
     """1-byte unsigned character initialiser element (C ``unsigned char``).
 
     Attributes:
-        value: The integer value to store.  Never zero — use ``ZeroInit(1)``
+        value: The integer value to store.  Never zero - use ``ZeroInit(1)``
             for a zero-valued 1-byte unsigned character element.
     """
 
@@ -245,7 +245,7 @@ class ConstantAttr(SymbolAttrs):
 class LocalAttr(SymbolAttrs):
     """Attributes for a local (automatic-storage-duration) variable or compiler temporary.
 
-    Carries no fields — its presence in the symbol table records the variable's
+    Carries no fields - its presence in the symbol table records the variable's
     type (via ``SymbolTableEntry.t``) so that downstream passes can determine
     register width without inspecting the original declaration.
     """
@@ -310,7 +310,7 @@ class StructEntry:
         alignment: Required alignment of the struct in bytes.  Equal to the
             maximum alignment of any member.
         size: Total padded size of the struct in bytes (rounded up to a multiple
-            of ``alignment`` to satisfy C11 §6.7.2.1p15).
+            of ``alignment`` to satisfy C11 sec. 6.7.2.1p15).
         members: Ordered tuple of ``MemberEntry`` values, one per declared field.
     """
 

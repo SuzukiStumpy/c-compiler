@@ -14,7 +14,7 @@ def format_for_terminal(error: LexerError | ParseError | CodeGenerationError) ->
     colour codes when the output is not a TTY.
 
     ``LexerError`` and ``ParseError`` produce a multi-line output with a
-    location header, ±2 lines of source context in a numbered gutter, and a
+    location header, +/-2 lines of source context in a numbered gutter, and a
     ``^~~~~`` underline beneath the offending token.  When source lines are
     unavailable the output degrades to the header line only.
 

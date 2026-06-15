@@ -181,29 +181,29 @@ def _remove_empty_blocks(cfg: ControlFlowGraph[tac.Instruction]) -> None:
 def unreachable_code_elimination(cfg: ControlFlowGraph[tac.Instruction]) -> ControlFlowGraph[tac.Instruction]:
     """Remove basic blocks that can never be reached during execution, then strip redundant jumps and labels.
 
-    **Phase 0 — intra-block dead code removal**: Each block is truncated at its
+    **Phase 0 - intra-block dead code removal**: Each block is truncated at its
     first unconditional terminator (``Return`` or unconditional ``Jump``).
     Instructions after a terminator are unreachable within the block and are
     deleted before any block-level analysis is performed.
 
-    **Phase 1 — dead block removal**: Reachability is computed by a BFS/DFS
+    **Phase 1 - dead block removal**: Reachability is computed by a BFS/DFS
     from ``blocks[0]``, following both explicit jump targets (scanning *every*
     instruction in each reachable block) and fall-through edges.  Blocks not
     reached by this traversal are removed.  Unlike a simple inbound-edge count,
     the traversal correctly identifies dead cycles: a group of blocks that refer
     to each other but have no path from ``ENTRY`` all appear unreachable.
 
-    **Phase 2 — redundant jump removal**: Any trailing jump whose every successor
+    **Phase 2 - redundant jump removal**: Any trailing jump whose every successor
     is the immediately following block is removed because the fall-through
     behaviour is identical.
 
-    **Phase 3 — useless label removal**: Any label that is not the target of a
+    **Phase 3 - useless label removal**: Any label that is not the target of a
     remaining jump instruction is stripped from the start of its block, provided
     either (a) the predecessor does not end with a jump, or (b) the block contains
     only the label instruction (so removal produces an empty block rather than
     merging instructions into the predecessor mid-block).
 
-    **Phase 4 — empty block removal**: Blocks left empty by phase 3 are removed
+    **Phase 4 - empty block removal**: Blocks left empty by phase 3 are removed
     and edges are rewired via ``add_all_edges``.
 
     ``add_all_edges`` is called after phase 1 (and again inside phases 2 and 4

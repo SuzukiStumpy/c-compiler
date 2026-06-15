@@ -1,8 +1,8 @@
 """Top-level register allocation pipeline for the assembly representation.
 
 Implements graph-colouring register allocation over a function's instruction
-list in two independent passes — one for general-purpose registers and one for
-SIMD floating-point registers — then rewrites pseudo-register operands with the
+list in two independent passes - one for general-purpose registers and one for
+SIMD floating-point registers - then rewrites pseudo-register operands with the
 allocated hardware registers.
 """
 
@@ -126,11 +126,11 @@ def _classify_pseudos(
 
     Uses the symbol table C type to assign each pseudo to a register class:
 
-    * ``DoubleType`` → FP (XMM registers).
-    * ``LongType``, ``ULongType``, ``Pointer`` → GP (Quadword).
-    * ``IntType``, ``UIntType`` → GP (Longword).
-    * ``Char``, ``SChar``, ``UChar`` → GP (Byte).
-    * All other types (arrays, structs, functions) → not allocatable.
+    * ``DoubleType`` -> FP (XMM registers).
+    * ``LongType``, ``ULongType``, ``Pointer`` -> GP (Quadword).
+    * ``IntType``, ``UIntType`` -> GP (Longword).
+    * ``Char``, ``SChar``, ``UChar`` -> GP (Byte).
+    * All other types (arrays, structs, functions) -> not allocatable.
 
     Pseudos excluded from both sets:
 
@@ -197,7 +197,7 @@ _FP_ARG_REGS: tuple[FPRegisters, ...] = (
 
 # GP caller-saved registers that a call instruction overwrites.
 _GP_CALL_CLOBBERS: tuple[GPRegisters, ...] = (*_GP_ARG_REGS, GPRegisters.AX)
-# All allocatable XMM registers are caller-saved on Linux SysV — none are callee-saved.
+# All allocatable XMM registers are caller-saved on Linux SysV - none are callee-saved.
 _FP_CALL_CLOBBERS: tuple[FPRegisters, ...] = (
     FPRegisters.XMM0,
     FPRegisters.XMM1,
@@ -225,7 +225,7 @@ _GP_CALLEE_SAVED: frozenset[GPRegisters] = frozenset(
         GPRegisters.R15,
     }
 )
-# XMM registers are all caller-saved on Linux SysV ABI — no FP callee-saved registers.
+# XMM registers are all caller-saved on Linux SysV ABI - no FP callee-saved registers.
 _FP_CALLEE_SAVED: frozenset[FPRegisters] = frozenset()
 _CALLEE_SAVED: frozenset[GPRegisters | FPRegisters] = _GP_CALLEE_SAVED | _FP_CALLEE_SAVED
 
@@ -234,7 +234,7 @@ def _hw(r: GPRegisters | FPRegisters) -> asm.Register:
     """Wrap a hardware register enum as a ``Register`` operand (QWORD width).
 
     Width is QWORD throughout; the exact value does not affect GraphNode
-    extraction — only the register identity matters for interference analysis.
+    extraction - only the register identity matters for interference analysis.
 
     Args:
         r: The hardware register enum member to wrap.
@@ -277,7 +277,7 @@ def _call_param_regs(
             Pass ``None`` to fall back to treating each struct as a single GP arg.
 
     Returns:
-        An ordered list of ``Register`` operands — one per eightbyte register slot —
+        An ordered list of ``Register`` operands - one per eightbyte register slot -
         for the registers that carry the call's arguments.
     """
     if symbol_table is None:
@@ -330,10 +330,10 @@ def find_used_and_updated(
     Implicit hardware-register effects are represented as synthesised
     ``Register`` operands with ``Width.QWORD``:
 
-    * ``Idiv``/``Div`` — reads and overwrites ``AX`` and ``DX``
-    * ``Cdq`` — reads ``AX``, overwrites ``DX``
-    * ``Shl``/``Sar``/``Shr`` — reads ``CX`` (shift count)
-    * ``Call``/``IndirectCall`` — reads the argument-passing registers,
+    * ``Idiv``/``Div`` - reads and overwrites ``AX`` and ``DX``
+    * ``Cdq`` - reads ``AX``, overwrites ``DX``
+    * ``Shl``/``Sar``/``Shr`` - reads ``CX`` (shift count)
+    * ``Call``/``IndirectCall`` - reads the argument-passing registers,
       overwrites all GP caller-saved registers
 
     Instructions that have no allocatable operands (``Ret``, ``Label``, ``Jmp``,
@@ -384,7 +384,7 @@ def find_used_and_updated(
             clobbers: list[asm.Operand] = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
             return (_call_param_regs(name, symbol_table, struct_type_table), clobbers)
         case asm.IndirectCall(target=target):
-            # No name → conservative: all GP and FP arg regs used; target (fn ptr) also used.
+            # No name -> conservative: all GP and FP arg regs used; target (fn ptr) also used.
             used: list[asm.Operand] = [target, *(_hw(r) for r in _GP_ARG_REGS), *(_hw(r) for r in _FP_ARG_REGS)]
             clobbers2: list[asm.Operand] = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
             return (used, clobbers2)
@@ -422,7 +422,7 @@ def _make_asm_cfg(instructions: list[asm.Instruction]) -> ControlFlowGraph[asm.I
 # ---------------------------------------------------------------------------
 
 _LiveMap = dict[int, tuple[set[GraphNode], set[GraphNode]]]
-"""Liveness map: block index → (live_in, live_out)."""
+"""Liveness map: block index -> (live_in, live_out)."""
 
 # Conservative fallback: both integer and FP return-value registers live at exit.
 # Overridden per-function by _compute_exit_live when the return type is known.
@@ -434,7 +434,7 @@ def _compute_exit_live(fn_name: str | None, symbol_table: SymbolTable | None) ->
 
     Inspects the function's return type so that only the register(s) that
     actually carry the return value are treated as live.  This prevents
-    spurious interference edges — e.g. a double-returning function does not
+    spurious interference edges - e.g. a double-returning function does not
     need AX live at exit, and an int-returning function does not need XMM0.
 
     Falls back to ``_EXIT_LIVE`` (both AX and XMM0) when the return type
@@ -457,7 +457,7 @@ def _compute_exit_live(fn_name: str | None, symbol_table: SymbolTable | None) ->
         return frozenset({FPRegisters.XMM0})
     if isinstance(ret, (IntType, UIntType, LongType, ULongType, Pointer, Char, SChar, UChar)):
         return frozenset({GPRegisters.AX})
-    # VoidType, Structure, Union — no return-value register is implicitly live at exit.
+    # VoidType, Structure, Union - no return-value register is implicitly live at exit.
     return frozenset()
 
 
@@ -520,7 +520,7 @@ def _analyze_liveness(
     For each block *b*:
 
         live_out[b] = _meet(b, live_in, tracked_nodes, exit_live)
-        live_in[b]  = uses[b] ∪ (live_out[b] − defs[b])
+        live_in[b]  = uses[b] union (live_out[b] - defs[b])
 
     where ``uses[b]`` / ``defs[b]`` are the upward-exposed uses and definitions
     of the block as a whole, intersected with ``tracked_nodes``.
@@ -570,7 +570,7 @@ def _analyze_liveness(
 # Transfer function and edge generation
 # ---------------------------------------------------------------------------
 
-# Union of all allocatable hardware registers — used to extract GraphNodes
+# Union of all allocatable hardware registers - used to extract GraphNodes
 # from operands without re-instantiating the set on every call.
 _ALLOCATABLE: frozenset[GPRegisters | FPRegisters] = ALLOCATABLE_GP | ALLOCATABLE_FP
 
@@ -581,10 +581,10 @@ def _operands_to_nodes(operands: list[asm.Operand]) -> set[GraphNode]:
     Only operands that can reside in a hardware register contribute to the
     result:
 
-    * ``Pseudo`` — the pseudo-register name (``str``)
-    * ``Register`` with an allocatable enum — the register enum member
-    * ``Memory`` with an allocatable base register — the base register enum
-    * ``Indexed`` with allocatable base/index registers — both enum members
+    * ``Pseudo`` - the pseudo-register name (``str``)
+    * ``Register`` with an allocatable enum - the register enum member
+    * ``Memory`` with an allocatable base register - the base register enum
+    * ``Indexed`` with allocatable base/index registers - both enum members
 
     ``Imm``, ``Data``, ``PseudoMem``, and ``Memory``/``Indexed`` whose base
     registers are non-allocatable (e.g. ``BP``, ``SP``, ``R10``, ``R11``)
@@ -627,12 +627,12 @@ def _transfer(
     ``current_live`` set that represents the registers live *after* each
     instruction.  At each instruction:
 
-    * ❶ The current live set (= live_after for that instruction) is recorded.
-    * ❷ The transfer is applied: nodes in ``updated`` are removed from
+    * The current live set (= live_after for that instruction) is recorded.
+    * The transfer is applied: nodes in ``updated`` are removed from
       ``current_live``; nodes in ``used`` are added.
 
     After all instructions the remaining ``current_live`` is the block's
-    live_in (❸).
+    live_in.
 
     Only nodes present in ``tracked_nodes`` are propagated; this allows
     the GP and FP passes to share the same implementation.
@@ -656,12 +656,12 @@ def _transfer(
     live_after_rev: list[set[GraphNode]] = []
 
     for instr in reversed(block.instructions):
-        live_after_rev.append(set(current_live))  # ❶ annotate_instruction
-        used, updated = find_used_and_updated(instr, symbol_table, struct_type_table)  # ❷
+        live_after_rev.append(set(current_live))  # annotate_instruction
+        used, updated = find_used_and_updated(instr, symbol_table, struct_type_table)  #
         current_live -= _operands_to_nodes(updated) & tracked_nodes
         current_live |= _operands_to_nodes(used) & tracked_nodes
 
-    return current_live, list(reversed(live_after_rev))  # ❸ annotate_block
+    return current_live, list(reversed(live_after_rev))  # annotate_block
 
 
 def _add_edges(
@@ -674,16 +674,16 @@ def _add_edges(
 ) -> None:
     """Add interference edges to ``graph`` using per-instruction liveness.
 
-    For each instruction, the live set recorded immediately after it (❶) is
+    For each instruction, the live set recorded immediately after it is
     iterated.  For each live value ``l`` and each updated (defined) value ``u``:
 
-    * ❷ If the instruction is a ``Mov`` and ``l`` is the source operand, the
+    * If the instruction is a ``Mov`` and ``l`` is the source operand, the
       edge is skipped.  This is the *copy-coalescing* hint: the source and
       destination of a Mov may be assigned the same register, eliminating the
       Mov entirely, provided no other interference prevents it.
-    * ❸ Otherwise, ``add_edge(l, u)`` is called when both ``l`` and ``u`` are
+    * Otherwise, ``add_edge(l, u)`` is called when both ``l`` and ``u`` are
       nodes in the interference graph (guaranteed by ``tracked_nodes``
-      filtering) and ``l ≠ u`` (enforced inside ``add_edge``).
+      filtering) and ``l != u`` (enforced inside ``add_edge``).
 
     Args:
         cfg: The assembly CFG.
@@ -704,26 +704,26 @@ def _add_edges(
             _, updated = find_used_and_updated(instr, symbol_table, struct_type_table)
             updated_nodes = _operands_to_nodes(updated) & tracked_nodes
 
-            # Pre-compute Mov source nodes once per instruction (❷ optimisation).
+            # Pre-compute Mov source nodes once per instruction (optimisation).
             # The copy exception applies only when src is a direct register or pseudo
             # (i.e. a true value copy).  A Memory/Indexed src means the register(s)
             # embedded in the address are *address* operands, not the value being
-            # copied — they must still interfere with the destination.
+            # copied - they must still interfere with the destination.
             mov_src_nodes: set[GraphNode] = (
                 _operands_to_nodes([instr.src])
                 if isinstance(instr, asm.Mov) and isinstance(instr.src, (Pseudo, Register))
                 else set()
             )
 
-            for live in live_after:  # ❶ live registers after this instruction
-                if live in mov_src_nodes:  # ❷ skip Mov source → no edge with dst
+            for live in live_after:  # live registers after this instruction
+                if live in mov_src_nodes:  # skip Mov source -> no edge with dst
                     continue
-                for u in updated_nodes:  # ❸ add edge between live and each defined value
+                for u in updated_nodes:  # add edge between live and each defined value
                     graph.add_edge(live, u)
 
 
 # ---------------------------------------------------------------------------
-# Graph construction — two independent passes
+# Graph construction - two independent passes
 # ---------------------------------------------------------------------------
 
 
@@ -801,7 +801,7 @@ def build_fp_graph(
 def add_spill_costs(interference_graph: InterferenceGraph, instructions: list[asm.Instruction]) -> None:
     """Annotate each node in the interference graph with a spill cost.
 
-    Hardware-register nodes receive ``math.inf`` — they are never spilled.
+    Hardware-register nodes receive ``math.inf`` - they are never spilled.
     Pseudo-register nodes receive a cost equal to the number of times the
     pseudo appears across all instruction operands; higher-frequency pseudos
     are preferred for colouring over lower-frequency ones.
@@ -838,7 +838,7 @@ def color_graph(interference_graph: InterferenceGraph) -> None:
     first (guaranteed colorable).  When no such pseudo exists the one with the
     lowest ``spill_cost / degree`` metric is chosen as a potential spill
     candidate.  After the recursion bottoms out, nodes are re-added and
-    coloured greedily — preferring caller-saved registers (``min``) to avoid
+    coloured greedily - preferring caller-saved registers (``min``) to avoid
     unnecessary callee-saved register pressure.  A pseudo that cannot be
     coloured stays pruned (spilled to memory by a subsequent pass).
 
@@ -877,23 +877,23 @@ def _color_recursive(
     Args:
         graph: The interference graph being coloured (mutated in place).
         k: Number of available colours (allocatable hardware registers).
-        sorted_colors: Hardware registers in preference order — caller-saved
+        sorted_colors: Hardware registers in preference order - caller-saved
             first, callee-saved last.
     """
     remaining = {n for n in graph.nodes if isinstance(n, str) and n not in graph.pruned}
 
-    # ❶ Base case: all pseudo nodes have been processed.
+    # Base case: all pseudo nodes have been processed.
     if not remaining:
         return
 
-    # ❷ Find any pseudo whose current unpruned degree is below k.
+    # Find any pseudo whose current unpruned degree is below k.
     chosen_node: GraphNode | None = None
     for node in sorted(remaining, key=str):
         if len(graph.neighbours(node) - graph.pruned) < k:
             chosen_node = node
             break
 
-    # ❸ No easy pseudo — pick the one with the lowest spill_cost / degree.
+    # No easy pseudo - pick the one with the lowest spill_cost / degree.
     if chosen_node is None:
         best_metric = math.inf
         for node in sorted(remaining, key=str):
@@ -906,10 +906,10 @@ def _color_recursive(
     assert chosen_node is not None, "_color_recursive: remaining is non-empty but no node chosen"
     graph.pruned.add(chosen_node)
 
-    # ❹ Colour the rest of the graph first.
+    # Colour the rest of the graph first.
     _color_recursive(graph, k, sorted_colors)
 
-    # ❺ Colour this pseudo.  Hardware-register neighbours always block their own
+    # Colour this pseudo.  Hardware-register neighbours always block their own
     #    register (they are pre-coloured with themselves); pseudo neighbours block
     #    whichever register was assigned to them.
     taken: set[GPRegisters | FPRegisters] = set()
@@ -922,7 +922,7 @@ def _color_recursive(
     available = [c for c in sorted_colors if c not in taken]
 
     if available:
-        graph.colors[chosen_node] = available[0]  # min — prefer caller-saved
+        graph.colors[chosen_node] = available[0]  # min - prefer caller-saved
         graph.pruned.discard(chosen_node)
 
 
@@ -972,7 +972,7 @@ def _resolve_op(
 
     Args:
         op: The operand to resolve.
-        reg_map: Pseudo name → hardware register mapping.
+        reg_map: Pseudo name -> hardware register mapping.
         width: The ``Width`` to use when constructing the replacement ``Register``.
 
     Returns:
@@ -992,7 +992,7 @@ def _replace_in_instr(
 
     Args:
         instr: The instruction to transform.
-        reg_map: Pseudo name → hardware register mapping.
+        reg_map: Pseudo name -> hardware register mapping.
 
     Returns:
         A new instruction with all mapped ``Pseudo`` operands replaced by
@@ -1010,7 +1010,7 @@ def _replace_in_instr(
             )
         case asm.MoveZeroExtend(src_type=st, dst_type=dt, src=src, dst=dst):
             src_w = _asm_type_to_width(st)
-            # Longword→Quadword emits `movl src32, dst32` (CPU auto-zero-extends upper 32 bits),
+            # Longword->Quadword emits `movl src32, dst32` (CPU auto-zero-extends upper 32 bits),
             # so both operands must use DWORD width.  Byte variants use the actual dst_type width.
             dst_w = src_w if not isinstance(st, Byte) else _asm_type_to_width(dt)
             return dataclasses.replace(
@@ -1080,7 +1080,7 @@ def replace_pseudoregs(
     ``register_map`` with the corresponding ``Register`` operand.  Pseudos absent
     from the map (spilled) are left unchanged.  After substitution, any ``Mov``
     instruction whose source and destination have become identical ``Register``
-    operands is discarded — it is a no-op produced by copy coalescing.
+    operands is discarded - it is a no-op produced by copy coalescing.
 
     Args:
         instructions: The flat instruction list to transform.
@@ -1096,7 +1096,7 @@ def replace_pseudoregs(
         new_instr = _replace_in_instr(instr, register_map)
         if isinstance(new_instr, asm.Mov) and new_instr.src == new_instr.dst:
             continue
-        # MoveZeroExtend(Longword→Quadword) emits movl, which auto-zero-extends the upper 32 bits
+        # MoveZeroExtend(Longword->Quadword) emits movl, which auto-zero-extends the upper 32 bits
         # of its destination register.  When src and dst coalesce to the same register the write
         # is a no-op (writing %eax already zeroes the upper 32 bits of %rax).
         if (
@@ -1425,9 +1425,9 @@ def conservative_coalesceable(
     Returns:
         ``True`` if at least one applicable conservative test permits the merge.
     """
-    if _briggs_test(graph, src, dst):  # ❶
+    if _briggs_test(graph, src, dst):  #
         return True
-    if isinstance(src, (GPRegisters, FPRegisters)):  # ❷
+    if isinstance(src, (GPRegisters, FPRegisters)):  #
         return _george_test(graph, src, dst, instructions, coalesced_regs)
     if isinstance(dst, (GPRegisters, FPRegisters)):
         return _george_test(graph, dst, src, instructions, coalesced_regs)
@@ -1464,9 +1464,9 @@ def _apply_copy_exception_after_merge(
 
     ``update_graph`` blindly transfers every edge of the merged pseudo to the
     surviving hardreg, without honouring copy-exception semantics.  When hardreg
-    is a copy source for some node ``n`` — i.e. a ``Mov(hardreg, n)`` instruction
+    is a copy source for some node ``n`` - i.e. a ``Mov(hardreg, n)`` instruction
     exists (possibly because the pseudo that was just merged into hardreg was
-    itself a copy source for ``n``) — the copy exception prevents ``(hardreg, n)``
+    itself a copy source for ``n``) - the copy exception prevents ``(hardreg, n)``
     interference in a fresh graph.  This function removes any such edge **that was
     newly introduced by the merge** (i.e. was not already present before the merge).
 
@@ -1494,7 +1494,7 @@ def _apply_copy_exception_after_merge(
         resolved_dst = coalesced_regs.find(d)
         if resolved_src == hardreg and resolved_dst in graph.nodes and resolved_dst != hardreg:
             if resolved_dst in pre_merge_hardreg_neighbors:
-                # Edge existed before the merge — genuine interference, keep it.
+                # Edge existed before the merge - genuine interference, keep it.
                 continue
             graph.edges.discard(frozenset({hardreg, resolved_dst}))
 
@@ -1511,7 +1511,7 @@ def coalesce(
     pass ``conservative_coalesceable``, the two nodes are merged: the disjoint
     set is updated and ``update_graph`` rewires the interference graph in-place.
     Prior merges within the same call are resolved via ``find`` before each
-    check (step ❶ in the algorithm).
+    check (in the algorithm).
 
     Only ``Mov`` instructions that are true value copies are eligible: a ``Mov``
     whose assembly type is narrower than the source pseudo's natural stack size
@@ -1543,7 +1543,7 @@ def coalesce(
         if src_node is None or dst_node is None:
             continue
 
-        # ❶ Resolve to canonical representatives — prior iterations within this
+        # Resolve to canonical representatives - prior iterations within this
         #    call may have already merged one of these nodes.
         src = coalesced_regs.find(src_node)
         dst = coalesced_regs.find(dst_node)
@@ -1557,18 +1557,18 @@ def coalesce(
 
         # Skip truncating copies.  When the source pseudo's natural stack size
         # is larger than the Mov's assembly type, the instruction discards the
-        # high bits (e.g. Truncate: long → int yields Mov(long, int, LW)).
+        # high bits (e.g. Truncate: long -> int yields Mov(long, int, LW)).
         # Merging such a pair would give the canonical pseudo a slot sized for
         # the smaller type, causing an out-of-bounds write on spill.
         # Hardware registers are not pseudo names (they are enum values, not
-        # strings), so the natural-size check does not apply to them — their
+        # strings), so the natural-size check does not apply to them - their
         # access width is always determined by the Mov's assembly_type.
         at_bytes = _asm_type_to_width(instr.assembly_type).value
         if isinstance(src, str) and _natural_size_bytes(src, symbol_table) > at_bytes:
             continue
 
-        # ❷ Both must be live graph nodes, ❸ must not already interfere,
-        # ❹ and must pass the conservative coalescability test.
+        # Both must be live graph nodes, must not already interfere,
+        # and must pass the conservative coalescability test.
         if (
             src in interference_graph.nodes
             and dst in interference_graph.nodes
@@ -1585,7 +1585,7 @@ def coalesce(
                 to_keep = dst
                 to_merge = src
 
-            # ❺ Record the merge and rewire the graph.
+            # Record the merge and rewire the graph.
             coalesced_regs.union(to_merge, to_keep)
             update_graph(interference_graph, to_merge, to_keep)
 
@@ -1613,7 +1613,7 @@ def rewrite_coalesced(
 
     Resolves every ``Pseudo`` operand to its canonical representative via
     ``coalesced_regs.find``.  ``Mov`` instructions that become self-moves after
-    resolution are discarded (step ❶).
+    resolution are discarded .
 
     Args:
         instructions: The flat instruction list to transform.
@@ -1627,7 +1627,7 @@ def rewrite_coalesced(
     result: list[asm.Instruction] = []
     for instr in instructions:
         new_instr = _replace_coalesced_in_instr(instr, coalesced_regs)
-        if isinstance(new_instr, asm.Mov) and new_instr.src == new_instr.dst:  # ❶
+        if isinstance(new_instr, asm.Mov) and new_instr.src == new_instr.dst:  #
             continue
         result.append(new_instr)
     return result
@@ -1646,8 +1646,8 @@ def allocate_registers(
 ) -> tuple[list[asm.Instruction], list[GPRegisters], list[FPRegisters]]:
     """Run the full register allocation pipeline on a function's instruction list.
 
-    Executes two independent passes — one for GP registers, one for FP
-    registers — each preceded by an iterative register-coalescing loop that
+    Executes two independent passes - one for GP registers, one for FP
+    registers - each preceded by an iterative register-coalescing loop that
     merges copy-related pseudos until no further merges are possible.  The
     resulting maps are then combined and the instruction list is rewritten.
     Pseudo-registers with static storage duration are excluded from allocation

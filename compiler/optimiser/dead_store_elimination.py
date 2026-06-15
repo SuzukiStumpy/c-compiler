@@ -129,7 +129,7 @@ def _update_live(
             _use(current, ptr, index)
 
         case tac.CopyToOffset(src=src, dst=_dst):
-            # CopyToOffset writes *into* an aggregate — it does not read the
+            # CopyToOffset writes *into* an aggregate - it does not read the
             # aggregate's value, so the aggregate name is not added to live.
             # DSE may later eliminate this instruction if the aggregate is dead.
             _use(current, src)
@@ -139,7 +139,7 @@ def _update_live(
             current.add(src)
 
         case _:
-            # Jump, Label — no operands that affect liveness.
+            # Jump, Label - no operands that affect liveness.
             pass
 
 
@@ -165,8 +165,8 @@ def transfer(
 
     Returns:
         A 2-tuple ``(entry_live, instr_annotations)`` where *entry_live* is the
-        ``LiveSet`` on entry to the block and *instr_annotations* is a list —
-        one ``LiveSet`` per instruction in ``block.instructions`` — recording the
+        ``LiveSet`` on entry to the block and *instr_annotations* is a list -
+        one ``LiveSet`` per instruction in ``block.instructions`` - recording the
         live set *after* that instruction executes (i.e. the annotation captured
         before the backward update for that instruction).
     """
@@ -237,8 +237,8 @@ def is_dead_store(instr: tac.Instruction, annotation: LiveSet) -> bool:
        ``Load`` (through aliased-var tracking), so this is safe to check directly.
     3. For all other instructions: the instruction has a ``dst`` field that is a
        ``tac.Var``, and that variable is absent from *annotation*.  Instructions
-       without a TAC variable destination — ``Store``, jumps, labels, ``Return``
-       — are never dead stores.
+       without a TAC variable destination - ``Store``, jumps, labels, ``Return``
+       - are never dead stores.
 
     Aliased variables (address-taken or static-duration) are *not* exempted here;
     the liveness analysis itself is made conservative for aliased vars by adding

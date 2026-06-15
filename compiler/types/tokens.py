@@ -13,7 +13,7 @@ class TokenType(Enum):
     New token types are added here as additional language features are supported.
     """
 
-    # Keywords — must be matched before IDENTIFIER in the lexer
+    # Keywords - must be matched before IDENTIFIER in the lexer
     INT = auto()
     VOID = auto()
     RETURN = auto()

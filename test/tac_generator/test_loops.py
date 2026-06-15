@@ -30,7 +30,7 @@ class TestTacGeneratorBreakContinue:
     """``Break`` and ``Continue`` translate to unconditional jumps using loop identifiers."""
 
     def test_break_produces_jump_with_break_prefix(self) -> None:
-        """``break;`` (inside a loop with id ``.L.while.0``) → ``Jump("break_.L.while.0")``."""
+        """``break;`` (inside a loop with id ``.L.while.0``) -> ``Jump("break_.L.while.0")``."""
         instrs = _stmt_instrs(ast.Break(identifier=".L.while.0"))
         assert instrs == (
             tac.Jump(target="break_.L.while.0"),
@@ -38,7 +38,7 @@ class TestTacGeneratorBreakContinue:
         )
 
     def test_continue_produces_jump_with_continue_prefix(self) -> None:
-        """``continue;`` (inside a loop with id ``.L.while.0``) → ``Jump("continue_.L.while.0")``."""
+        """``continue;`` (inside a loop with id ``.L.while.0``) -> ``Jump("continue_.L.while.0")``."""
         instrs = _stmt_instrs(ast.Continue(identifier=".L.while.0"))
         assert instrs == (
             tac.Jump(target="continue_.L.while.0"),
@@ -67,7 +67,7 @@ class TestTacGeneratorWhileLoop:
     """``While`` translates to a condition-at-top loop with continue and break labels."""
 
     def test_while_full_sequence(self) -> None:
-        """``while (1) {}`` → continue-label, JumpIfZero, back-jump, break-label, guard."""
+        """``while (1) {}`` -> continue-label, JumpIfZero, back-jump, break-label, guard."""
         instrs = _stmt_instrs(
             ast.While(condition=ast.Constant(value=ast.ConstInt(1)), body=ast.Null(), identifier=".L.while.0")
         )
@@ -174,7 +174,7 @@ class TestTacGeneratorDoWhileLoop:
     """``DoWhile`` translates to a condition-at-bottom loop where the body always executes first."""
 
     def test_do_while_full_sequence(self) -> None:
-        """``do {} while (1);`` → start-label, continue-label, JumpIfNotZero, break-label, guard."""
+        """``do {} while (1);`` -> start-label, continue-label, JumpIfNotZero, break-label, guard."""
         instrs = _stmt_instrs(
             ast.DoWhile(body=ast.Null(), condition=ast.Constant(value=ast.ConstInt(1)), identifier=".L.do.0")
         )
@@ -239,7 +239,7 @@ class TestTacGeneratorForLoop:
     """``For`` translates to a standard init/test/step sequence with optional-expression elision."""
 
     def test_for_unconditional_full_sequence(self) -> None:
-        """``for (;;) {}`` → start-label, continue-label, back-jump, break-label; no ``JumpIfZero``."""
+        """``for (;;) {}`` -> start-label, continue-label, back-jump, break-label; no ``JumpIfZero``."""
         instrs = _stmt_instrs(
             ast.For(init=ast.InitExp(exp=None), condition=None, post=None, body=ast.Null(), identifier=".L.for.0")
         )
@@ -259,7 +259,7 @@ class TestTacGeneratorForLoop:
         assert not any(isinstance(i, tac.JumpIfZero) for i in instrs)
 
     def test_for_with_condition_full_sequence(self) -> None:
-        """``for (;1;) {}`` → start-label, JumpIfZero, body, continue-label, back-jump, break-label."""
+        """``for (;1;) {}`` -> start-label, JumpIfZero, body, continue-label, back-jump, break-label."""
         instrs = _stmt_instrs(
             ast.For(
                 init=ast.InitExp(exp=None),
@@ -323,7 +323,7 @@ class TestTacGeneratorForLoop:
         assert instrs[1] == tac.Label(name="start_.L.for.0")
 
     def test_for_init_declaration_without_init_produces_no_copy(self) -> None:
-        """``for (int i;;)`` — a declaration without an initialiser emits no ``Copy``."""
+        """``for (int i;;)`` - a declaration without an initialiser emits no ``Copy``."""
         instrs = _stmt_instrs(
             ast.For(
                 init=ast.InitDecl(

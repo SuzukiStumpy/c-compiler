@@ -224,7 +224,7 @@ class TestTacGeneratorCaseDefault:
     """``Case`` and ``Default`` in isolation produce a label followed by the governed statement."""
 
     def test_case_emits_label_then_statement(self) -> None:
-        """``case 5: return 5;`` → ``Label("case_<id>_5")`` + ``Return(5)``."""
+        """``case 5: return 5;`` -> ``Label("case_<id>_5")`` + ``Return(5)``."""
         instrs = _stmt_instrs(
             ast.Case(
                 value=ast.Constant(value=ast.ConstInt(5)),
@@ -238,7 +238,7 @@ class TestTacGeneratorCaseDefault:
         assert instrs[1].val == tac.Constant(value=ast.ConstInt(5))
 
     def test_default_emits_label_then_statement(self) -> None:
-        """``default: return 0;`` → ``Label("default_<id>")`` + ``Return(0)``."""
+        """``default: return 0;`` -> ``Label("default_<id>")`` + ``Return(0)``."""
         instrs = _stmt_instrs(
             ast.Default(
                 statement=ast.Return(exp=ast.Constant(value=ast.ConstInt(0))),

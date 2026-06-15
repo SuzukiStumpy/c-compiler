@@ -712,9 +712,9 @@ class Parser:
 
         Handles three forms:
 
-        * ``()`` — empty parameter list.
-        * ``(void)`` — explicit "no parameters" marker; treated as empty.
-        * ``("int" identifier {"," "int" identifier})`` — one or more typed parameters.
+        * ``()`` - empty parameter list.
+        * ``(void)`` - explicit "no parameters" marker; treated as empty.
+        * ``("int" identifier {"," "int" identifier})`` - one or more typed parameters.
 
         Returns:
             A tuple of zero or more ``Parameter`` nodes.
@@ -972,7 +972,7 @@ class Parser:
         full_type = transform(base_type)
 
         # A FunType result means the declared entity is itself a function.
-        # A Pointer(FunType(...)) — or any other non-FunType — means a variable
+        # A Pointer(FunType(...)) - or any other non-FunType - means a variable
         # (possibly of function-pointer type), even if params was non-None.
         if isinstance(full_type, FunType):
             if self._match(TokenType.SEMICOLON):
@@ -1646,7 +1646,7 @@ class Parser:
 
         The callee is represented as a ``Var`` wrapping the identifier so that
         direct calls and indirect calls through function-pointer variables are
-        both expressed as ``FunctionCall(callee=<Exp>, args=…)``.
+        both expressed as ``FunctionCall(callee=<Exp>, args=...)``.
 
         Args:
             name: The function name, already consumed by the caller.
@@ -1686,7 +1686,7 @@ class Parser:
     def _parse_constant(self) -> Constant:
         """Parse an integer, long, double, or character constant expression.
 
-        Follows C11 §6.4.4.1 for numeric constants and §6.4.4.4 for character
+        Follows C11 sec. 6.4.4.1 for numeric constants and sec. 6.4.4.4 for character
         constants.
 
         - An unsuffixed decimal constant has the type of the first of ``int``,
@@ -2018,7 +2018,7 @@ class Parser:
 
         # A param-list here would make this a function declarator.  If the
         # simple-declarator already produced a function declarator (simple_params
-        # is not None), that would mean a function returning a function — invalid.
+        # is not None), that would mean a function returning a function - invalid.
         if simple_params is not None:
             tok = self._peek()
             msg = f"'{name}' declared as function returning a function"
@@ -2053,10 +2053,10 @@ class Parser:
         The type-builder takes the base (specifier) type and returns the full derived type.
         Examples with base type ``IntType()``:
 
-        * ``x``          → ``IntType()``
-        * ``*x``         → ``Pointer(IntType())``
-        * ``*(*(x))``    → ``Pointer(Pointer(IntType()))``
-        * ``*foo(void)`` → ``FunType(params=(), ret=Pointer(IntType()))``
+        * ``x``          -> ``IntType()``
+        * ``*x``         -> ``Pointer(IntType())``
+        * ``*(*(x))``    -> ``Pointer(Pointer(IntType()))``
+        * ``*foo(void)`` -> ``FunType(params=(), ret=Pointer(IntType()))``
 
         Returns:
             A ``(name, type_builder, params)`` triple where ``name`` is the declared

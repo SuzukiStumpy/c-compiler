@@ -390,37 +390,37 @@ class TestFoldConditionalJumps:
     """Folding of ``JumpIfZero`` and ``JumpIfNotZero`` with constant conditions."""
 
     def test_jump_if_zero_with_zero_becomes_jump(self) -> None:
-        """``JumpIfZero(0, target)`` → ``Jump(target)``."""
+        """``JumpIfZero(0, target)`` -> ``Jump(target)``."""
         instr = tac.JumpIfZero(condition=_ci(0), target="done")
         result = constant_folding(_function((instr,)))
         assert result.body == (tac.Jump(target="done"),)
 
     def test_jump_if_zero_with_nonzero_is_removed(self) -> None:
-        """``JumpIfZero(1, target)`` is removed — condition never met."""
+        """``JumpIfZero(1, target)`` is removed - condition never met."""
         instr = tac.JumpIfZero(condition=_ci(1), target="done")
         result = constant_folding(_function((instr,)))
         assert result.body == ()
 
     def test_jump_if_zero_with_negative_nonzero_is_removed(self) -> None:
-        """``JumpIfZero(-1, target)`` is removed — nonzero condition never jumps."""
+        """``JumpIfZero(-1, target)`` is removed - nonzero condition never jumps."""
         instr = tac.JumpIfZero(condition=_ci(-1), target="done")
         result = constant_folding(_function((instr,)))
         assert result.body == ()
 
     def test_jump_if_not_zero_with_nonzero_becomes_jump(self) -> None:
-        """``JumpIfNotZero(5, target)`` → ``Jump(target)``."""
+        """``JumpIfNotZero(5, target)`` -> ``Jump(target)``."""
         instr = tac.JumpIfNotZero(condition=_ci(5), target="loop")
         result = constant_folding(_function((instr,)))
         assert result.body == (tac.Jump(target="loop"),)
 
     def test_jump_if_not_zero_with_zero_is_removed(self) -> None:
-        """``JumpIfNotZero(0, target)`` is removed — condition never met."""
+        """``JumpIfNotZero(0, target)`` is removed - condition never met."""
         instr = tac.JumpIfNotZero(condition=_ci(0), target="loop")
         result = constant_folding(_function((instr,)))
         assert result.body == ()
 
     def test_jump_if_zero_double_zero_becomes_jump(self) -> None:
-        """``JumpIfZero(0.0, target)`` → ``Jump(target)`` for double constants."""
+        """``JumpIfZero(0.0, target)`` -> ``Jump(target)`` for double constants."""
         instr = tac.JumpIfZero(condition=_cd(0.0), target="end")
         result = constant_folding(_function((instr,)))
         assert result.body == (tac.Jump(target="end"),)
@@ -491,7 +491,7 @@ class TestFoldSignExtend:
     """Folding of ``SignExtend`` with a constant source."""
 
     def test_int_to_long(self) -> None:
-        """``SignExtend(ConstInt(5), dst)`` → ``Copy(ConstLong(5), dst)``."""
+        """``SignExtend(ConstInt(5), dst)`` -> ``Copy(ConstLong(5), dst)``."""
         dst = _var("tmp")
         instr = tac.SignExtend(src=_ci(5), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", LongType()))
@@ -505,7 +505,7 @@ class TestFoldSignExtend:
         assert result.body == (tac.Copy(src=_cl(-1), dst=dst),)
 
     def test_char_to_int(self) -> None:
-        """``SignExtend(ConstChar(-1), dst:int)`` → ``Copy(ConstInt(-1), dst)``."""
+        """``SignExtend(ConstChar(-1), dst:int)`` -> ``Copy(ConstInt(-1), dst)``."""
         dst = _var("tmp")
         instr = tac.SignExtend(src=tac.Constant(ast.ConstChar(-1)), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", IntType()))
@@ -528,7 +528,7 @@ class TestFoldZeroExtend:
     """Folding of ``ZeroExtend`` with a constant source."""
 
     def test_uint_to_ulong(self) -> None:
-        """``ZeroExtend(ConstUInt(0xFFFFFFFF), dst:ulong)`` → ``Copy(ConstULong(0xFFFFFFFF), dst)``."""
+        """``ZeroExtend(ConstUInt(0xFFFFFFFF), dst:ulong)`` -> ``Copy(ConstULong(0xFFFFFFFF), dst)``."""
         dst = _var("tmp")
         instr = tac.ZeroExtend(src=_cui(0xFFFF_FFFF), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", ULongType()))
@@ -559,7 +559,7 @@ class TestFoldTruncate:
     """Folding of ``Truncate`` with a constant source."""
 
     def test_long_to_int(self) -> None:
-        """``Truncate(ConstLong(5), dst:int)`` → ``Copy(ConstInt(5), dst)``."""
+        """``Truncate(ConstLong(5), dst:int)`` -> ``Copy(ConstInt(5), dst)``."""
         dst = _var("tmp")
         instr = tac.Truncate(src=_cl(5), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", IntType()))
@@ -596,24 +596,24 @@ class TestFoldTruncate:
 
 
 class TestFoldIntToDouble:
-    """Folding of ``IntToDouble`` — result is always ``ConstDouble``."""
+    """Folding of ``IntToDouble`` - result is always ``ConstDouble``."""
 
     def test_int_to_double(self) -> None:
-        """``IntToDouble(ConstInt(5), dst)`` → ``Copy(ConstDouble(5.0), dst)``."""
+        """``IntToDouble(ConstInt(5), dst)`` -> ``Copy(ConstDouble(5.0), dst)``."""
         dst = _var("tmp")
         instr = tac.IntToDouble(src=_ci(5), dst=dst)
         result = constant_folding(_function((instr,)))
         assert result.body == (tac.Copy(src=_cd(5.0), dst=dst),)
 
     def test_long_to_double(self) -> None:
-        """``IntToDouble(ConstLong(-3), dst)`` → ``Copy(ConstDouble(-3.0), dst)``."""
+        """``IntToDouble(ConstLong(-3), dst)`` -> ``Copy(ConstDouble(-3.0), dst)``."""
         dst = _var("tmp")
         instr = tac.IntToDouble(src=_cl(-3), dst=dst)
         result = constant_folding(_function((instr,)))
         assert result.body == (tac.Copy(src=_cd(-3.0), dst=dst),)
 
     def test_char_to_double(self) -> None:
-        """``IntToDouble(ConstChar(65), dst)`` → ``Copy(ConstDouble(65.0), dst)``."""
+        """``IntToDouble(ConstChar(65), dst)`` -> ``Copy(ConstDouble(65.0), dst)``."""
         dst = _var("tmp")
         instr = tac.IntToDouble(src=tac.Constant(ast.ConstChar(65)), dst=dst)
         result = constant_folding(_function((instr,)))
@@ -634,7 +634,7 @@ class TestFoldIntToDouble:
 
 
 class TestFoldUIntToDouble:
-    """Folding of ``UIntToDouble`` — result is always ``ConstDouble``."""
+    """Folding of ``UIntToDouble`` - result is always ``ConstDouble``."""
 
     def test_uint_to_double(self) -> None:
         """``UIntToDouble(ConstUInt(0xFFFFFFFF), dst)`` converts to the exact double."""
@@ -644,7 +644,7 @@ class TestFoldUIntToDouble:
         assert result.body == (tac.Copy(src=_cd(float(0xFFFF_FFFF)), dst=dst),)
 
     def test_ulong_to_double(self) -> None:
-        """``UIntToDouble(ConstULong(2), dst)`` → ``Copy(ConstDouble(2.0), dst)``."""
+        """``UIntToDouble(ConstULong(2), dst)`` -> ``Copy(ConstDouble(2.0), dst)``."""
         dst = _var("tmp")
         instr = tac.UIntToDouble(src=_cul(2), dst=dst)
         result = constant_folding(_function((instr,)))
@@ -659,38 +659,38 @@ class TestFoldUIntToDouble:
 
 
 class TestFoldDoubleToInt:
-    """Folding of ``DoubleToInt`` — requires symbol table to determine destination type."""
+    """Folding of ``DoubleToInt`` - requires symbol table to determine destination type."""
 
     def test_double_to_int_truncates_toward_zero(self) -> None:
-        """``DoubleToInt(2.9, dst:int)`` truncates toward zero → ``ConstInt(2)``."""
+        """``DoubleToInt(2.9, dst:int)`` truncates toward zero -> ``ConstInt(2)``."""
         dst = _var("tmp")
         instr = tac.DoubleToInt(src=_cd(2.9), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", IntType()))
         assert result.body == (tac.Copy(src=_ci(2), dst=dst),)
 
     def test_double_to_int_negative_truncates_toward_zero(self) -> None:
-        """``DoubleToInt(-2.9, dst:int)`` truncates toward zero → ``ConstInt(-2)``."""
+        """``DoubleToInt(-2.9, dst:int)`` truncates toward zero -> ``ConstInt(-2)``."""
         dst = _var("tmp")
         instr = tac.DoubleToInt(src=_cd(-2.9), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", IntType()))
         assert result.body == (tac.Copy(src=_ci(-2), dst=dst),)
 
     def test_double_to_long(self) -> None:
-        """``DoubleToInt(3.0e9, dst:long)`` → ``ConstLong(3000000000)``."""
+        """``DoubleToInt(3.0e9, dst:long)`` -> ``ConstLong(3000000000)``."""
         dst = _var("tmp")
         instr = tac.DoubleToInt(src=_cd(3.0e9), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", LongType()))
         assert result.body == (tac.Copy(src=_cl(3_000_000_000), dst=dst),)
 
     def test_double_to_schar(self) -> None:
-        """``DoubleToInt(65.9, dst:signed char)`` → ``ConstChar(65)``."""
+        """``DoubleToInt(65.9, dst:signed char)`` -> ``ConstChar(65)``."""
         dst = _var("tmp")
         instr = tac.DoubleToInt(src=_cd(65.9), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", SChar()))
         assert result.body == (tac.Copy(src=tac.Constant(ast.ConstChar(65)), dst=dst),)
 
     def test_inf_not_folded(self) -> None:
-        """``DoubleToInt(inf, dst)`` is not folded — non-finite source."""
+        """``DoubleToInt(inf, dst)`` is not folded - non-finite source."""
         import math
 
         instr = tac.DoubleToInt(src=_cd(math.inf), dst=_var("tmp"))
@@ -698,7 +698,7 @@ class TestFoldDoubleToInt:
         assert constant_folding(fn, _sym("tmp", IntType())) is fn
 
     def test_nan_not_folded(self) -> None:
-        """``DoubleToInt(nan, dst)`` is not folded — non-finite source."""
+        """``DoubleToInt(nan, dst)`` is not folded - non-finite source."""
         import math
 
         instr = tac.DoubleToInt(src=_cd(math.nan), dst=_var("tmp"))
@@ -719,10 +719,10 @@ class TestFoldDoubleToInt:
 
 
 class TestFoldDoubleToUInt:
-    """Folding of ``DoubleToUInt`` — requires symbol table to determine destination type."""
+    """Folding of ``DoubleToUInt`` - requires symbol table to determine destination type."""
 
     def test_double_to_uint_truncates_toward_zero(self) -> None:
-        """``DoubleToUInt(3.9, dst:uint)`` truncates toward zero → ``ConstUInt(3)``."""
+        """``DoubleToUInt(3.9, dst:uint)`` truncates toward zero -> ``ConstUInt(3)``."""
         dst = _var("tmp")
         instr = tac.DoubleToUInt(src=_cd(3.9), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", UIntType()))
@@ -737,14 +737,14 @@ class TestFoldDoubleToUInt:
         assert result.body == (tac.Copy(src=_cul(val), dst=dst),)
 
     def test_double_to_uchar(self) -> None:
-        """``DoubleToUInt(200.9, dst:uchar)`` → ``ConstUChar(200)``."""
+        """``DoubleToUInt(200.9, dst:uchar)`` -> ``ConstUChar(200)``."""
         dst = _var("tmp")
         instr = tac.DoubleToUInt(src=_cd(200.9), dst=dst)
         result = constant_folding(_function((instr,)), _sym("tmp", UChar()))
         assert result.body == (tac.Copy(src=tac.Constant(ast.ConstUChar(200)), dst=dst),)
 
     def test_inf_not_folded(self) -> None:
-        """``DoubleToUInt(inf, dst)`` is not folded — non-finite source."""
+        """``DoubleToUInt(inf, dst)`` is not folded - non-finite source."""
         import math
 
         instr = tac.DoubleToUInt(src=_cd(math.inf), dst=_var("tmp"))

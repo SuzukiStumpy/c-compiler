@@ -29,7 +29,7 @@ are *variable resolution*, *function declaration validation*, and *type checking
   rather than as a function.
 * Linkage is recorded for each binding: ``Linkage.NONE`` for local variables;
   ``Linkage.INTERNAL`` for ``static`` variables and for ``extern`` declarations
-  that inherit a prior internal linkage (C11 §6.2.2p4); ``Linkage.EXTERNAL``
+  that inherit a prior internal linkage (C11 sec. 6.2.2p4); ``Linkage.EXTERNAL``
   for functions and file-scope variables that have not established internal
   linkage.
 
@@ -213,9 +213,9 @@ def get_common_type(type1: Type, type2: Type) -> Type:
 
     Implements C's usual arithmetic conversions for the integer types supported by this compiler.
     Character types (``Char``, ``SChar``, ``UChar``) are first promoted to ``IntType`` per
-    C11 §6.3.1.1.  When both operands already share the same type the result is that type
+    C11 sec. 6.3.1.1.  When both operands already share the same type the result is that type
     unchanged.  When the sizes differ the wider type is chosen.  When sizes are equal but
-    signedness differs the unsigned type is chosen (C11 §6.3.1.8, rule 4).
+    signedness differs the unsigned type is chosen (C11 sec. 6.3.1.8, rule 4).
 
     Args:
         type1: The type of the first operand.
@@ -243,7 +243,7 @@ def get_common_type(type1: Type, type2: Type) -> Type:
 def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
     """Return the common pointer type for two expressions where at least one operand is a pointer.
 
-    Implements C's pointer-compatibility rules (C11 §6.5.15, §6.3.2.3): two pointer operands are
+    Implements C's pointer-compatibility rules (C11 sec. 6.5.15, sec. 6.3.2.3): two pointer operands are
     compatible when they share the same type, when one of them is a null pointer constant (an
     integer constant expression with value zero) in which case the other operand's type is used,
     or when one operand is ``void *`` and the other is any pointer type, in which case the common
@@ -276,13 +276,13 @@ def get_common_pointer_type(e1: ast.Exp, e2: ast.Exp) -> Type:
 
 
 def _convert_by_assignment(e: ast.Exp, target_type: Type) -> ast.Exp:
-    """Convert an expression to a target type using the rules for assignment compatibility (C11 §6.5.16.1).
+    """Convert an expression to a target type using the rules for assignment compatibility (C11 sec. 6.5.16.1).
 
     The legal cases are: the expression already has the target type (covers struct-to-same-struct
-    assignment — no ``Cast`` node is inserted); both the expression and the target are arithmetic
+    assignment - no ``Cast`` node is inserted); both the expression and the target are arithmetic
     types (usual arithmetic conversions apply); the expression is a null pointer constant and the
     target is a pointer type; or one side is ``void *`` and the other is any pointer type
-    (C11 §6.3.2.3p1) — the non-``void *`` operand is converted to the target type.
+    (C11 sec. 6.3.2.3p1) - the non-``void *`` operand is converted to the target type.
     All other combinations are rejected as incompatible, including assignments between two struct
     types that do not share the same resolved tag.
 
@@ -400,7 +400,7 @@ def _is_null_pointer_constant(e: ast.Exp) -> bool:
 def is_scalar(t: Type | None) -> bool:
     """Return True when ``t`` is a scalar type (arithmetic or pointer).
 
-    Void, array, and function types are not scalar per C11 §6.2.5.
+    Void, array, and function types are not scalar per C11 sec. 6.2.5.
 
     Args:
         t: The C type to test, or ``None`` if the type is not yet known.
@@ -462,7 +462,7 @@ def is_lvalue(e: ast.Exp) -> bool:
     * ``Arrow`` (``ptr->member``) is always an lvalue because ``->`` implicitly
       dereferences a pointer.
     * ``Dot`` (``s.member``) is an lvalue only when its left operand is itself an
-      lvalue — the check recurses until a non-lvalue or a base lvalue is found.
+      lvalue - the check recurses until a non-lvalue or a base lvalue is found.
     * All other expression forms are rvalues.
 
     Args:
@@ -529,7 +529,7 @@ def is_pointer_to_complete(t: Type | None, struct_type_table: StructTypeTable) -
 def validate_type_specifier(t: Type, struct_type_table: StructTypeTable) -> None:
     """Recursively validate a type specifier for structural correctness.
 
-    Checks that no array element type is incomplete (C11 §6.7.6.2p1 — arrays
+    Checks that no array element type is incomplete (C11 sec. 6.7.6.2p1 - arrays
     of incomplete type are not allowed), and recurses into pointer, array, and
     function component types.
 
@@ -560,7 +560,7 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
     """Create a zero-valued, fully type-annotated ``Initializer`` for the given type.
 
     Used to pad aggregate initialisers that are shorter than their declared size
-    (C11 §6.7.9p21: elements not explicitly initialised receive zero-initialisation).
+    (C11 sec. 6.7.9p21: elements not explicitly initialised receive zero-initialisation).
 
     Args:
         t: The C type for which a zero initializer is needed.
@@ -603,7 +603,7 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
                 init_type=Structure(tag=tag),
             )
         case Union(tag=tag):
-            # C11 §6.7.9p10: union zero-initialisation initialises the first named member.
+            # C11 sec. 6.7.9p10: union zero-initialisation initialises the first named member.
             union_def = struct_type_table[tag]
             return ast.CompoundInit(
                 [_zero_initializer(union_def.members[0].member_type, struct_type_table)],
@@ -620,7 +620,7 @@ def _is_constant_init(init: ast.Initializer) -> bool:
     compile-time constant expressions before calling ``_typecheck_init``.
 
     Args:
-        init: The initialiser to inspect — either a ``SingleInit`` or a
+        init: The initialiser to inspect - either a ``SingleInit`` or a
             ``CompoundInit``.
 
     Returns:
@@ -647,7 +647,7 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
     typed init variant that matches the byte width of ``t``.
 
     Args:
-        t: The C type determining the byte width and variant — ``IntType``,
+        t: The C type determining the byte width and variant - ``IntType``,
             ``UIntType``, ``LongType``, ``ULongType``, ``DoubleType``,
             ``Char``, ``SChar``, or ``UChar``.
             ``None`` or an unrecognised type defaults to a 4-byte ``IntInit``
@@ -849,7 +849,7 @@ class SemanticAnalyser:
             the corresponding switch, after truncating each constant to the type
             of the switch control expression.  Truncation is required because C
             compares case labels against the switch expression using the type of
-            that expression — so ``case 34359738768l`` in an ``int`` switch is
+            that expression - so ``case 34359738768l`` in an ``int`` switch is
             duplicate with ``case 400`` (both truncate to 400).
             Used to detect duplicate case values within a single switch statement.
         _switch_type_stack: Parallel stack to ``_switch_stack``.  Each entry is
@@ -1028,7 +1028,7 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If a ``Structure`` tag has not been declared before
-                use and is not a known unique internal tag (❷ in the algorithm).
+                use and is not a known unique internal tag (in the algorithm).
         """
         match t:
             case Structure(tag=tag):
@@ -1039,7 +1039,7 @@ class SemanticAnalyser:
                 if binding is not None:
                     return Structure(binding.new_tag)
                 if tag in self._all_unique_struct_tags:
-                    return t  # already resolved — idempotent
+                    return t  # already resolved - idempotent
                 raise SemanticError(f"Use of undeclared struct tag '{tag}'")
             case Union(tag=tag):
                 s_binding = self._structure_map.get(tag)
@@ -1049,7 +1049,7 @@ class SemanticAnalyser:
                 if binding is not None:
                     return Union(binding.new_tag)
                 if tag in self._all_unique_union_tags:
-                    return t  # already resolved — idempotent
+                    return t  # already resolved - idempotent
                 raise SemanticError(f"Use of undeclared union tag '{tag}'")
             case Pointer(referenced=ref_t):
                 return Pointer(self._resolve_type(ref_t))
@@ -1064,8 +1064,8 @@ class SemanticAnalyser:
         """Return ``True`` when ``t`` is a type that may be used as a struct member.
 
         A type is eligible when it is not void, not a function type, not an
-        incomplete struct type (not yet in ``_struct_type_table``), and — for
-        array types — when the element type is recursively eligible.
+        incomplete struct type (not yet in ``_struct_type_table``), and - for
+        array types - when the element type is recursively eligible.
 
         Args:
             t: The resolved C type to test.
@@ -1114,16 +1114,16 @@ class SemanticAnalyser:
 
         Implements the type-checking algorithm for struct declarations:
 
-        * ❶ Declarations without a member list are silently ignored — they either
+        * Declarations without a member list are silently ignored - they either
           forward-declare an incomplete type or redundantly name a type that was
           already defined.
-        * ❷ ``_validate_struct_definition`` checks for duplicate member names and
+        * ``_validate_struct_definition`` checks for duplicate member names and
           incomplete member types.
-        * ❸–❺ Member offsets are computed by rounding the running size up to the
+        * Member offsets are computed by rounding the running size up to the
           member's alignment before placing each member.
-        * ❻ The final struct size is rounded up to the struct's own alignment
-          (C11 §6.7.2.1p15 — trailing padding).
-        * ❼ The completed ``StructEntry`` is stored in ``_struct_type_table``
+        * The final struct size is rounded up to the struct's own alignment
+          (C11 sec. 6.7.2.1p15 - trailing padding).
+        * The completed ``StructEntry`` is stored in ``_struct_type_table``
           keyed by the unique internal tag.
 
         Args:
@@ -1137,23 +1137,23 @@ class SemanticAnalyser:
                 cannot be determined (e.g. an incomplete struct type used as a
                 value member).
         """
-        if not struct_decl.members:  # ❶ forward declaration — nothing to do
+        if not struct_decl.members:  # forward declaration - nothing to do
             return
         if struct_decl.tag in self._struct_type_table:
             raise SemanticError(f"Redefinition of struct '{struct_decl.tag}'.")
-        self._validate_struct_definition(struct_decl)  # ❷
-        member_entries: list[MemberEntry] = []  # ❸
+        self._validate_struct_definition(struct_decl)  #
+        member_entries: list[MemberEntry] = []  #
         struct_size = 0
         struct_alignment = 1
         for member in struct_decl.members:
             member_align = type_alignment(member.member_type, self._struct_type_table)
-            member_offset = _round_up(struct_size, member_align)  # ❹
-            member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))  # ❺
+            member_offset = _round_up(struct_size, member_align)  #
+            member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))  #
             struct_alignment = max(struct_alignment, member_align)
             struct_size = member_offset + type_size(member.member_type, self._struct_type_table)
-        struct_size = _round_up(struct_size, struct_alignment)  # ❻
+        struct_size = _round_up(struct_size, struct_alignment)  #
         struct_def = StructEntry(alignment=struct_alignment, size=struct_size, members=tuple(member_entries))
-        self._struct_type_table[struct_decl.tag] = struct_def  # ❼
+        self._struct_type_table[struct_decl.tag] = struct_def  #
 
     def _validate_union_definition(self, union_decl: UnionDeclaration) -> None:
         """Validate the member list of a union definition.
@@ -1183,16 +1183,16 @@ class SemanticAnalyser:
     def _typecheck_union_declaration(self, union_decl: UnionDeclaration) -> None:
         """Validate a union definition and record its layout in ``_struct_type_table``.
 
-        Union layout (C11 §6.7.2.1p16): all members start at offset 0; size
+        Union layout (C11 sec. 6.7.2.1p16): all members start at offset 0; size
         equals the largest member size rounded up to the union's alignment;
         alignment equals the maximum member alignment.
 
-        * ❶ Declarations without a member list are silently ignored.
-        * ❷ ``_validate_union_definition`` checks for duplicate names and bad types.
-        * ❸ Every member entry records offset 0.
-        * ❹ Track max alignment and max raw member size.
-        * ❺ Round final size up to alignment (trailing padding).
-        * ❻ Store in ``_struct_type_table`` keyed by the unique internal tag.
+        * Declarations without a member list are silently ignored.
+        * ``_validate_union_definition`` checks for duplicate names and bad types.
+        * Every member entry records offset 0.
+        * Track max alignment and max raw member size.
+        * Round final size up to alignment (trailing padding).
+        * Store in ``_struct_type_table`` keyed by the unique internal tag.
 
         Args:
             union_decl: The resolved ``UnionDeclaration`` (tag is a unique
@@ -1202,23 +1202,23 @@ class SemanticAnalyser:
             SemanticError: If the union tag already has a complete definition;
                 if ``_validate_union_definition`` finds a violation.
         """
-        if not union_decl.members:  # ❶ forward declaration — nothing to do
+        if not union_decl.members:  # forward declaration - nothing to do
             return
         if union_decl.tag in self._struct_type_table:
             raise SemanticError(f"Redefinition of union '{union_decl.tag}'.")
-        self._validate_union_definition(union_decl)  # ❷
+        self._validate_union_definition(union_decl)  #
         member_entries: list[MemberEntry] = []
         union_alignment = 1
         union_size = 0
         for member in union_decl.members:
             member_align = type_alignment(member.member_type, self._struct_type_table)
             member_size = type_size(member.member_type, self._struct_type_table)
-            member_entries.append(MemberEntry(member.member_name, member.member_type, 0))  # ❸
-            union_alignment = max(union_alignment, member_align)  # ❹
+            member_entries.append(MemberEntry(member.member_name, member.member_type, 0))  #
+            union_alignment = max(union_alignment, member_align)  #
             union_size = max(union_size, member_size)
-        union_size = _round_up(union_size, union_alignment)  # ❺
+        union_size = _round_up(union_size, union_alignment)  #
         union_def = StructEntry(alignment=union_alignment, size=union_size, members=tuple(member_entries))
-        self._struct_type_table[union_decl.tag] = union_def  # ❻
+        self._struct_type_table[union_decl.tag] = union_def  #
 
     def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
         """Recursively collect label names from a statement into ``_label_set``.
@@ -1335,8 +1335,8 @@ class SemanticAnalyser:
                 )
             if binding is not None and binding.from_current_block:
                 if binding.unique_name == var_decl.name:
-                    return var_decl  # repeated extern declaration (EXTERNAL or INTERNAL) — permitted
-                # Prior declaration was a renamed local or static local — block-scope extern conflicts.
+                    return var_decl  # repeated extern declaration (EXTERNAL or INTERNAL) - permitted
+                # Prior declaration was a renamed local or static local - block-scope extern conflicts.
                 raise SemanticError(f"'{var_decl.name}' previously declared without linkage in this scope.")
             prior_linkage = self._file_scope_linkage.get(var_decl.name)
             # Inherit whichever linkage was already established; default to EXTERNAL when unseen.
@@ -1449,7 +1449,7 @@ class SemanticAnalyser:
     def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:  # noqa: C901
         """Record a file-scope variable declaration in the identifier table.
 
-        File-scope variables are *not* renamed — they keep their original source
+        File-scope variables are *not* renamed - they keep their original source
         names throughout the compilation pipeline.  The binding is added to
         ``_variable_map`` with ``from_current_block=False`` so that subsequent
         function bodies can reference it.
@@ -1463,7 +1463,7 @@ class SemanticAnalyser:
                 ``VarDecl`` block.
 
         Returns:
-            ``var_decl`` unchanged — file-scope variables are not renamed.
+            ``var_decl`` unchanged - file-scope variables are not renamed.
 
         Raises:
             SemanticError: If ``var_decl.var_type`` is ``VoidType`` (variables
@@ -1588,7 +1588,7 @@ class SemanticAnalyser:
                 attrs=StaticAttr(init=file_init, globl=globl),
             )
         elif var_decl.storage_class == StorageClass.Extern:
-            # A non-defining extern declaration — add a NoInitializer entry only when the name
+            # A non-defining extern declaration - add a NoInitializer entry only when the name
             # is entirely new; any existing Initial or Tentative entry takes precedence.
             if existing_entry is None:
                 self._symbol_table[var_decl.name] = SymbolTableEntry(
@@ -1596,7 +1596,7 @@ class SemanticAnalyser:
                     attrs=StaticAttr(init=NoInitializer(), globl=globl),
                 )
         else:
-            # Tentative definition — upgrade from NoInitializer but never downgrade from Initial.
+            # Tentative definition - upgrade from NoInitializer but never downgrade from Initial.
             if (
                 existing_entry is None
                 or isinstance(existing_entry.attrs, StaticAttr)
@@ -1633,7 +1633,7 @@ class SemanticAnalyser:
 
         Records the function name in ``_function_map``.  A function may be
         declared any number of times; a definition (``fun.body is not None``)
-        may appear at most once — a second definition raises ``SemanticError``.
+        may appear at most once - a second definition raises ``SemanticError``.
 
         Args:
             fun: The ``Function`` node whose name is to be registered.
@@ -1817,35 +1817,35 @@ class SemanticAnalyser:
         If ``e.exp_type`` is already set, the expression is returned unchanged.
         Otherwise, the type is determined by the expression form:
 
-        * ``Var`` — looks up the variable's type from ``_type_table`` by the
+        * ``Var`` - looks up the variable's type from ``_type_table`` by the
           resolved unique name.  If the name maps to a ``FunAttr`` entry in
           ``_symbol_table``, a ``SemanticError`` is raised (function name used
           as a variable).
-        * ``Constant`` — ``ConstLong`` constants receive ``LongType``; all
+        * ``Constant`` - ``ConstLong`` constants receive ``LongType``; all
           others receive ``IntType``.
-        * ``Unary`` — ``Not`` always produces ``IntType``; all other unary
+        * ``Unary`` - ``Not`` always produces ``IntType``; all other unary
           operators propagate the operand's type.
-        * ``Binary`` — logical (``And``, ``Or``) and comparison operators
+        * ``Binary`` - logical (``And``, ``Or``) and comparison operators
           always produce ``IntType``; arithmetic and bitwise operators produce
           ``LongType`` when either operand is ``LongType``, otherwise the type
           of the left operand.
-        * ``Assignment`` — the type of the lvalue operand.  The lvalue must be a
+        * ``Assignment`` - the type of the lvalue operand.  The lvalue must be a
           ``Var``, ``Dereference``, or ``Subscript``; any other form raises ``SemanticError``.
           The lvalue type must not be ``Array``; array objects are not modifiable lvalues in C.
           Sub-expressions of the lvalue are type-checked without array decay so that an array
           ``Var`` retains its ``Array`` type and can be rejected with a specific error.
-        * ``Conditional`` — ``LongType`` if either branch is ``LongType``;
+        * ``Conditional`` - ``LongType`` if either branch is ``LongType``;
           otherwise the type of the true branch.
-        * ``FunctionCall`` — the declared return type of the callee, looked up
+        * ``FunctionCall`` - the declared return type of the callee, looked up
           from ``_function_map``.  Validates that the callee is a known
           function, that the name does not refer to a local variable, and that
           the argument count matches the declared arity.
-        * ``Cast`` — the explicit target type.
-        * ``Subscript`` — the referenced type of whichever operand is a pointer.  Exactly one
+        * ``Cast`` - the explicit target type.
+        * ``Subscript`` - the referenced type of whichever operand is a pointer.  Exactly one
           operand must be a ``Pointer`` and the other must be an integer type (``IntType``,
           ``LongType``, ``UIntType``, or ``ULongType``); the integer operand is cast to
           ``LongType`` when it is not already that type.
-        * ``String`` — ``Array(Char(), len(bytes) + 1)``; the ``+1`` accounts for the implicit
+        * ``String`` - ``Array(Char(), len(bytes) + 1)``; the ``+1`` accounts for the implicit
           NUL terminator.  Array decay in ``_typecheck_and_convert`` will then convert the result
           to ``Pointer(Char())`` at every call site that expects an expression value.
 
@@ -1931,7 +1931,7 @@ class SemanticAnalyser:
                     if typed_left.exp_type is not None and typed_right.exp_type is not None:
                         if either_is_ptr:
                             if isinstance(op, (Equal, NotEqual)):
-                                # Equality allows null pointer constants on either side (C11 §6.5.9).
+                                # Equality allows null pointer constants on either side (C11 sec. 6.5.9).
                                 common = get_common_pointer_type(typed_left, typed_right)
                                 if typed_left.exp_type != common:
                                     typed_left = ast.Cast(common, typed_left, exp_type=common)
@@ -1954,7 +1954,7 @@ class SemanticAnalyser:
                 elif isinstance(op, (LeftShift, RightShift)):
                     if not is_integer(typed_left.exp_type) or not is_integer(typed_right.exp_type):
                         raise SemanticError("Shift operands must be integer types.")
-                    # C §6.5.7: integer promotions applied to each operand;
+                    # C sec. 6.5.7: integer promotions applied to each operand;
                     # result type is that of the promoted left operand.
                     if isinstance(typed_left.exp_type, (Char, SChar, UChar)):
                         typed_left = ast.Cast(IntType(), typed_left, exp_type=IntType())
@@ -2218,18 +2218,18 @@ class SemanticAnalyser:
                     raise SemanticError("Cannot get the size of an incomplete type")
                 return ast.SizeOf(typed_inner, exp_type=ULongType())
             case ast.Dot(structure=structure, member=member):
-                typed_structure = self._typecheck_and_convert(structure)  # ❶
+                typed_structure = self._typecheck_and_convert(structure)  #
                 match typed_structure.exp_type:
                     case Structure(tag=tag) | Union(tag=tag):
-                        aggregate_def = self._struct_type_table.get(tag)  # ❷
+                        aggregate_def = self._struct_type_table.get(tag)  #
                         if aggregate_def is None:
                             raise SemanticError("Cannot access member of incomplete aggregate type.")
-                        member_def = next(  # ❸
+                        member_def = next(  #
                             (m for m in aggregate_def.members if m.name == member), None
                         )
                         if member_def is None:
                             raise SemanticError(f"Aggregate has no member named '{member}'.")
-                        return ast.Dot(typed_structure, member, exp_type=member_def.member_type)  # ❹
+                        return ast.Dot(typed_structure, member, exp_type=member_def.member_type)  #
                     case _:
                         raise SemanticError("Operand of '.' is not a struct or union.")
             case ast.Arrow(pointer=pointer, member=member):
@@ -2251,7 +2251,7 @@ class SemanticAnalyser:
     def _typecheck_and_convert(self, e: ast.Exp) -> ast.Exp:
         """Type-check an expression and convert any array result to a pointer (array decay).
 
-        Wraps ``_type_check_exp`` with the C implicit array-to-pointer decay rule (C11 §6.3.2.1p3):
+        Wraps ``_type_check_exp`` with the C implicit array-to-pointer decay rule (C11 sec. 6.3.2.1p3):
         if the typed result has an ``Array`` type, it is wrapped in an ``AddrOf`` node whose
         type is ``Pointer(element_type)``.  All other types are returned unchanged.
 
@@ -2283,7 +2283,7 @@ class SemanticAnalyser:
 
         Appends zero-valued ``SingleInit`` nodes (using ``_zero_initializer``) until the list
         reaches ``size``.  Character element types use ``ConstChar`` / ``ConstUChar`` zero
-        constants; all other types use their natural zero constant (C11 §6.7.9p21).
+        constants; all other types use their natural zero constant (C11 sec. 6.7.9p21).
 
         Args:
             inits: Already type-checked initializer nodes for the explicitly-given elements.
@@ -2305,12 +2305,12 @@ class SemanticAnalyser:
         has processed a static-storage initialiser:
 
         * ``Constant`` nodes with any numeric ``Const`` variant.
-        * ``Cast(Pointer, Constant)`` — the null-pointer form produced by
+        * ``Cast(Pointer, Constant)`` - the null-pointer form produced by
           ``_zero_initializer`` for pointer-typed array elements.
-        * ``Cast(scalar_type, Constant)`` — widening casts inserted by
+        * ``Cast(scalar_type, Constant)`` - widening casts inserted by
           ``_convert_by_assignment`` when an integer literal is used to initialise
           a wider type (e.g. ``long arr[2] = {1, 2}``).
-        * ``AddrOf(String(s))`` — a string literal decayed to a pointer, used to
+        * ``AddrOf(String(s))`` - a string literal decayed to a pointer, used to
           initialise a ``char *`` (or compatible) struct member or array element.
           Registers the string content as a hidden static constant in
           ``_symbol_table`` and returns ``PointerInit(str_name)``.
@@ -2428,11 +2428,11 @@ class SemanticAnalyser:
         and then converted via assignment-compatibility rules to the target type.  For array
         initialisers each element is recursively checked against the array's element type; if
         the initializer list is shorter than the declared size, trailing elements are
-        zero-initialised (C11 §6.7.9p21).
+        zero-initialised (C11 sec. 6.7.9p21).
 
         Args:
             target_type: The declared C type of the variable or array element being initialised.
-            init: The initialiser node to type-check — either a ``SingleInit`` or ``CompoundInit``.
+            init: The initialiser node to type-check - either a ``SingleInit`` or ``CompoundInit``.
 
         Returns:
             A new ``Initializer`` with all sub-expressions fully resolved, type-annotated, and
@@ -2469,24 +2469,24 @@ class SemanticAnalyser:
                 ]
                 return ast.CompoundInit(self._pad_to_size(typechecked_list, elem_t, size))
             case Structure(tag=tag), ast.CompoundInit(initializers=init_list):
-                struct_def = self._struct_type_table.get(tag)  # ❶
+                struct_def = self._struct_type_table.get(tag)  #
                 if struct_def is None:
                     raise SemanticError("Cannot initialize an incomplete struct type.")
-                if len(init_list) > len(struct_def.members):  # ❷
+                if len(init_list) > len(struct_def.members):  #
                     raise SemanticError(
                         f"Too many elements in struct initializer: "
                         f"expected at most {len(struct_def.members)}, got {len(init_list)}."
                     )
-                typechecked_list = [  # ❸
+                typechecked_list = [  #
                     self._typecheck_init(struct_def.members[i].member_type, elem) for i, elem in enumerate(init_list)
                 ]
-                for i in range(len(init_list), len(struct_def.members)):  # ❹
+                for i in range(len(init_list), len(struct_def.members)):  #
                     typechecked_list.append(
                         _zero_initializer(struct_def.members[i].member_type, self._struct_type_table)
                     )
                 return ast.CompoundInit(typechecked_list, init_type=target_type)
             case Union(tag=tag), ast.CompoundInit(initializers=init_list):
-                # C11 §6.7.9p16: union initializer initialises the first named member only.
+                # C11 sec. 6.7.9p16: union initializer initialises the first named member only.
                 union_def = self._struct_type_table.get(tag)
                 if union_def is None:
                     raise SemanticError("Cannot initialize an incomplete union type.")
@@ -2714,7 +2714,7 @@ class SemanticAnalyser:
                 resolved_control = self._typecheck_and_convert(self.resolve_exp(control))
                 if not is_integer(resolved_control.exp_type):
                     raise SemanticError("Switch controlling expression must be an integer type")
-                # C11 §6.8.4.2p1: integer promotions applied to the controlling expression
+                # C11 sec. 6.8.4.2p1: integer promotions applied to the controlling expression
                 if isinstance(resolved_control.exp_type, (Char, SChar, UChar)):
                     resolved_control = ast.Cast(IntType(), resolved_control, exp_type=IntType())
                 self._switch_type_stack.append(resolved_control.exp_type or IntType())
@@ -2729,6 +2729,8 @@ class SemanticAnalyser:
                 if not self._switch_stack:
                     raise SemanticError("'case' label not within a switch statement.")
                 raw_const = value.value
+                if isinstance(raw_const, ast.ConstDouble):
+                    raise SemanticError("Case expression must be an integer constant, not a floating-point value.")
                 raw_int = int(raw_const.val)
                 truncated = _truncate_case_value(raw_int, self._switch_type_stack[-1])
                 if truncated in self._case_values_stack[-1]:
@@ -2759,7 +2761,7 @@ class SemanticAnalyser:
         initialiser (``InitDecl``).
 
         Args:
-            init: The ``ForInit`` node from the parser — either an ``InitExp``
+            init: The ``ForInit`` node from the parser - either an ``InitExp``
                 wrapping an optional expression, or an ``InitDecl`` wrapping a
                 variable declaration.
 
@@ -2789,7 +2791,7 @@ class SemanticAnalyser:
         """Resolve a controlling condition expression and verify it is scalar.
 
         Conditions in ``if``, ``while``, ``do``/``while``, and ``for`` statements must be scalar
-        expressions (C11 §6.8.4.1, §6.8.5).  ``void`` expressions are non-scalar and are
+        expressions (C11 sec. 6.8.4.1, sec. 6.8.5).  ``void`` expressions are non-scalar and are
         therefore illegal as controlling conditions.
 
         Args:
@@ -2832,7 +2834,7 @@ class SemanticAnalyser:
 
         Dispatches to ``resolve_variable_declaration`` for ``ast.D`` items wrapping
         a ``VarDecl``, to ``_register_fun_declaration`` for ``ast.D`` items wrapping a
-        ``FunDecl`` (forward declarations only — definitions raise immediately), and to
+        ``FunDecl`` (forward declarations only - definitions raise immediately), and to
         ``_resolve_statement`` for ``ast.S`` items.
 
         Args:

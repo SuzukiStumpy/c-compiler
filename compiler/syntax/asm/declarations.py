@@ -1,7 +1,7 @@
 """Program structure nodes for the assembly AST.
 
 Defines the top-level constructs of an assembly translation unit: ``Function``
-and ``Program``. These are the product types in the grammar — each has exactly
+and ``Program``. These are the product types in the grammar - each has exactly
 one form.
 """
 
@@ -68,7 +68,7 @@ class Function(TopLevel):
         name: The function name used as the assembly label.
         globl: Whether the function declaration should be tagged with the .globl directive
         params: Register operands that carry the function's parameters on
-            entry, in ABI order (DI, SI, DX, …).  This field is informational
+            entry, in ABI order (DI, SI, DX, ...).  This field is informational
             metadata used during code generation; it does not appear in the
             emitted assembly.
         instructions: The ordered sequence of instructions in the function

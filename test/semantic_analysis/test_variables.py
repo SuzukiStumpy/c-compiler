@@ -48,7 +48,7 @@ class TestResolveDeclaration:
     def test_declaration_with_var_init_renames_init_var(self) -> None:
         """An initialiser that references an already-declared variable is renamed."""
         analyser = SemanticAnalyser()
-        analyser.resolve_variable_declaration(  # y → .Vy.0
+        analyser.resolve_variable_declaration(  # y -> .Vy.0
             ast.VariableDeclaration(name="y", init=None, var_type=ast.IntType())
         )
         result = analyser.resolve_variable_declaration(
@@ -578,7 +578,7 @@ class TestResolveCompound:
     def test_shadow_initialiser_resolves_to_new_binding(self) -> None:
         """A shadow declaration's initialiser sees the new (inner) binding, not the outer one.
 
-        C11 §6.2.1 places a block-scope identifier in scope immediately after
+        C11 sec. 6.2.1 places a block-scope identifier in scope immediately after
         its declarator, before any ``=`` initialiser.  ``int x = x;`` in an
         inner scope where an outer ``x`` exists therefore self-initialises from
         the freshly created inner binding rather than from the outer one.
@@ -681,7 +681,7 @@ class TestResolveCompound:
     def test_label_wrapping_compound_block_resolves(self) -> None:
         """A ``Label`` whose inner statement is a ``Compound`` block is fully resolved.
 
-        Tests the ``Label → _resolve_statement(Compound) → _resolve_block`` path
+        Tests the ``Label -> _resolve_statement(Compound) -> _resolve_block`` path
         and verifies that variable references inside the compound are resolved
         using the enclosing scope.
         """
@@ -738,7 +738,7 @@ class TestResolveCompound:
 
 
 # ---------------------------------------------------------------------------
-# _type_check_exp — per-form type annotation
+# _type_check_exp - per-form type annotation
 # ---------------------------------------------------------------------------
 
 
@@ -860,7 +860,7 @@ class TestTypeCheckExp:
         assert result.exp_type == ast.IntType()
 
     # ------------------------------------------------------------------
-    # Binary — arithmetic
+    # Binary - arithmetic
     # ------------------------------------------------------------------
 
     def test_binary_int_plus_int_produces_int(self) -> None:
@@ -888,7 +888,7 @@ class TestTypeCheckExp:
         assert result.exp_type == ast.LongType()
 
     # ------------------------------------------------------------------
-    # Binary — logical and comparison (always int)
+    # Binary - logical and comparison (always int)
     # ------------------------------------------------------------------
 
     def test_binary_comparison_long_operands_still_produces_int(self) -> None:
@@ -1003,7 +1003,7 @@ class TestTypeCheckExp:
         the common LongType before the Binary node is returned.
         """
         analyser = SemanticAnalyser()
-        # ConstInt with no exp_type — _type_check_exp must annotate it
+        # ConstInt with no exp_type - _type_check_exp must annotate it
         untyped_int = ast.Constant(ast.ConstInt(1))
         untyped_long = ast.Constant(ast.ConstLong(2))
         result = analyser._type_check_exp(ast.Binary(ast.Add(), untyped_int, untyped_long))
@@ -1012,5 +1012,5 @@ class TestTypeCheckExp:
         assert isinstance(result.left, ast.Cast)
         assert result.left.target_type == ast.LongType()
         assert result.left.exp.exp_type == ast.IntType()
-        # The long operand is already the common type — no Cast needed.
+        # The long operand is already the common type - no Cast needed.
         assert result.right.exp_type == ast.LongType()

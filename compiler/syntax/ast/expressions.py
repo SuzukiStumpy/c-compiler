@@ -112,12 +112,12 @@ class CompoundAssignment(Exp):
     """A compound assignment expression (``+=``, ``-=``, ``*=``, etc.).
 
     Stores the lvalue and rhs separately so that the TAC generator can evaluate
-    the lvalue address exactly once (C11 §6.5.16.2), unlike the naive desugaring
+    the lvalue address exactly once (C11 sec. 6.5.16.2), unlike the naive desugaring
     ``Assignment(lvalue, Binary(op, lvalue, rhs))`` which would evaluate lvalue twice.
 
     Attributes:
         lvalue: The left-hand side; its address is computed once.
-        op: The underlying binary operator (``Add``, ``Subtract``, …).
+        op: The underlying binary operator (``Add``, ``Subtract``, ...).
         rvalue: The right-hand side expression.
     """
 
@@ -203,13 +203,13 @@ class String(Exp):
     """Represents a string literal in C source code, e.g. ``"hello world!"``.
 
     The value is stored as a ``bytes`` sequence so that each element is a
-    single byte — matching C's ``char``-per-element model.  Escape sequences
+    single byte - matching C's ``char``-per-element model.  Escape sequences
     have already been resolved and adjacent string tokens have been
     concatenated before this node is constructed.
 
     Attributes:
         string: The unescaped byte content of the literal (NUL terminator
-            not included — the emitter is responsible for appending it).
+            not included - the emitter is responsible for appending it).
     """
 
     string: bytes

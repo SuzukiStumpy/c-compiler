@@ -1,4 +1,4 @@
-"""Generic disjoint-set (union–find) data structure."""
+"""Generic disjoint-set (union-find) data structure."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ T = TypeVar("T")
 
 
 class DisjointSet(Generic[T]):
-    """A disjoint-set (union–find) structure backed by a flat dict.
+    """A disjoint-set (union-find) structure backed by a flat dict.
 
     Each call to ``union`` records that one element has been merged into another.
     ``find`` follows the chain of merges to the canonical representative of any
@@ -24,7 +24,7 @@ class DisjointSet(Generic[T]):
         ds.union("a", "b")   # a -> b
         ds.union("b", "c")   # b -> c
         ds.find("a")         # returns "c"
-        bool(ds)             # True — at least one union recorded
+        bool(ds)             # True - at least one union recorded
     """
 
     def __init__(self) -> None:

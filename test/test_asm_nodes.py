@@ -65,7 +65,7 @@ class TestImm:
         assert Imm(value=1) != Imm(value=2)
 
     def test_immutable(self) -> None:
-        """``Imm`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Imm`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         imm = Imm(value=1)
         with pytest.raises(dataclasses.FrozenInstanceError):
             imm.value = 99  # type: ignore[misc]
@@ -134,7 +134,7 @@ class TestMov:
         )
 
     def test_immutable(self) -> None:
-        """``Mov`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Mov`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         mov = Mov(src=Imm(value=0), dst=Register(GPRegisters.AX))
         with pytest.raises(dataclasses.FrozenInstanceError):
             mov.src = Imm(value=99)  # type: ignore[misc]
@@ -188,7 +188,7 @@ class TestFunction:
         assert fn1 == fn2
 
     def test_immutable(self) -> None:
-        """``Function`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Function`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         fn = Function(name="main", globl=False, instructions=())
         with pytest.raises(dataclasses.FrozenInstanceError):
             fn.name = "other"  # type: ignore[misc]
@@ -255,7 +255,7 @@ class TestProgram:
         assert Program(definitions=(fn,)) == Program(definitions=(fn,))
 
     def test_immutable(self) -> None:
-        """``Program`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Program`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         prog = Program(definitions=(Function(name="main", globl=False, instructions=()),))
         with pytest.raises(dataclasses.FrozenInstanceError):
             prog.definitions = ()  # type: ignore[misc]
@@ -292,7 +292,7 @@ class TestCmp:
         )
 
     def test_immutable(self) -> None:
-        """``Cmp`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Cmp`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         cmp = Cmp(op1=Imm(value=0), op2=Register(GPRegisters.AX))
         with pytest.raises(dataclasses.FrozenInstanceError):
             cmp.op1 = Imm(value=99)  # type: ignore[misc]
@@ -387,7 +387,7 @@ class TestLabel:
         assert Label(name="end") == Label(name="end")
 
     def test_immutable(self) -> None:
-        """``Label`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Label`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         lbl = Label(name="start")
         with pytest.raises(dataclasses.FrozenInstanceError):
             lbl.name = "other"  # type: ignore[misc]
@@ -413,7 +413,7 @@ class TestAllocateStack:
         assert AllocateStack(size=16) != AllocateStack(size=32)
 
     def test_immutable(self) -> None:
-        """``AllocateStack`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``AllocateStack`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         a = AllocateStack(size=8)
         with pytest.raises(dataclasses.FrozenInstanceError):
             a.size = 16  # type: ignore[misc]
@@ -439,7 +439,7 @@ class TestDeallocateStack:
         assert DeallocateStack(size=16) != DeallocateStack(size=32)
 
     def test_immutable(self) -> None:
-        """``DeallocateStack`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``DeallocateStack`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         d = DeallocateStack(size=8)
         with pytest.raises(dataclasses.FrozenInstanceError):
             d.size = 16  # type: ignore[misc]
@@ -466,7 +466,7 @@ class TestPush:
         assert Push(operand=Imm(value=1)) != Push(operand=Imm(value=2))
 
     def test_immutable(self) -> None:
-        """``Push`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Push`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         p = Push(operand=Imm(value=0))
         with pytest.raises(dataclasses.FrozenInstanceError):
             p.operand = Imm(value=99)  # type: ignore[misc]
@@ -492,7 +492,7 @@ class TestCall:
         assert Call(name="foo") != Call(name="bar")
 
     def test_immutable(self) -> None:
-        """``Call`` is frozen — attribute assignment raises ``FrozenInstanceError``."""
+        """``Call`` is frozen - attribute assignment raises ``FrozenInstanceError``."""
         c = Call(name="foo")
         with pytest.raises(dataclasses.FrozenInstanceError):
             c.name = "bar"  # type: ignore[misc]
@@ -577,7 +577,7 @@ class TestMoveZeroExtendEmit:
 
 
 # ---------------------------------------------------------------------------
-# StaticVariable / StaticConstant — StringInit comment
+# StaticVariable / StaticConstant - StringInit comment
 # ---------------------------------------------------------------------------
 
 

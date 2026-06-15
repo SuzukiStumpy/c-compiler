@@ -7,121 +7,121 @@ on demand and named ``tmp.0``, ``tmp.1``, etc.
 
 The translation follows this mapping:
 
-    ast.Program(decls)                    → tac.Program(top_level=[...])
-    ast.FunDecl(fn) [with body]           → tac.Function(name, globl, params, instructions)
-    ast.VarDecl(v)  [file-scope/static]   → tac.StaticVariable(name, globl, init=(StaticInit, ...))
-    ast.Binary(Add, ptr, int)  [ptr result] → <emit(ptr)> + <emit(int)>
+    ast.Program(decls)                    -> tac.Program(top_level=[...])
+    ast.FunDecl(fn) [with body]           -> tac.Function(name, globl, params, instructions)
+    ast.VarDecl(v)  [file-scope/static]   -> tac.StaticVariable(name, globl, init=(StaticInit, ...))
+    ast.Binary(Add, ptr, int)  [ptr result] -> <emit(ptr)> + <emit(int)>
                                                + [AddPtr(ptr_val, int_val, sizeof(*ptr))]
-    ast.Binary(Sub, ptr, int)  [ptr result] → <emit(ptr)> + <emit(int)>
+    ast.Binary(Sub, ptr, int)  [ptr result] -> <emit(ptr)> + <emit(int)>
                                                + [Unary(Negate, int_val, neg_tmp)]
                                                + [AddPtr(ptr_val, neg_tmp, sizeof(*ptr))]
-    ast.Binary(Sub, ptr, ptr)  [long result]→ <emit(p1)> + <emit(p2)>
+    ast.Binary(Sub, ptr, ptr)  [long result]-> <emit(p1)> + <emit(p2)>
                                                + [Binary(Subtract, p1, p2, diff_tmp)]
                                                + [Binary(Divide, diff_tmp, sizeof(*ptr), result)]
-    ast.CompoundInit({e0,e1,...})         → [CopyToOffset(v0, name, 0),
+    ast.CompoundInit({e0,e1,...})         -> [CopyToOffset(v0, name, 0),
                                              CopyToOffset(v1, name, sizeof(e0)),
                                              CopyToOffset(v2, name, sizeof(e0)+sizeof(e1)), ...]
-    ast.SingleInit(String(s))             → [CopyToOffset(ConstLong(le8), name, 0), ...
+    ast.SingleInit(String(s))             -> [CopyToOffset(ConstLong(le8), name, 0), ...
       [auto char array]                      CopyToOffset(ConstInt(le4), name, n), ...
                                              CopyToOffset(ConstChar(b), name, m), ...]
                                             (greedy packing, little-endian, NUL+zero-pad if len<size)
-    ast.Return(exp)                       → <emit(exp)> + [tac.Return(result_val)]
-    ast.Constant(v)                       → tac.Constant(v)   (no extra instructions)
-    ast.Unary(op, inner)                  → <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
+    ast.Return(exp)                       -> <emit(exp)> + [tac.Return(result_val)]
+    ast.Constant(v)                       -> tac.Constant(v)   (no extra instructions)
+    ast.Unary(op, inner)                  -> <emit(inner)> + [tac.Unary(op, inner_val, tmp)]
                                             returns tmp as the result val
-    ast.Unary(PreIncrement, x)            → [Binary(Add, x, 1, tmp), Copy(tmp, x)]
+    ast.Unary(PreIncrement, x)            -> [Binary(Add, x, 1, tmp), Copy(tmp, x)]
                                             returns x (new value)
-    ast.Unary(PreDecrement, x)            → [Binary(Sub, x, 1, tmp), Copy(tmp, x)]
+    ast.Unary(PreDecrement, x)            -> [Binary(Sub, x, 1, tmp), Copy(tmp, x)]
                                             returns x (new value)
-    ast.Unary(PostIncrement,x)            → [Copy(x, old), Binary(Add, x, 1, tmp), Copy(tmp, x)]
+    ast.Unary(PostIncrement,x)            -> [Copy(x, old), Binary(Add, x, 1, tmp), Copy(tmp, x)]
                                             returns old (original value)
-    ast.Unary(PostDecrement,x)            → [Copy(x, old), Binary(Sub, x, 1, tmp), Copy(tmp, x)]
+    ast.Unary(PostDecrement,x)            -> [Copy(x, old), Binary(Sub, x, 1, tmp), Copy(tmp, x)]
                                             returns old (original value)
-    ast.Binary(op, l, r)                  → <emit(l)> + <emit(r)>
+    ast.Binary(op, l, r)                  -> <emit(l)> + <emit(r)>
       (arithmetic / bitwise /               + [tac.Binary(op, l_val, r_val, tmp)]
        comparison operators)                returns tmp as the result val
-    ast.Binary(And, l, r)                 → <emit(l)>
+    ast.Binary(And, l, r)                 -> <emit(l)>
                                             + [JumpIfZero(l_val, false_lbl)]
                                             + <emit(r)>
                                             + [JumpIfZero(r_val, false_lbl),
                                                Copy(1, tmp), Jump(end_lbl),
                                                false_lbl, Copy(0, tmp), end_lbl]
                                             returns tmp as the result val
-    ast.AddrOf(String(s))                 → sym[".Lstr.N"] = ConstantAttr(StringInit(s, True))
+    ast.AddrOf(String(s))                 -> sym[".Lstr.N"] = ConstantAttr(StringInit(s, True))
                                             + [GetAddress(Var(".Lstr.N"), tmp)]
                                             returns tmp (pointer-to-char-typed)
-    ast.AddrOf(Dereference(inner))        → <emit(inner)>   (&* cancels out)
-    ast.AddrOf(Subscript(ptr, idx))       → <ptr+idx AddPtr, no Load>  (&arr[i] ≡ arr+i)
-    ast.AddrOf(Var(name))                 → [GetAddress(Var(name), tmp)]
+    ast.AddrOf(Dereference(inner))        -> <emit(inner)>   (&* cancels out)
+    ast.AddrOf(Subscript(ptr, idx))       -> <ptr+idx AddPtr, no Load>  (&arr[i] == arr+i)
+    ast.AddrOf(Var(name))                 -> [GetAddress(Var(name), tmp)]
                                             returns tmp (pointer-typed)
-    ast.AddrOf(Dot(structure, member))    → _addr_of_lvalue(structure)
+    ast.AddrOf(Dot(structure, member))    -> _addr_of_lvalue(structure)
                                             + [AddPtr(base_ptr, member_offset, 1, tmp)]  (if offset > 0)
                                             returns tmp (pointer-to-member-typed)
-    ast.AddrOf(Arrow(pointer, member))    → <emit(pointer)>   (&ptr->m ≡ ptr + offset)
+    ast.AddrOf(Arrow(pointer, member))    -> <emit(pointer)>   (&ptr->m == ptr + offset)
                                             + [AddPtr(ptr_val, member_offset, 1, tmp)]  (if offset > 0)
                                             returns tmp (pointer-to-member-typed)
-    ast.Dot(structure, member)            → <emit(structure)>
+    ast.Dot(structure, member)            -> <emit(structure)>
                                             + [CopyFromOffset(struct_var, member_offset, tmp)]
                                             returns tmp
-    ast.Arrow(pointer, member)            → <emit(pointer)>
+    ast.Arrow(pointer, member)            -> <emit(pointer)>
                                             + [AddPtr(ptr_val, member_offset, 1, member_ptr)]  (if offset > 0)
                                             + [Load(member_ptr, tmp)]
                                             returns tmp
-    ast.Assignment(Dot(Var(n), member),   → <emit(rvalue)>
+    ast.Assignment(Dot(Var(n), member),   -> <emit(rvalue)>
                    rvalue)                  + [CopyToOffset(rval, n, member_offset)]
-    ast.Assignment(Dot(structure, member),→ <emit(rvalue)> + _addr_of_lvalue(structure)
+    ast.Assignment(Dot(structure, member),-> <emit(rvalue)> + _addr_of_lvalue(structure)
                    rvalue)                  + [AddPtr(base, member_offset, 1, ptr)]  (if offset > 0)
                                             + [Store(rval, ptr)]
-    ast.Assignment(Arrow(ptr, member),    → <emit(rvalue)> + <emit(ptr)>
+    ast.Assignment(Arrow(ptr, member),    -> <emit(rvalue)> + <emit(ptr)>
                    rvalue)                  + [AddPtr(ptr_val, member_offset, 1, member_ptr)]  (if offset > 0)
                                             + [Store(rval, member_ptr)]
-    ast.Dereference(inner)                → <emit(inner)>
+    ast.Dereference(inner)                -> <emit(inner)>
                                             + [Load(inner_val, tmp)]
                                             returns tmp
-    ast.Assignment(Dereference(ptr_exp),  → <emit(rvalue)> + <emit(ptr_exp)>
+    ast.Assignment(Dereference(ptr_exp),  -> <emit(rvalue)> + <emit(ptr_exp)>
                    rvalue)                  + [Store(rval, ptr_val)]
                                             returns rval
-    ast.Binary(Or, l, r)                  → <emit(l)>
+    ast.Binary(Or, l, r)                  -> <emit(l)>
                                             + [JumpIfNotZero(l_val, true_lbl)]
                                             + <emit(r)>
                                             + [JumpIfNotZero(r_val, true_lbl),
                                                Copy(0, tmp), Jump(end_lbl),
                                                true_lbl, Copy(1, tmp), end_lbl]
                                             returns tmp as the result val
-    ast.If(cond, then, None)              → <emit(cond)>
+    ast.If(cond, then, None)              -> <emit(cond)>
                                             + [JumpIfZero(cond_val, end_lbl)]
                                             + <emit(then)>
                                             + [end_lbl]
-    ast.Conditional(c, e1, e2)            → <emit(c)>
+    ast.Conditional(c, e1, e2)            -> <emit(c)>
                                             + [JumpIfZero(c_val, false_lbl)]
                                             + <emit(e1)>
                                             + [Copy(e1_val, tmp), Jump(end_lbl), false_lbl]
                                             + <emit(e2)>
                                             + [Copy(e2_val, tmp), end_lbl]
                                             returns tmp as the result val
-    ast.If(cond, then, else_)             → <emit(cond)>
+    ast.If(cond, then, else_)             -> <emit(cond)>
                                             + [JumpIfZero(cond_val, else_lbl)]
                                             + <emit(then)>
                                             + [Jump(end_lbl), else_lbl]
                                             + <emit(else_)>
                                             + [end_lbl]
-    ast.Goto(target)                      → [Jump(target)]
-    ast.Label(name, stmt)                 → [Label(name)] + <emit(stmt)>
-    ast.Compound(body)                    → <emit(item_0)> + <emit(item_1)> + ...
-    ast.While(cond,body,id)                → [continue_<id>, <emit(cond)>,
+    ast.Goto(target)                      -> [Jump(target)]
+    ast.Label(name, stmt)                 -> [Label(name)] + <emit(stmt)>
+    ast.Compound(body)                    -> <emit(item_0)> + <emit(item_1)> + ...
+    ast.While(cond,body,id)                -> [continue_<id>, <emit(cond)>,
                                              JumpIfZero(cond_val, break_<id>),
                                              <emit(body)>, Jump(continue_<id>), break_<id>]
-    ast.DoWhile(body,cond,id)             → [start_<id>, <emit(body)>, continue_<id>,
+    ast.DoWhile(body,cond,id)             -> [start_<id>, <emit(body)>, continue_<id>,
                                              <emit(cond)>,
                                              JumpIfNotZero(cond_val, start_<id>), break_<id>]
-    ast.For(init,cond,post,               → <emit(init)>
+    ast.For(init,cond,post,               -> <emit(init)>
             body,id)                        + [start_<id>, <emit(cond)>,
                                                JumpIfZero(cond_val, break_<id>),
                                                <emit(body)>, continue_<id>,
                                                <emit(post)>, Jump(start_<id>), break_<id>]
-    ast.Break(target)                     → [Jump("break_"+ target)]
-    ast.Continue(target)                  → [Jump("continue_" + target)]
-    ast.Switch(ctrl,body,id)              → <emit(ctrl)>
+    ast.Break(target)                     -> [Jump("break_"+ target)]
+    ast.Continue(target)                  -> [Jump("continue_" + target)]
+    ast.Switch(ctrl,body,id)              -> <emit(ctrl)>
                                              + for each Case(v) in body (in order):
                                                  [tmp = Binary(Equal, ctrl_val, v),
                                                   JumpIfNotZero(tmp, "case_<id>_<v>")]
@@ -129,8 +129,8 @@ The translation follows this mapping:
                                              + [Jump("break_<id>")] otherwise
                                              + <emit(body)>
                                              + [break_<id>]
-    ast.Case(v, stmt, id)                 → [Label("case_<id>_<v>")] + <emit(stmt)>
-    ast.Default(stmt, id)                 → [Label("default_<id>")] + <emit(stmt)>
+    ast.Case(v, stmt, id)                 -> [Label("case_<id>_<v>")] + <emit(stmt)>
+    ast.Default(stmt, id)                 -> [Label("default_<id>")] + <emit(stmt)>
 
 The resulting ``tac.Program`` is a complete TAC AST containing all ``TopLevel``
 definitions and is ready for the assembly code generation stage.
@@ -456,7 +456,7 @@ def _is_signed(t: ast.Type) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class _PlainOperand:
-    """A concrete TAC value — a scalar variable or constant."""
+    """A concrete TAC value - a scalar variable or constant."""
 
     val: tac.Val
 
@@ -644,10 +644,10 @@ class _TacGenerator:
                 inner_obj, inner_instrs = self._eval_exp(structure)
                 match inner_obj:
                     case _PlainOperand(val=tac.Var(value=v)):
-                        return _SubObject(base=v, offset=offset), inner_instrs  # ❶
+                        return _SubObject(base=v, offset=offset), inner_instrs  #
                     case _SubObject(base=base, offset=inner_offset):
-                        return _SubObject(base=base, offset=inner_offset + offset), inner_instrs  # ❷
-                    case _DereferencedPointer(ptr=ptr):  # ❸
+                        return _SubObject(base=base, offset=inner_offset + offset), inner_instrs  #
+                    case _DereferencedPointer(ptr=ptr):  #
                         if offset == 0:
                             return _DereferencedPointer(ptr=ptr), inner_instrs
                         dst_ptr = self._make_temp(ast.Pointer(exp.exp_type or ast.IntType()))
@@ -852,7 +852,7 @@ class _TacGenerator:
         rvalue: ast.Exp,
         lv_type: ast.Type,
     ) -> tuple[tac.Val, list[tac.Instruction]]:
-        """Translate a compound assignment (``+=``, ``-=``, …) evaluating the lvalue once.
+        """Translate a compound assignment (``+=``, ``-=``, ...) evaluating the lvalue once.
 
         The lvalue address is computed exactly once via ``_eval_exp``; the current value
         is loaded, the binary operation applied, and the result stored back.  Pointer
@@ -866,7 +866,7 @@ class _TacGenerator:
 
         Returns:
             A ``(result_val, instructions)`` tuple.  The result value is the updated
-            lvalue (C11 §6.5.16.2 — compound assignment produces the updated value).
+            lvalue (C11 sec. 6.5.16.2 - compound assignment produces the updated value).
         """
         obj, lval_instrs = self._eval_exp(lvalue)
         rhs_val, rhs_instrs = self.translate_exp(rvalue)
@@ -888,7 +888,7 @@ class _TacGenerator:
             store_instrs = self._emit_assign(obj, new_val)
             return new_val, [*lval_instrs, *rhs_instrs, *load_instrs, *op_instrs, *store_instrs]
 
-        # Arithmetic compound assignment — determine binary operation type.
+        # Arithmetic compound assignment - determine binary operation type.
         if isinstance(op, (ast.LeftShift, ast.RightShift)):
             # Result type is the promoted lvalue type; rhs already promoted by semantic analysis.
             bin_type: ast.Type = ast.IntType() if isinstance(lv_type, (ast.Char, ast.SChar, ast.UChar)) else lv_type
@@ -997,7 +997,7 @@ class _TacGenerator:
             case ast.D(declaration=ast.FunDecl()):
                 return []
             case ast.D(declaration=ast.StructDecl()):
-                return []  # local struct/union type definition — no code, pure type metadata
+                return []  # local struct/union type definition - no code, pure type metadata
             case ast.D(declaration=ast.UnionDecl()):
                 return []
             case _:
@@ -1052,7 +1052,7 @@ class _TacGenerator:
         Args:
             var_name: The resolved name of the aggregate variable (e.g. ``".Varr.0"``).
             byte_offset: Byte offset from the variable's base at which to write ``init``'s value.
-            init: The initializer to emit — either a ``SingleInit`` (scalar leaf) or
+            init: The initializer to emit - either a ``SingleInit`` (scalar leaf) or
                 ``CompoundInit`` (nested aggregate).
             instructions: The instruction list to which new instructions are appended in-place.
         """
@@ -1067,9 +1067,9 @@ class _TacGenerator:
                 entry = self._struct_type_table.get(tag)
                 if entry is None:
                     raise CodeGenerationError(f"unknown aggregate tag '{tag}' in initializer")
-                # Zero-fill only when some members are missing (C11 §6.7.9p21 requires implicit
+                # Zero-fill only when some members are missing (C11 sec. 6.7.9p21 requires implicit
                 # zero-init for omitted members).  Padding bytes between/after explicitly-provided
-                # members are "unspecified" per C11 §6.2.6.1p6 and do not need to be zeroed.
+                # members are "unspecified" per C11 sec. 6.2.6.1p6 and do not need to be zeroed.
                 if len(sub_inits) < len(entry.members):
                     remaining = entry.size
                     fill_off = byte_offset
@@ -1152,7 +1152,7 @@ class _TacGenerator:
 
         When ``len(string) < array_size``, a NUL terminator and zero padding are appended to fill
         the array.  When ``len(string) == array_size``, the bytes are written as-is with no NUL
-        (C11 §6.7.9p15 — the NUL is omitted when the array is exactly the string length).
+        (C11 sec. 6.7.9p15 - the NUL is omitted when the array is exactly the string length).
 
         Args:
             var_name: Resolved name of the local array variable (e.g. ``".Varr.0"``).
@@ -1364,7 +1364,7 @@ class _TacGenerator:
         copied into the variable; if not, no instructions are emitted.
 
         Args:
-            init: The ``ForInit`` node — either an ``InitExp`` or an ``InitDecl``.
+            init: The ``ForInit`` node - either an ``InitExp`` or an ``InitDecl``.
 
         Returns:
             A flat list of ``tac.Instruction`` nodes that implement the
@@ -1689,7 +1689,7 @@ class _TacGenerator:
                     label_end,
                 ]
             case ast.FunctionCall(callee=callee, args=args):
-                # (*fp)(args) — dereference on a function pointer cancels out, same as &*
+                # (*fp)(args) - dereference on a function pointer cancels out, same as &*
                 inner_callee = callee.exp if isinstance(callee, ast.Dereference) else callee
                 callee_val, callee_instrs = self.translate_exp(inner_callee)
                 arg_vals: list[tac.Val] = []
@@ -1705,7 +1705,7 @@ class _TacGenerator:
                     tac.FunCall(fun_val=callee_val, args=tuple(arg_vals), dst=dst),
                 ]
             case ast.AddrOf(exp=ast.Subscript(exp1=exp1, exp2=exp2)):
-                # &arr[i] ≡ &*(arr+i) ≡ arr+i — AddPtr only, no Load.
+                # &arr[i] == &*(arr+i) == arr+i - AddPtr only, no Load.
                 if isinstance(exp1.exp_type, ast.Pointer):
                     ptr_node, int_node = exp1, exp2
                 else:

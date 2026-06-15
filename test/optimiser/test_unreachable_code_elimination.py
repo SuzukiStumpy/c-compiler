@@ -169,7 +169,7 @@ class TestRemoveRedundantJumps:
         """An unconditional ``Jump`` targeting a block other than the next one is preserved.
 
         Block "a" jumps to "c", skipping "b".  "b" is reachable via the
-        conditional fall-through from "entry", so UCE does not remove it —
+        conditional fall-through from "entry", so UCE does not remove it -
         "a"'s jump target ("c") is still not the adjacent block ("b").
         Label "a" is stripped by phase 3 (no jump targets it), so the block
         is located by its Jump instruction rather than by label.
@@ -392,7 +392,7 @@ class TestRemoveEmptyBlocks:
         )
         cfg = make_control_flow_graph(_function(body))
         result = unreachable_code_elimination(cfg)
-        # block 0: [Copy]; block 1: [Return(x)] — empty middle block gone.
+        # block 0: [Copy]; block 1: [Return(x)] - empty middle block gone.
         assert result.blocks[0].successors == [BlockId(1)]
         assert result.blocks[1].successors == [EXIT]
 

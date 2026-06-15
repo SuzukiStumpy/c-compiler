@@ -1,4 +1,4 @@
-"""Tests for the lexer() function — external behaviour only.
+"""Tests for the lexer() function - external behaviour only.
 
 All tests preprocess real .c fixture files via GCC so that linemarker handling
 is exercised against actual preprocessor output.
@@ -60,7 +60,7 @@ def test_union_keyword_produces_union_token_not_identifier(preprocess_c_file: Pr
 
 
 def test_identifier_sharing_keyword_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "returning" starts with the keyword "return" — must not be classified as RETURN
+    # "returning" starts with the keyword "return" - must not be classified as RETURN
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     returning_token = next(t for t in tokens if t.value == "returning")
     assert returning_token.type == TokenType.IDENTIFIER
@@ -122,7 +122,7 @@ def test_tokens_carry_original_c_filename_not_preprocessed_filename(preprocess_c
 
 def test_no_linemarker_tokens_in_output(preprocess_c_file: Preprocessor) -> None:
     tokens = lexer(preprocess_c_file("valid/minimal.c"))
-    # Linemarker lines start with "#" — none should appear as token values
+    # Linemarker lines start with "#" - none should appear as token values
     assert not any(t.value.startswith("#") for t in tokens)
 
 
@@ -167,7 +167,7 @@ def test_lexer_error_reports_correct_line_number(preprocess_c_file: Preprocessor
 
 
 def test_lexer_error_reports_correct_column_number(preprocess_c_file: Preprocessor) -> None:
-    # "    return $2;" — "$" is at column 12
+    # "    return $2;" - "$" is at column 12
     with pytest.raises(LexerError) as exc_info:
         lexer(preprocess_c_file("invalid/bad_char.c"))
     assert exc_info.value.col == 12
@@ -312,13 +312,13 @@ def test_extern_keyword_produces_extern_token_not_identifier(preprocess_c_file: 
 
 
 def test_identifier_sharing_static_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "statically" starts with "static" — must not be classified as STATIC
+    # "statically" starts with "static" - must not be classified as STATIC
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.STATIC for t in tokens)
 
 
 def test_identifier_sharing_extern_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "externally" starts with "extern" — must not be classified as EXTERN
+    # "externally" starts with "extern" - must not be classified as EXTERN
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.EXTERN for t in tokens)
 
@@ -361,7 +361,7 @@ def test_longint_token_is_not_split_into_number_and_identifier(preprocess_c_file
 
 
 def test_identifier_sharing_long_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "longer" starts with "long" — must not be classified as LONG
+    # "longer" starts with "long" - must not be classified as LONG
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.LONG for t in tokens)
 
@@ -384,13 +384,13 @@ def test_unsigned_keyword_produces_unsigned_token_not_identifier(preprocess_c_fi
 
 
 def test_identifier_sharing_signed_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "signedValue" starts with "signed" — must not be classified as SIGNED
+    # "signedValue" starts with "signed" - must not be classified as SIGNED
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.SIGNED for t in tokens)
 
 
 def test_identifier_sharing_unsigned_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "unsignedValue" starts with "unsigned" — must not be classified as UNSIGNED
+    # "unsignedValue" starts with "unsigned" - must not be classified as UNSIGNED
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.UNSIGNED for t in tokens)
 
@@ -477,7 +477,7 @@ def test_double_keyword_produces_double_token_not_identifier(preprocess_c_file: 
 
 
 def test_identifier_sharing_double_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
-    # "doubler" starts with "double" — must not be classified as DOUBLE
+    # "doubler" starts with "double" - must not be classified as DOUBLE
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))
     assert all(t.type != TokenType.DOUBLE for t in tokens)
 

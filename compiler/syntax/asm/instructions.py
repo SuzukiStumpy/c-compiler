@@ -130,7 +130,7 @@ class Mov(Instruction):
 class Movsx(Instruction):
     """A ``movslq`` instruction that sign-extends a 32-bit value to 64 bits.
 
-    Always operates longword → quadword; no ``assembly_type`` field is needed.
+    Always operates longword -> quadword; no ``assembly_type`` field is needed.
 
     Attributes:
         src_type: The type of the source operand.
@@ -149,9 +149,9 @@ class Movsx(Instruction):
 
         Selects the mnemonic based on ``src_type`` and ``dst_type``:
 
-        * ``Byte → Longword`` → ``movsbl``
-        * ``Byte → Quadword`` → ``movsbq``
-        * ``Longword → Quadword`` → ``movslq``
+        * ``Byte -> Longword`` -> ``movsbl``
+        * ``Byte -> Quadword`` -> ``movsbq``
+        * ``Longword -> Quadword`` -> ``movslq``
 
         Returns:
             A string of the form ``  <mnemonic> <src>, <dst>``.
@@ -168,7 +168,7 @@ class MoveZeroExtend(Instruction):
     """Move a longword (4-byte) value and convert to a quadword (8-byte) value without
     sign-extension.
 
-    Always operates longword → quadword; no ``assembly_type`` field is needed.
+    Always operates longword -> quadword; no ``assembly_type`` field is needed.
 
     Attributes:
         src_type: The type of the source operand
@@ -187,9 +187,9 @@ class MoveZeroExtend(Instruction):
 
         Selects the mnemonic based on ``src_type`` and ``dst_type``:
 
-        * ``Byte → Longword`` → ``movzbl``
-        * ``Byte → Quadword`` → ``movzbq``
-        * ``Longword → Quadword`` → ``movl`` (writing to a 32-bit register automatically
+        * ``Byte -> Longword`` -> ``movzbl``
+        * ``Byte -> Quadword`` -> ``movzbq``
+        * ``Longword -> Quadword`` -> ``movl`` (writing to a 32-bit register automatically
           zeroes the upper 32 bits of the 64-bit register on x86-64)
 
         Returns:
@@ -206,7 +206,7 @@ class MoveZeroExtend(Instruction):
 class Ret(Instruction):
     """A ``ret`` instruction that returns from the current function.
 
-    Carries no fields — the instruction has no operands.
+    Carries no fields - the instruction has no operands.
     """
 
     def emit(self) -> str:
@@ -317,7 +317,7 @@ class Binary(Instruction):
 
         When ``src1 != dst`` first copies ``src1`` into ``dst``, then applies the
         operator with ``src2``.  When ``src1 == dst`` the copy is suppressed and
-        only the operator instruction is emitted — the caller is responsible for
+        only the operator instruction is emitted - the caller is responsible for
         ensuring ``dst`` already holds ``src1``'s value (typically via a preceding
         ``Mov`` that the register allocator may coalesce away).
 
@@ -384,7 +384,7 @@ class Idiv(Instruction):
 
     Divides the double-width accumulator pair by ``operand``.  The quotient is
     stored in ``%eax``/``%rax`` and the remainder in ``%edx``/``%rdx``.  ``operand``
-    must not be an immediate value — the instruction fixup pass routes any ``Imm``
+    must not be an immediate value - the instruction fixup pass routes any ``Imm``
     divisor through a scratch register.
 
     Attributes:
@@ -419,7 +419,7 @@ class Div(Instruction):
     Divides the zero-extended accumulator pair by ``operand``.  The quotient is
     stored in ``%eax``/``%rax`` and the remainder in ``%edx``/``%rdx``.  The caller
     must zero ``%edx``/``%rdx`` before this instruction (rather than using ``cdq``/``cqo``).
-    ``operand`` must not be an immediate value — the instruction fixup pass routes any ``Imm``
+    ``operand`` must not be an immediate value - the instruction fixup pass routes any ``Imm``
     divisor through a scratch register.
 
     Attributes:

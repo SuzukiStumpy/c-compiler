@@ -19,7 +19,7 @@ def run_or_raise(
     Args:
         exception: Either an exception type or a factory callable ``(result) -> Exception``.
             When a factory is provided, it receives the return value and must return a
-            ready-to-raise exception instance — ``message`` is ignored in that case.
+            ready-to-raise exception instance - ``message`` is ignored in that case.
             When an exception type is provided, ``message`` controls how it is constructed.
         expected: The set of values considered successful. Defaults to ``{0}`` when
             not provided. Ignored when ``ok`` is provided.

@@ -3,13 +3,13 @@
 Converts an ``asm.Program`` into a text assembly file, applying three
 platform-specific rules:
 
-* **macOS** — all function definition names and ``call`` targets are prefixed
+* **macOS** - all function definition names and ``call`` targets are prefixed
   with an underscore (``_``) because the macOS ABI requires a leading
   underscore on C symbols.
-* **Linux** — every ``call`` target is suffixed with ``@PLT`` so the linker
+* **Linux** - every ``call`` target is suffixed with ``@PLT`` so the linker
   routes the call through the Procedure Linkage Table, enabling correct
   dynamic symbol resolution for external symbols.
-* **Linux / WSL** — a ``.section .note.GNU-stack,"",@progbits`` directive
+* **Linux / WSL** - a ``.section .note.GNU-stack,"",@progbits`` directive
   is appended to mark the stack as non-executable, as required by modern
   Linux toolchains.
 

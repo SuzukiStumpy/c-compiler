@@ -5,7 +5,7 @@ the themed test modules.  Each test builds a token stream directly (without
 invoking the lexer) so that parser behaviour is tested in isolation.
 """
 
-import pytest  # noqa: F401 — re-exported for test modules that don't import it directly
+import pytest  # noqa: F401 - re-exported for test modules that don't import it directly
 
 from compiler.parser import parse  # noqa: F401
 from compiler.syntax.ast import (  # noqa: F401

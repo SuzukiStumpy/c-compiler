@@ -60,8 +60,8 @@ def run_backward(
        returning the new entry fact and a per-instruction annotation list.
     3. When the entry fact changes, all predecessor blocks are re-queued.
 
-    Analysis-specific concerns — boundary-node handling, lattice identity
-    elements, kill/gen rules — live entirely inside the two callables.  The
+    Analysis-specific concerns - boundary-node handling, lattice identity
+    elements, kill/gen rules - live entirely inside the two callables.  The
     engine itself is instruction-set-agnostic.
 
     Args:
@@ -71,12 +71,12 @@ def run_backward(
             before the first iteration.  Typically the bottom element for
             union-based analyses (e.g. ``frozenset()`` for liveness) or the top
             element for intersection-based ones.
-        meet_fn: ``meet_fn(block, block_in) -> exit_fact`` — computes the fact
+        meet_fn: ``meet_fn(block, block_in) -> exit_fact`` - computes the fact
             at the exit of *block* by combining the entry facts of its
             successors.  *block_in* is the current mapping from block index to
             entry fact.
         transfer_fn: ``transfer_fn(block, exit_fact) -> (entry_fact, annotations)``
-            — propagates *exit_fact* backward through *block*, returning the
+            - propagates *exit_fact* backward through *block*, returning the
             resulting entry fact and a per-instruction list of annotations (one
             per instruction, in forward order).
 

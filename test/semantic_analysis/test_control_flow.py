@@ -346,7 +346,7 @@ class TestLoopIdentifiers:
         assert loop.identifier == ".L.while.0"
 
     # ------------------------------------------------------------------
-    # Break and Continue tagging — each loop type
+    # Break and Continue tagging - each loop type
     # ------------------------------------------------------------------
 
     def test_break_inside_while_tagged_with_loop_identifier(self) -> None:
@@ -674,7 +674,7 @@ class TestSwitchIdentifiers:
             ast.S(
                 statement=ast.Switch(
                     control=ast.Constant(value=1),
-                    body=ast.Case(value=ast.Constant(value=1), statement=ast.Null()),
+                    body=ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null()),
                 )
             ),
         )
@@ -710,7 +710,7 @@ class TestSwitchIdentifiers:
                     control=ast.Constant(value=1),
                     body=ast.Switch(
                         control=ast.Constant(value=2),
-                        body=ast.Case(value=ast.Constant(value=2), statement=ast.Null()),
+                        body=ast.Case(value=ast.Constant(value=ast.ConstInt(2)), statement=ast.Null()),
                     ),
                 )
             ),
@@ -733,7 +733,7 @@ class TestSwitchIdentifiers:
                     control=ast.Constant(value=1),
                     body=ast.Compound(
                         body=(
-                            ast.S(statement=ast.Case(value=ast.Constant(value=1), statement=ast.Null())),
+                            ast.S(statement=ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null())),
                             ast.S(statement=ast.Default(statement=ast.Null())),
                         )
                     ),
@@ -857,7 +857,7 @@ class TestSwitchIdentifiers:
                 statement=ast.Switch(
                     control=ast.Constant(value=1),
                     body=ast.Case(
-                        value=ast.Constant(value=1),
+                        value=ast.Constant(value=ast.ConstInt(1)),
                         statement=ast.Return(exp=ast.Var(name="x")),
                     ),
                 )
@@ -900,7 +900,7 @@ class TestSwitchIdentifiers:
                 statement=ast.Switch(
                     control=ast.Constant(value=1),
                     body=ast.Case(
-                        value=ast.Constant(value=1),
+                        value=ast.Constant(value=ast.ConstInt(1)),
                         statement=ast.Label(name="lbl", statement=ast.Null()),
                     ),
                 )
@@ -917,7 +917,7 @@ class TestSwitchIdentifiers:
                 statement=ast.Switch(
                     control=ast.Constant(value=1),
                     body=ast.Case(
-                        value=ast.Constant(value=1),
+                        value=ast.Constant(value=ast.ConstInt(1)),
                         statement=ast.Label(name="lbl", statement=ast.Null()),
                     ),
                 )
@@ -938,7 +938,7 @@ class TestSwitchIdentifiers:
 
     def test_case_outside_switch_raises(self) -> None:
         """A ``Case`` appearing outside any enclosing ``Switch`` raises ``SemanticError``."""
-        body = (ast.S(statement=ast.Case(value=ast.Constant(value=1), statement=ast.Null())),)
+        body = (ast.S(statement=ast.Case(value=ast.Constant(value=ast.ConstInt(1)), statement=ast.Null())),)
         with pytest.raises(SemanticError, match="not within a switch"):
             resolve(_program(body))
 
@@ -946,6 +946,19 @@ class TestSwitchIdentifiers:
         """A ``Default`` appearing outside any enclosing ``Switch`` raises ``SemanticError``."""
         body = (ast.S(statement=ast.Default(statement=ast.Null())),)
         with pytest.raises(SemanticError, match="not within a switch"):
+            resolve(_program(body))
+
+    def test_case_with_double_constant_raises(self) -> None:
+        """A ``Case`` whose value is a floating-point constant raises ``SemanticError``."""
+        body = (
+            ast.S(
+                statement=ast.Switch(
+                    control=ast.Constant(value=ast.ConstInt(1)),
+                    body=ast.Case(value=ast.Constant(value=ast.ConstDouble(1.0)), statement=ast.Null()),
+                )
+            ),
+        )
+        with pytest.raises(SemanticError, match="integer constant"):
             resolve(_program(body))
 
     def test_duplicate_case_value_in_same_switch_raises(self) -> None:
@@ -956,9 +969,9 @@ class TestSwitchIdentifiers:
                     control=ast.Constant(value=1),
                     body=ast.Compound(
                         body=(
-                            ast.S(statement=ast.Case(value=ast.Constant(value=5), statement=ast.Null())),
-                            ast.S(statement=ast.Case(value=ast.Constant(value=4), statement=ast.Null())),
-                            ast.S(statement=ast.Case(value=ast.Constant(value=5), statement=ast.Null())),
+                            ast.S(statement=ast.Case(value=ast.Constant(value=ast.ConstInt(5)), statement=ast.Null())),
+                            ast.S(statement=ast.Case(value=ast.Constant(value=ast.ConstInt(4)), statement=ast.Null())),
+                            ast.S(statement=ast.Case(value=ast.Constant(value=ast.ConstInt(5)), statement=ast.Null())),
                         )
                     ),
                 )
@@ -973,13 +986,13 @@ class TestSwitchIdentifiers:
             ast.S(
                 statement=ast.Switch(
                     control=ast.Constant(value=1),
-                    body=ast.Case(value=ast.Constant(value=5), statement=ast.Null()),
+                    body=ast.Case(value=ast.Constant(value=ast.ConstInt(5)), statement=ast.Null()),
                 )
             ),
             ast.S(
                 statement=ast.Switch(
                     control=ast.Constant(value=2),
-                    body=ast.Case(value=ast.Constant(value=5), statement=ast.Null()),
+                    body=ast.Case(value=ast.Constant(value=ast.ConstInt(5)), statement=ast.Null()),
                 )
             ),
         )
@@ -993,10 +1006,10 @@ class TestSwitchIdentifiers:
                 statement=ast.Switch(
                     control=ast.Constant(value=1),
                     body=ast.Case(
-                        value=ast.Constant(value=5),
+                        value=ast.Constant(value=ast.ConstInt(5)),
                         statement=ast.Switch(
                             control=ast.Constant(value=2),
-                            body=ast.Case(value=ast.Constant(value=5), statement=ast.Null()),
+                            body=ast.Case(value=ast.Constant(value=ast.ConstInt(5)), statement=ast.Null()),
                         ),
                     ),
                 )

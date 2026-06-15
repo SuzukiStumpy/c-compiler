@@ -1,4 +1,4 @@
-"""Control-flow graph types and the TAC ↔ CFG conversion functions.
+"""Control-flow graph types and the TAC <-> CFG conversion functions.
 
 A ``ControlFlowGraph[I]`` decomposes the flat instruction stream of a function
 into ``BasicBlock[I]`` objects parameterised by the instruction type ``I``.
@@ -143,7 +143,7 @@ class CfgAdapter(Protocol[_I_contra]):
     """Instruction-set-specific predicates required to build and annotate a CFG.
 
     Implementations isolate knowledge about a particular instruction set (TAC,
-    x86 assembly, …) so that the generic ``make_cfg`` and ``add_all_edges``
+    x86 assembly, ...) so that the generic ``make_cfg`` and ``add_all_edges``
     functions remain instruction-set-agnostic.
 
     The type parameter is contravariant because all four methods consume
@@ -277,7 +277,7 @@ def make_cfg(
 
     A new basic block begins at every label instruction and after every
     conditional jump.  Splitting on conditional jumps produces true basic
-    blocks — exactly one exit per block — which is required for correct
+    blocks - exactly one exit per block - which is required for correct
     dataflow analysis: without the split, instructions that follow a
     mid-block conditional jump would appear to execute on *both* the
     fall-through and the jump-taken paths, causing the exit reaching-copy
@@ -351,13 +351,13 @@ def add_all_edges(cfg: ControlFlowGraph[_I], adapter: CfgAdapter[_I]) -> None:
 
     Edges are derived from each block's last instruction using *adapter*:
 
-    * Return → ``EXIT``
-    * Unconditional jump → the block whose leading label matches the target
-    * Conditional jump → both the target block and the fall-through successor
+    * Return -> ``EXIT``
+    * Unconditional jump -> the block whose leading label matches the target
+    * Conditional jump -> both the target block and the fall-through successor
       (the next block in order, or ``EXIT`` for the last block)
-    * Any other instruction → fall-through successor only
+    * Any other instruction -> fall-through successor only
 
-    An implicit ``ENTRY → blocks[0]`` edge is not stored; callers may treat
+    An implicit ``ENTRY -> blocks[0]`` edge is not stored; callers may treat
     ``blocks[0]`` as the entry point directly.
 
     Existing ``successors`` lists are cleared before re-computation, so this
@@ -666,7 +666,7 @@ class AsmAdapter:
         including implicit uses such as ``Cdq`` (reads AX) and shift instructions
         (read CX for the count).
 
-        ``Ret`` returns an empty set here — the return-value register(s) that are
+        ``Ret`` returns an empty set here - the return-value register(s) that are
         live at exit are injected by ``_meet`` via ``exit_live``, not by treating
         ``Ret`` itself as a user of AX/XMM0.  This avoids spuriously propagating
         the conservative ``{AX, XMM0}`` set through all predecessors of every

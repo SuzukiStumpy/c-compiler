@@ -1,4 +1,4 @@
-"""Tests for LexerError.__str__() — the plain-text error formatting.
+"""Tests for LexerError.__str__() - the plain-text error formatting.
 
 Tests construct LexerError instances directly so they are independent of the
 lexer algorithm. Only external behaviour (the formatted string) is asserted.
@@ -70,7 +70,7 @@ def test_error_in_middle_of_file_shows_two_lines_above_and_below() -> None:
     source = [f"line {i}" for i in range(1, 8)]  # 7 lines
     err = _make_error(4, 1, "$", source)
     displayed = _source_display_lines(str(err))
-    # Should show lines 2, 3, 4, 5, 6 — five source lines
+    # Should show lines 2, 3, 4, 5, 6 - five source lines
     assert len(displayed) == 5
 
 
@@ -79,7 +79,7 @@ def test_error_on_line_1_shows_no_lines_above() -> None:
     err = _make_error(1, 1, "$", source)
     output = str(err)
     displayed = _source_display_lines(output)
-    # Lines 1, 2, 3 — three lines (no line 0)
+    # Lines 1, 2, 3 - three lines (no line 0)
     assert len(displayed) == 3
     assert "0 |" not in output
 
@@ -89,7 +89,7 @@ def test_error_on_last_line_shows_no_lines_below() -> None:
     err = _make_error(4, 1, "$", source)
     output = str(err)
     displayed = _source_display_lines(output)
-    # Lines 2, 3, 4 — three lines (no line 5)
+    # Lines 2, 3, 4 - three lines (no line 5)
     assert len(displayed) == 3
     assert "5 |" not in output
 
@@ -105,7 +105,7 @@ def test_error_on_line_2_of_short_file_shows_one_line_above() -> None:
     source = ["line 1", "line $2"]
     err = _make_error(2, 8, "$", source)
     displayed = _source_display_lines(str(err))
-    # Lines 1 and 2 — only one line above, no lines below (EOF)
+    # Lines 1 and 2 - only one line above, no lines below (EOF)
     assert len(displayed) == 2
 
 
@@ -120,7 +120,7 @@ def test_caret_appears_at_correct_column_for_col_1() -> None:
 
 
 def test_caret_appears_at_correct_column_for_mid_line_error() -> None:
-    # "    return $2;" — col 12 means 11 spaces before "^"
+    # "    return $2;" - col 12 means 11 spaces before "^"
     source = ["int main(void) {", "    return $2;", "}"]
     err = _make_error(2, 12, "$", source)
     assert _caret_col_offset(str(err)) == 11

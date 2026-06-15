@@ -70,7 +70,7 @@ class LexerError(Exception):
         """Format the error as plain text with source context.
 
         Produces a multi-line string containing the error location header,
-        ±2 lines of source context in a numbered gutter, and a clang-style
+        +/-2 lines of source context in a numbered gutter, and a clang-style
         ``^~~~~`` underline beneath the offending token. Suitable for
         non-terminal output and test assertions.
 
@@ -145,7 +145,7 @@ class ParseError(Exception):
 
     Carries the source position of the offending token and the surrounding
     source lines so that callers can produce a rich diagnostic pointing at the
-    exact location in the C source file — formatted the same way as
+    exact location in the C source file - formatted the same way as
     ``LexerError``.
 
     Attributes:
@@ -192,7 +192,7 @@ class ParseError(Exception):
         """Format the error as plain text with source context.
 
         Produces the same structure as ``LexerError.__str__``: an error
-        location header, ±2 lines of source context in a numbered gutter, and
+        location header, +/-2 lines of source context in a numbered gutter, and
         a clang-style ``^~~~~`` underline beneath the offending token.  When
         ``source_lines`` is empty (e.g. the source file could not be read),
         only the header line is returned.

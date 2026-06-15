@@ -233,7 +233,7 @@ def test_no_pseudo_operands_in_output() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Instruction fixup — Mov(mem, mem)
+# Instruction fixup - Mov(mem, mem)
 # ---------------------------------------------------------------------------
 
 
@@ -297,12 +297,12 @@ def _binary_tac_program(op: tac.BinaryOperator, src1: tac.Val, src2: tac.Val) ->
 
 
 # ---------------------------------------------------------------------------
-# Binary operations — Add, Sub, Mul
+# Binary operations - Add, Sub, Mul
 # ---------------------------------------------------------------------------
 
 
 def test_binary_add_src1_loaded_into_dst_slot() -> None:
-    """``Binary(Add, …)`` first copies src1 into the result slot via an explicit ``Mov``."""
+    """``Binary(Add, ...)`` first copies src1 into the result slot via an explicit ``Mov``."""
     result = generate(_binary_tac_program(tac.Add(), tac.Constant(ConstInt(1)), tac.Constant(ConstInt(2))))
     # AllocateStack, Mov(src1, dst), Binary(Add, dst, src2, dst), Mov(dst, AX), Ret
     mov = result.definitions[0].instructions[1]
@@ -356,7 +356,7 @@ def test_binary_add_instruction_count() -> None:
 
 
 def test_divide_loads_dividend_into_ax() -> None:
-    """``Binary(Divide, …)`` moves the dividend into ``%eax`` as the first instruction."""
+    """``Binary(Divide, ...)`` moves the dividend into ``%eax`` as the first instruction."""
     result = generate(_binary_tac_program(tac.Divide(), tac.Constant(ConstInt(10)), tac.Constant(ConstInt(2))))
     # AllocateStack, Mov(Imm(10), AX), Cdq, Mov(Imm(2), R11), Idiv(R11), Mov(AX, Stack), Mov(Stack, AX), Ret
     assert result.definitions[0].instructions[1] == asm.Mov(src=asm.Imm(value=10), dst=asm.Register(asm.GPRegisters.AX))
@@ -398,7 +398,7 @@ def test_remainder_emits_cdq() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Instruction fixup — Idiv with immediate divisor
+# Instruction fixup - Idiv with immediate divisor
 # ---------------------------------------------------------------------------
 
 
@@ -569,7 +569,7 @@ class TestShiftCodeGen:
         assert len(cx_movs) == 1
 
     def test_shl_emit_stack_operand(self) -> None:
-        """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` — memory operand is valid."""
+        """``asm.Shl(Stack(-4))`` emits ``shll %cl, -4(%rbp)`` - memory operand is valid."""
         assert (
             asm.Shl(operand=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4)).emit()
             == "      shll  %cl, -4(%rbp)"
@@ -746,7 +746,7 @@ class TestDoubleRelationalCodeGen:
     """Double-precision relational operators use NaN-aware code sequences.
 
     ``ucomisd`` sets ZF=CF=PF=1 for unordered (NaN) results.  Operations that would
-    naïvely mis-read those flags (``==``, ``!=``, ``<``, ``<=``) must use a conditional
+    naively mis-read those flags (``==``, ``!=``, ``<``, ``<=``) must use a conditional
     jump on the parity flag to produce the correct 0/1 result.  ``>`` and ``>=`` are
     naturally correct because ``seta``/``setae`` both return 0 when CF=1.
     """
@@ -777,7 +777,7 @@ class TestDoubleRelationalCodeGen:
         ids=["eq", "ne", "lt", "le"],
     )
     def test_double_relational_emits_parity_jump(self, tac_op: tac.BinaryOperator) -> None:
-        """``==``, ``!=``, ``<``, ``<=`` emit a ``JmpCC(P, …)`` to guard against NaN."""
+        """``==``, ``!=``, ``<``, ``<=`` emit a ``JmpCC(P, ...)`` to guard against NaN."""
         instrs = _double_fn_instrs(tac_op)
         assert any(isinstance(i, asm.JmpCC) and i.cond_code == asm.CondCodes.P for i in instrs)
 
@@ -946,7 +946,7 @@ class TestCmpFixup:
 
     def test_cmp_stack_imm_imm_case_fires_first(self) -> None:
         """``Cmp(Stack, Imm)`` is handled by the Imm fixup: op2 goes to ``%r11d``, op1 stays as Stack."""
-        # src1=Constant → Imm becomes op2 of Cmp; src2=Var → Stack becomes op1 of Cmp
+        # src1=Constant -> Imm becomes op2 of Cmp; src2=Var -> Stack becomes op1 of Cmp
         result = generate(_relational_tac_program(tac.Equal(), tac.Constant(ConstInt(5)), tac.Var("b")))
         cmp_instrs = [i for i in result.definitions[0].instructions if isinstance(i, asm.Cmp)]
         assert len(cmp_instrs) == 1
@@ -956,7 +956,7 @@ class TestCmpFixup:
 
 
 # ---------------------------------------------------------------------------
-# Pseudo replacement — static variables become Data operands
+# Pseudo replacement - static variables become Data operands
 # ---------------------------------------------------------------------------
 
 
@@ -1019,7 +1019,7 @@ class TestStaticVariablePseudoReplacement:
             ),
         )
         instrs = _fn_instructions(program)
-        # The copy becomes Mov(Imm(7), Data("g")), which is valid (imm → mem).
+        # The copy becomes Mov(Imm(7), Data("g")), which is valid (imm -> mem).
         assert any(isinstance(i, asm.Mov) and i.dst == asm.Data("g") for i in instrs)
 
     def test_static_var_does_not_consume_stack_slot(self) -> None:
@@ -1061,7 +1061,7 @@ class TestStaticVariablePseudoReplacement:
 
 
 # ---------------------------------------------------------------------------
-# Instruction fixup — Data (static variable) as a memory operand
+# Instruction fixup - Data (static variable) as a memory operand
 # ---------------------------------------------------------------------------
 
 
@@ -1135,7 +1135,7 @@ class TestDataOperandFixup:
 
 
 # ---------------------------------------------------------------------------
-# Instruction fixup — Push with memory operands
+# Instruction fixup - Push with memory operands
 # ---------------------------------------------------------------------------
 
 
@@ -1184,7 +1184,7 @@ class TestPushMemOperandFixup:
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Push):
                 assert not isinstance(instr.operand, (asm.Memory, asm.Data)), (
-                    "Push(mem) survived fixup — should be expanded through %eax/%rax"
+                    "Push(mem) survived fixup - should be expanded through %eax/%rax"
                 )
 
     def test_push_data_operand_expanded(self) -> None:
@@ -1194,12 +1194,12 @@ class TestPushMemOperandFixup:
         for instr in _fn_instructions(program):
             if isinstance(instr, asm.Push):
                 assert not isinstance(instr.operand, (asm.Memory, asm.Data)), (
-                    "Push(Data) survived fixup — should be expanded through %eax/%rax"
+                    "Push(Data) survived fixup - should be expanded through %eax/%rax"
                 )
 
 
 # ---------------------------------------------------------------------------
-# Instruction fixup — large Quadword immediates
+# Instruction fixup - large Quadword immediates
 # ---------------------------------------------------------------------------
 
 _LARGE_LONG: int = 34359738368  # 0x800000000; doesn't fit in a signed 32-bit integer
@@ -1452,7 +1452,7 @@ class TestSignExtendCharCodeGen:
     """``tac.SignExtend`` from char generates ``Movsx`` with correct src/dst types."""
 
     def test_schar_to_int_generates_movsx_byte_longword(self) -> None:
-        """``SignExtend(SChar → int)`` generates ``Movsx(Byte, Longword)``."""
+        """``SignExtend(SChar -> int)`` generates ``Movsx(Byte, Longword)``."""
         st = _make_symbol_table(s=SChar, d=IntType)
         program = _sign_extend_program(SChar, IntType)
         instrs = _fn_instructions_with_table(program, st)
@@ -1461,7 +1461,7 @@ class TestSignExtendCharCodeGen:
         assert movsx.dst_type == asm.Longword()
 
     def test_schar_to_long_generates_movsx_byte_quadword(self) -> None:
-        """``SignExtend(SChar → long)`` generates ``Movsx(Byte, Quadword)``."""
+        """``SignExtend(SChar -> long)`` generates ``Movsx(Byte, Quadword)``."""
         st = _make_symbol_table(s=SChar, d=LongType)
         program = _sign_extend_program(SChar, LongType)
         instrs = _fn_instructions_with_table(program, st)
@@ -1470,7 +1470,7 @@ class TestSignExtendCharCodeGen:
         assert movsx.dst_type == asm.Quadword()
 
     def test_int_to_long_generates_movsx_longword_quadword(self) -> None:
-        """``SignExtend(int → long)`` generates ``Movsx(Longword, Quadword)`` (regression guard)."""
+        """``SignExtend(int -> long)`` generates ``Movsx(Longword, Quadword)`` (regression guard)."""
         st = _make_symbol_table(s=IntType, d=LongType)
         program = _sign_extend_program(IntType, LongType)
         instrs = _fn_instructions_with_table(program, st)
@@ -1483,7 +1483,7 @@ class TestZeroExtendCharCodeGen:
     """``tac.ZeroExtend`` from uchar generates ``MoveZeroExtend`` with correct src/dst types."""
 
     def test_uchar_to_uint_generates_movze_byte_longword(self) -> None:
-        """``ZeroExtend(UChar → uint)`` generates ``MoveZeroExtend(Byte, Longword)``."""
+        """``ZeroExtend(UChar -> uint)`` generates ``MoveZeroExtend(Byte, Longword)``."""
         st = _make_symbol_table(s=UChar, d=UIntType)
         program = _zero_extend_program(UChar, UIntType)
         instrs = _fn_instructions_with_table(program, st)
@@ -1492,7 +1492,7 @@ class TestZeroExtendCharCodeGen:
         assert mze.dst_type == asm.Longword()
 
     def test_uchar_to_ulong_generates_movze_byte_quadword(self) -> None:
-        """``ZeroExtend(UChar → ulong)`` generates ``MoveZeroExtend(Byte, Quadword)``."""
+        """``ZeroExtend(UChar -> ulong)`` generates ``MoveZeroExtend(Byte, Quadword)``."""
         st = _make_symbol_table(s=UChar, d=ULongType)
         program = _zero_extend_program(UChar, ULongType)
         instrs = _fn_instructions_with_table(program, st)
@@ -1501,13 +1501,13 @@ class TestZeroExtendCharCodeGen:
         assert mze.dst_type == asm.Quadword()
 
     def test_uint_to_ulong_generates_mov_longword(self) -> None:
-        """``ZeroExtend(uint → ulong)`` is lowered to ``Mov(Longword)`` after fixup.
+        """``ZeroExtend(uint -> ulong)`` is lowered to ``Mov(Longword)`` after fixup.
 
         ``movl`` to a 32-bit register implicitly zero-extends to 64 bits, so the
         fixup pass replaces ``MoveZeroExtend(Longword, Quadword)`` with a plain
         ``Mov(Longword)`` instruction.  A ``Negate`` into ``s_copy`` (a non-copy
         instruction) keeps ``s`` live past ``d``'s definition, so ``s`` and ``d``
-        interfere and cannot be coalesced away — a plain ``Copy`` would get
+        interfere and cannot be coalesced away - a plain ``Copy`` would get
         the copy-pair exception and fail to create the needed interference edge.
         """
         st = _make_symbol_table(s=UIntType, d=ULongType, s_copy=UIntType)
@@ -1538,7 +1538,7 @@ class TestTruncateToCharCodeGen:
         A ``Negate(d, d)`` before the ``Truncate`` creates a non-copy definition of
         ``d`` while ``s`` is live (``s`` is used by the subsequent ``Truncate``).
         This adds an interference edge between ``s`` and ``d`` so the coalescer
-        cannot merge them — a plain ``Copy`` would get the copy-pair exception and
+        cannot merge them - a plain ``Copy`` would get the copy-pair exception and
         fail to produce the required edge.
         """
         st = _make_symbol_table(s=IntType, d=SChar)
@@ -1556,7 +1556,7 @@ class TestTruncateToCharCodeGen:
         )
         instrs = _fn_instructions_with_table(program, st)
         movs = [i for i in instrs if isinstance(i, asm.Mov)]
-        assert any(m.assembly_type == asm.Byte() for m in movs), "expected a Mov(Byte) for Truncate → SChar"
+        assert any(m.assembly_type == asm.Byte() for m in movs), "expected a Mov(Byte) for Truncate -> SChar"
 
     def test_truncate_to_int_still_emits_movl(self) -> None:
         """``Truncate`` with an ``IntType`` destination still uses ``Longword`` (regression guard).
@@ -1580,7 +1580,7 @@ class TestTruncateToCharCodeGen:
         )
         instrs = _fn_instructions_with_table(program, st)
         movs = [i for i in instrs if isinstance(i, asm.Mov)]
-        assert any(m.assembly_type == asm.Longword() for m in movs), "expected a Mov(Longword) for Truncate → int"
+        assert any(m.assembly_type == asm.Longword() for m in movs), "expected a Mov(Longword) for Truncate -> int"
 
 
 def _funcall_program(arg_name: str) -> tac.Program:
@@ -2029,7 +2029,7 @@ class TestUnionCodegen:
         result = generate(program, sym, union_table)
         instrs = next(d for d in result.definitions if isinstance(d, asm.Function)).instructions
         # Chunked copy generates two Mov pairs (one for each 8-byte chunk).
-        # Without fix: Copy falls through to scalar path → single Mov(Longword) — wrong size.
+        # Without fix: Copy falls through to scalar path -> single Mov(Longword) - wrong size.
         movs = [i for i in instrs if isinstance(i, asm.Mov)]
         # At least one move must be Quadword (8-byte) to copy the full 8-byte union.
         assert any(m.assembly_type == asm.Quadword() for m in movs), (

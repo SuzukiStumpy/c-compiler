@@ -147,10 +147,10 @@ def _float_div(a: float, b: float) -> float:
     Python raises ``ZeroDivisionError`` for any ``float / 0.0``, which is
     incorrect for IEEE 754.  This function reproduces the standard results:
 
-    * ``0.0 / 0.0`` (or ``-0.0`` in any combination) → NaN (invalid operation).
-    * finite non-zero / ±0.0 → ±∞, sign determined by XOR of operand signs.
-    * ±∞ / ±0.0 → ±∞ with the same sign rule.
-    * Any NaN operand → NaN.
+    * ``0.0 / 0.0`` (or ``-0.0`` in any combination) -> NaN (invalid operation).
+    * finite non-zero / +/-0.0 -> +/-inf, sign determined by XOR of operand signs.
+    * +/-inf / +/-0.0 -> +/-inf with the same sign rule.
+    * Any NaN operand -> NaN.
 
     Args:
         a: Dividend.
@@ -195,7 +195,7 @@ def _const_of_type(t: Type, val: int | float) -> Const | None:
             return ConstUChar(_wrap_int(int(val), 8, signed=False))
         case Pointer():
             # Pointers are 64-bit; represent as ConstULong so the null pointer
-            # constant (0) and other integer→pointer conversions can be folded.
+            # constant (0) and other integer->pointer conversions can be folded.
             return ConstULong(_wrap_int(int(val), 64, signed=False))
     return None
 
@@ -383,7 +383,7 @@ def _fold_conversion(instr: ti.Instruction, symbol_table: SymbolTable) -> ti.Ins
 
     Args:
         instr: Any TAC instruction; only conversion variants with a constant source
-            are folded — others are returned unchanged.
+            are folded - others are returned unchanged.
         symbol_table: The program's symbol table, used to resolve destination types.
 
     Returns:
@@ -423,7 +423,7 @@ def _fold_copy(instr: ti.Copy, symbol_table: SymbolTable) -> ti.Instruction:
     When a same-size reinterpretation cast is emitted as a ``Copy`` (e.g. ``int``
     to ``unsigned int``), the source constant retains the source type while the
     destination variable has the target type.  This mismatch prevents copy
-    propagation from tracking the resulting copy (it rejects int→uint pairs due to
+    propagation from tracking the resulting copy (it rejects int->uint pairs due to
     signedness differences).  Re-encoding the constant with the destination type
     fixes that, so subsequent copy-propagation passes can propagate it normally.
 

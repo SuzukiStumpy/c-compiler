@@ -3,7 +3,7 @@
 Performs a multi-pass structural translation from ``compiler.syntax.tac`` nodes
 to ``compiler.syntax.asm`` nodes.  The passes are applied in order:
 
-1. **TAC → pseudo-asm**: each TAC instruction is lowered to one or more assembly
+1. **TAC -> pseudo-asm**: each TAC instruction is lowered to one or more assembly
    instructions, using ``Pseudo`` operands for named temporaries.
 
 2. **Pseudo replacement**: every ``Pseudo`` operand is replaced with a ``Stack``
@@ -16,39 +16,39 @@ to ``compiler.syntax.asm`` nodes.  The passes are applied in order:
 The resulting ``asm.Program`` is a complete assembly AST ready for the emission
 stage.
 
-TAC → pseudo-asm mapping:
+TAC -> pseudo-asm mapping:
 
-    tac.Return(val)                           → Mov(val, Register(AX)), Ret()  [val=None → Ret() only]
-    tac.Unary(op, src, dst)                   → Mov(src, dst), Unary(op, dst)
-    tac.Binary(Add|Sub|Mul, src1, src2, dst)         → Binary(op, src1, src2, Register(R11)),
+    tac.Return(val)                           -> Mov(val, Register(AX)), Ret()  [val=None -> Ret() only]
+    tac.Unary(op, src, dst)                   -> Mov(src, dst), Unary(op, dst)
+    tac.Binary(Add|Sub|Mul, src1, src2, dst)         -> Binary(op, src1, src2, Register(R11)),
                                                         Mov(Register(R11), dst)
-    tac.Binary(And|Or|Xor, src1, src2, dst)          → Binary(op, src1, src2, Register(R11)),
+    tac.Binary(And|Or|Xor, src1, src2, dst)          -> Binary(op, src1, src2, Register(R11)),
                                                         Mov(Register(R11), dst)
-    tac.Binary(Divide, src1, src2, dst)              → Mov(src1, Register(AX)), Cdq,
+    tac.Binary(Divide, src1, src2, dst)              -> Mov(src1, Register(AX)), Cdq,
                                                         Idiv(src2), Mov(Register(AX), dst)
-    tac.Binary(Remainder, src1, src2, dst)           → Mov(src1, Register(AX)), Cdq,
+    tac.Binary(Remainder, src1, src2, dst)           -> Mov(src1, Register(AX)), Cdq,
                                                         Idiv(src2), Mov(Register(DX), dst)
-    tac.Binary(LeftShift, src1, src2, dst)           → Mov(src1, Register(R11)),
+    tac.Binary(LeftShift, src1, src2, dst)           -> Mov(src1, Register(R11)),
                                                         Mov(src2, Register(CX)),
                                                         Shl(Register(R11)), Mov(Register(R11), dst)
-    tac.Binary(RightShift, src1, src2, dst)          → Mov(src1, Register(R11)),
+    tac.Binary(RightShift, src1, src2, dst)          -> Mov(src1, Register(R11)),
                                                         Mov(src2, Register(CX)),
                                                         Sar(Register(R11)), Mov(Register(R11), dst)
-    tac.SignExtend(src, dst)                  → Movsx(src_type, dst_type, src, dst)
-    tac.ZeroExtend(src, dst)                  → MoveZeroExtend(src_type, dst_type, src, dst)
-    tac.Truncate(src, dst)                    → Mov(dst_type, src, dst)
-    tac.Constant(v)                           → Imm(v)
-    tac.Var(name)                             → Pseudo(name)
+    tac.SignExtend(src, dst)                  -> Movsx(src_type, dst_type, src, dst)
+    tac.ZeroExtend(src, dst)                  -> MoveZeroExtend(src_type, dst_type, src, dst)
+    tac.Truncate(src, dst)                    -> Mov(dst_type, src, dst)
+    tac.Constant(v)                           -> Imm(v)
+    tac.Var(name)                             -> Pseudo(name)
 
 Unsigned variants (selected when the source operand has an unsigned C type):
 
-    tac.Binary(Divide, unsigned, src1, src2, dst)    → Mov(src1, AX), Mov(Imm(0), DX),
+    tac.Binary(Divide, unsigned, src1, src2, dst)    -> Mov(src1, AX), Mov(Imm(0), DX),
                                                         Div(src2), Mov(AX, dst)
-    tac.Binary(Remainder, unsigned, src1, src2, dst) → Mov(src1, AX), Mov(Imm(0), DX),
+    tac.Binary(Remainder, unsigned, src1, src2, dst) -> Mov(src1, AX), Mov(Imm(0), DX),
                                                         Div(src2), Mov(DX, dst)
-    tac.Binary(RightShift, unsigned, src1, src2, dst) → Mov(src1, R11), Mov(src2, CX),
+    tac.Binary(RightShift, unsigned, src1, src2, dst) -> Mov(src1, R11), Mov(src2, CX),
                                                          Shr(R11), Mov(R11, dst)
-    tac.Binary(relational, unsigned, ...)             → Cmp, Mov(Imm(0), dst), SetCC(A/AE/B/BE)
+    tac.Binary(relational, unsigned, ...)             -> Cmp, Mov(Imm(0), dst), SetCC(A/AE/B/BE)
 """
 
 # ruff: noqa: C901 - ignore complexity warnings for entire file (since there's lots of them)
@@ -104,7 +104,7 @@ _XMM_REGS = [
     asm.FPRegisters.XMM7,
 ]
 
-# 2^63 as a double — the threshold used by DoubleToUInt for unsigned-long destinations.
+# 2^63 as a double - the threshold used by DoubleToUInt for unsigned-long destinations.
 # Values in [2^63, 2^64) exceed the signed int64 range and need special handling.
 _DOUBLE_TO_ULONG_THRESHOLD = 9_223_372_036_854_775_808.0
 
@@ -203,8 +203,8 @@ class EightbyteClass(Enum):
 
     Attributes:
         NO_CLASS: Unused / padding-only eightbyte; ignored during register allocation.
-        INTEGER: General-purpose register (``rdi``, ``rsi``, … / ``rax``, ``rdx``).
-        SSE: Floating-point XMM register (``xmm0``–``xmm7`` / ``xmm0``, ``xmm1``).
+        INTEGER: General-purpose register (``rdi``, ``rsi``, ... / ``rax``, ``rdx``).
+        SSE: Floating-point XMM register (``xmm0``-``xmm7`` / ``xmm0``, ``xmm1``).
         MEMORY: Struct is too large or unclassifiable; passed via a hidden stack pointer.
     """
 
@@ -215,7 +215,7 @@ class EightbyteClass(Enum):
 
 
 def _merge_class(a: EightbyteClass, b: EightbyteClass) -> EightbyteClass:
-    """Merge two eightbyte classes following SysV AMD64 ABI §3.2.3 rule 5.
+    """Merge two eightbyte classes following SysV AMD64 ABI sec. 3.2.3 rule 5.
 
     Priority order (highest wins): MEMORY > INTEGER > SSE > NO_CLASS.
 
@@ -281,7 +281,7 @@ def _classify_type_at_offset(
 
 
 def classify_struct(tag: str, struct_type_table: StructTypeTable) -> list[EightbyteClass]:
-    """Classify each eightbyte of a struct type per the SysV AMD64 ABI §3.2.3.
+    """Classify each eightbyte of a struct type per the SysV AMD64 ABI sec. 3.2.3.
 
     Determines how each 8-byte chunk of the struct should be passed or returned:
     in an integer register, an XMM register, or via a hidden memory pointer.
@@ -330,7 +330,7 @@ def classify_parameters(
     symbol_table: SymbolTable | None,
     struct_type_table: StructTypeTable,
 ) -> list[list[EightbyteClass]]:
-    """Classify each function parameter per the SysV AMD64 ABI §3.2.3.
+    """Classify each function parameter per the SysV AMD64 ABI sec. 3.2.3.
 
     Returns one classification list per parameter.  Scalars produce a
     single-element list; structs are delegated to :func:`classify_struct` which
@@ -346,10 +346,10 @@ def classify_parameters(
         A list with one entry per parameter.  Each entry is a list of
         ``EightbyteClass`` values:
 
-        - Scalar ``double``  → ``[SSE]``
-        - Other scalar       → ``[INTEGER]``
-        - Struct ≤ 16 bytes  → one ``EightbyteClass`` per eightbyte
-        - Struct > 16 bytes  → ``[MEMORY]``
+        - Scalar ``double``  -> ``[SSE]``
+        - Other scalar       -> ``[INTEGER]``
+        - Struct <= 16 bytes  -> one ``EightbyteClass`` per eightbyte
+        - Struct > 16 bytes  -> ``[MEMORY]``
     """
     result: list[list[EightbyteClass]] = []
     for param in params:
@@ -372,14 +372,14 @@ def classify_return_value(
     t: Type,
     struct_type_table: StructTypeTable,
 ) -> tuple[list[asm.Register], list[asm.Register], bool]:
-    """Classify how a return value is conveyed per the SysV AMD64 ABI §3.2.3.
+    """Classify how a return value is conveyed per the SysV AMD64 ABI sec. 3.2.3.
 
     Produces a unified triple for both scalar and struct return types so that
     callers can handle all cases with the same shape of data.
 
     Scalar types map to a single register in the appropriate class.  Struct
     types are classified via :func:`classify_struct`: each eightbyte is assigned
-    to the next available integer (``RAX`` → ``RDX``) or SSE (``XMM0`` → ``XMM1``)
+    to the next available integer (``RAX`` -> ``RDX``) or SSE (``XMM0`` -> ``XMM1``)
     register in declaration order.  Structs that cannot be returned in registers
     set ``in_memory=True``.
 
@@ -443,7 +443,7 @@ def generate(
 
     Applies the following translation passes in order:
 
-    1. **TAC → pseudo-asm**: each TAC instruction is lowered to assembly
+    1. **TAC -> pseudo-asm**: each TAC instruction is lowered to assembly
        instructions with ``Pseudo`` operands for named temporaries.
     2. **Register allocation**: graph-colouring register allocation replaces
        allocatable ``Pseudo`` operands with hardware registers; spilled pseudos
@@ -486,7 +486,7 @@ def generate(
     )
     static_names = tac_static_names | sym_static_names
     # Accumulates StaticConstant entries emitted by conversion instructions (e.g. the
-    # 2^63 threshold for double → unsigned-long).  These are prepended to the output
+    # 2^63 threshold for double -> unsigned-long).  These are prepended to the output
     # so that they appear before the first .text section.
     constants: list[asm.TopLevel] = []
     definitions: list[asm.TopLevel] = []
@@ -622,7 +622,7 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
 
 
 # ==============================================================================
-# Pass 1 — TAC lowering
+# Pass 1 - TAC lowering
 # ==============================================================================
 
 
@@ -1495,16 +1495,16 @@ def _translate_uint_to_double(
 
     return [
         asm.Mov(src=src_asm, dst=r11q, assembly_type=asm.Quadword()),
-        # jge (SF == OF after cmpq $0) ↔ bit 63 clear ↔ value < 2^63
+        # jge (SF == OF after cmpq $0) <-> bit 63 clear <-> value < 2^63
         asm.Cmp(op1=asm.Imm(0), op2=r11q, assembly_type=asm.Quadword()),
         asm.JmpCC(asm.CondCodes.GE, simple_label),
-        # Complex path: src >= 2^63 — halve, convert, double back.
+        # Complex path: src >= 2^63 - halve, convert, double back.
         asm.Mov(src=r11q, dst=r10q, assembly_type=asm.Quadword()),
         asm.Mov(src=asm.Imm(1), dst=rcxq, assembly_type=asm.Quadword()),
         asm.Shr(operand=r10q, assembly_type=asm.Quadword()),
-        # r11 &= 1  — preserve the LSB to avoid double-rounding
+        # r11 &= 1  - preserve the LSB to avoid double-rounding
         asm.Binary(operator=asm.And(), src1=r11q, src2=asm.Imm(1), dst=r11q, assembly_type=asm.Quadword()),
-        # r10 |= r11  — (src >> 1) | (src & 1)
+        # r10 |= r11  - (src >> 1) | (src & 1)
         asm.Binary(operator=asm.Or(), src1=r10q, src2=r11q, dst=r10q, assembly_type=asm.Quadword()),
         asm.Cvtsi2sd(src=r10q, dst=xmm14, assembly_type=asm.Quadword()),
         asm.Binary(operator=asm.AddDouble(), src1=xmm14, src2=xmm14, dst=xmm14, assembly_type=asm.Double()),
@@ -1591,7 +1591,7 @@ def _translate_double_to_uint(
     return [
         # Load src into xmm14; ucomisd requires op2 to be an XMM register.
         asm.Mov(src=src_asm, dst=xmm14, assembly_type=asm.Double()),
-        # ucomisd threshold(%rip), xmm14 — AE if xmm14 >= threshold (= 2^63)
+        # ucomisd threshold(%rip), xmm14 - AE if xmm14 >= threshold (= 2^63)
         asm.Cmp(op1=threshold_op, op2=xmm14, assembly_type=asm.Double()),
         asm.JmpCC(asm.CondCodes.AE, large_label),
         # Simple path: src < 2^63, fits in signed int64.
@@ -1632,17 +1632,17 @@ def _load_partial_eightbyte(
     size: int,
     is_static: bool,
 ) -> list[asm.Instruction]:
-    """Load exactly ``size`` bytes (1–7) of a partial struct eightbyte into ``%r10``.
+    """Load exactly ``size`` bytes (1-7) of a partial struct eightbyte into ``%r10``.
 
     Reads from ``src_name`` starting at byte ``eb_start``.  Never reads past
     ``eb_start + size``.  Uses ``%r11`` as an auxiliary scratch register and
     ``imulq`` with 32-bit immediates for all shift operations so that ``%rcx``
-    is never clobbered — safe to call while argument registers are being set up.
+    is never clobbered - safe to call while argument registers are being set up.
 
     Args:
         src_name: The variable name of the source struct.
         eb_start: Byte offset of this eightbyte's start within the struct.
-        size: Number of valid bytes in this eightbyte (1–7).
+        size: Number of valid bytes in this eightbyte (1-7).
         is_static: ``True`` when the variable has static storage duration.
 
     Returns:
@@ -1697,7 +1697,7 @@ def _store_partial_eightbyte(
     size: int,
     is_static: bool,
 ) -> list[asm.Instruction]:
-    """Store exactly ``size`` bytes (1–7) from ``src_reg`` into a struct eightbyte.
+    """Store exactly ``size`` bytes (1-7) from ``src_reg`` into a struct eightbyte.
 
     Copies the low ``size`` bytes of ``src_reg`` into consecutive bytes starting
     at ``dst_name + eb_start``.  Uses ``%r10`` as scratch and ``%rcx`` as the
@@ -1708,7 +1708,7 @@ def _store_partial_eightbyte(
         src_reg: The 64-bit GP register holding the value to store.
         dst_name: The variable name of the destination struct.
         eb_start: Byte offset of this eightbyte's start within the struct.
-        size: Number of bytes to write (1–7).
+        size: Number of bytes to write (1-7).
         is_static: ``True`` when the destination has static storage duration.
 
     Returns:
@@ -2221,7 +2221,7 @@ def _translate_val(
 def _translate_binary_op(op: tac.BinaryOperator) -> asm.BinaryOperator:
     """Translate a TAC binary operator (Add/Sub/Mul/bitwise) to its assembly equivalent.
 
-    Divide and Remainder are intentionally absent — they are handled at the
+    Divide and Remainder are intentionally absent - they are handled at the
     instruction level by emitting a ``Cdq``/``Cqo`` + ``Idiv`` sequence.
 
     Args:
@@ -2337,9 +2337,9 @@ def _translate_double_comparison(
     """Lower a double-precision comparison to assembly, with correct NaN handling.
 
     ``ucomisd`` sets ZF=1, CF=1, PF=1 when either operand is NaN (unordered result).
-    For ``==``, ``<``, and ``<=`` the naïve ``SetCC`` would incorrectly return 1 for NaN because
+    For ``==``, ``<``, and ``<=`` the naive ``SetCC`` would incorrectly return 1 for NaN because
     ``sete`` reads ZF and ``setb``/``setbe`` read CF, all of which are 1.  For ``!=`` the
-    naïve ``setne`` would incorrectly return 0 because ZF=1.  ``>`` and ``>=`` are naturally
+    naive ``setne`` would incorrectly return 0 because ZF=1.  ``>`` and ``>=`` are naturally
     correct: ``seta`` (CF=0 AND ZF=0) and ``setae`` (CF=0) both return 0 when CF=1.
 
     The fix uses a conditional jump on PF (the parity flag, set to 1 only for NaN):
@@ -2420,7 +2420,7 @@ def _translate_double_comparison(
 
 
 # ==============================================================================
-# Pass 2 — Pseudo-register replacement
+# Pass 2 - Pseudo-register replacement
 # ==============================================================================
 
 
@@ -2555,7 +2555,7 @@ def _replace_pseudos(
 
 
 # ==============================================================================
-# Pass 3 — Instruction fixup
+# Pass 3 - Instruction fixup
 # ==============================================================================
 
 
@@ -2604,50 +2604,50 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
 
     Handles the following cases:
 
-    * ``Mov(Quadword, Imm(v), mem)`` where ``v`` exceeds the signed 32-bit range —
+    * ``Mov(Quadword, Imm(v), mem)`` where ``v`` exceeds the signed 32-bit range -
       x86-64 has no encoding for a 64-bit immediate to memory; load into ``%r10``
       then store.
-    * ``Mov(Longword, Imm(v), any)`` where ``v`` exceeds the signed 32-bit range —
+    * ``Mov(Longword, Imm(v), any)`` where ``v`` exceeds the signed 32-bit range -
       arises from ``Truncate``; the immediate is pre-masked to its lower 32 bits so
       the assembler does not warn about truncation.
-    * ``Mov(mem, mem)`` — both operands cannot be memory; route ``src`` through
+    * ``Mov(mem, mem)`` - both operands cannot be memory; route ``src`` through
       ``%r10``/``%r10d`` of the appropriate width.
-    * ``Idiv(Imm)`` — the divisor cannot be an immediate; route through
+    * ``Idiv(Imm)`` - the divisor cannot be an immediate; route through
       ``%r11``/``%r11d``.
-    * ``Cmp(op1, Imm)`` — ``op2`` (the second printed operand) cannot be an
+    * ``Cmp(op1, Imm)`` - ``op2`` (the second printed operand) cannot be an
       immediate; route through ``%r11``/``%r11d``.
-    * ``Cmp(Quadword, Imm(v), op2)`` where ``v`` exceeds the signed 32-bit range —
+    * ``Cmp(Quadword, Imm(v), op2)`` where ``v`` exceeds the signed 32-bit range -
       x86-64 ``cmpq`` can only encode 32-bit sign-extended immediates; load into
       ``%r10`` then compare.
-    * ``Cmp(mem, op2)`` — ``op1`` cannot be memory when ``op2`` is also memory;
+    * ``Cmp(mem, op2)`` - ``op1`` cannot be memory when ``op2`` is also memory;
       route ``op1`` through ``%r10``/``%r10d``.
-    * ``Movsx(src, mem)`` — the destination of ``movslq`` must be a register;
+    * ``Movsx(src, mem)`` - the destination of ``movslq`` must be a register;
       route through ``%r11`` then move to ``dst``.
-    * ``MoveZeroExtend(Longword, …)`` — ``movl`` to a 32-bit register already
+    * ``MoveZeroExtend(Longword, ...)`` - ``movl`` to a 32-bit register already
       zero-extends; replaced with ``Mov(Longword)``, with a ``%r10d`` scratch hop
       when both operands are memory.
-    * ``MoveZeroExtend(Byte, …, Imm, …)`` — ``movzbl``/``movzbq`` cannot encode
+    * ``MoveZeroExtend(Byte, ..., Imm, ...)`` - ``movzbl``/``movzbq`` cannot encode
       an immediate source; load into ``%r10b`` first, then zero-extend (with an
       additional ``%r11`` store hop when ``dst`` is also memory).
-    * ``MoveZeroExtend(Byte, …, src, mem)`` — destination must be a register;
+    * ``MoveZeroExtend(Byte, ..., src, mem)`` - destination must be a register;
       route through ``%r11`` of the destination width then store.
-    * ``Mov(Byte, Imm(v), …)`` where ``v`` does not fit in a single byte — GAS
-      rejects byte immediates outside −128…255; reduce modulo 256.
+    * ``Mov(Byte, Imm(v), ...)`` where ``v`` does not fit in a single byte - GAS
+      rejects byte immediates outside -128...255; reduce modulo 256.
     * ``Binary(Quadword, op, src1, Imm(v), dst)`` where ``v`` exceeds the signed
-      32-bit range — ``addq``/``subq``/``imulq`` cannot encode a 64-bit
+      32-bit range - ``addq``/``subq``/``imulq`` cannot encode a 64-bit
       immediate; load ``src2`` into ``%r10`` first.
     * ``Cmp(Quadword, Imm(v), Imm)`` where ``v`` exceeds the signed 32-bit
-      range and ``op2`` is also an immediate — the op2-is-Imm fixup would fire
+      range and ``op2`` is also an immediate - the op2-is-Imm fixup would fire
       first and produce a new ``Cmp(Imm(large), reg)`` that is never
       re-processed; handle both operands upfront instead.
-    * ``Push(Quadword, Imm(v))`` where ``v`` exceeds the signed 32-bit range —
+    * ``Push(Quadword, Imm(v))`` where ``v`` exceeds the signed 32-bit range -
       ``pushq`` only accepts 8-bit or 32-bit sign-extended immediates; load
       into ``%r10`` first.
-    * ``Push(mem)`` — ``pushq`` cannot address a memory slot directly; load
+    * ``Push(mem)`` - ``pushq`` cannot address a memory slot directly; load
       into ``%eax``/``%rax`` first.
-    * ``Push(Double, Register)`` — ``pushq`` cannot encode an XMM register; expand
+    * ``Push(Double, Register)`` - ``pushq`` cannot encode an XMM register; expand
       to ``subq $8, %rsp`` followed by ``movsd xmm, (%rsp)``.
-    * ``Lea(src, mem)`` — ``leaq`` destination must be a register; route through
+    * ``Lea(src, mem)`` - ``leaq`` destination must be a register; route through
       ``%r11`` then store.
 
     Args:
@@ -2666,7 +2666,7 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
         return -(1 << 31) <= v <= (1 << 31) - 1
 
     def _fits_in_byte(v: int) -> bool:
-        """Return True when ``v`` fits in a single byte (−128…255)."""
+        """Return True when ``v`` fits in a single byte (-128...255)."""
         return -128 <= v <= 255
 
     fixed: list[asm.Instruction] = []
@@ -2827,8 +2827,8 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
             case asm.Push(assembly_type=asm.Longword(), operand=asm.Imm(value=v)) if not _fits_in_int32(v):
                 # pushq with a sign-extended 32-bit immediate cannot represent an unsigned int
                 # value with bit 31 set. Reinterpret as signed int32 for the movl (GAS accepts any
-                # 32-bit immediate there), load into %r10d — movl zero-extends so %r10 holds the
-                # correct 64-bit unsigned value — then pushq the 64-bit register.
+                # 32-bit immediate there), load into %r10d - movl zero-extends so %r10 holds the
+                # correct 64-bit unsigned value - then pushq the 64-bit register.
                 truncated = v & 0xFFFFFFFF
                 if truncated >= (1 << 31):
                     truncated -= 1 << 32
@@ -2850,7 +2850,7 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
             case asm.Push(assembly_type=asm.Double(), operand=operand) if _is_mem(operand):
                 # movsd cannot move to a GP register, but the double's bits can be
                 # loaded as a raw quadword with movq and then pushed normally.
-                # Use R10 (not AX) — R10 is excluded from register allocation so it
+                # Use R10 (not AX) - R10 is excluded from register allocation so it
                 # cannot hold a pseudo that is live across this push.
                 r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
                 fixed.append(asm.Mov(src=operand, dst=r10q, assembly_type=asm.Quadword()))
@@ -2858,7 +2858,7 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
             case asm.Push(assembly_type=at, operand=operand) if _is_mem(operand):
                 # pushq cannot address a memory slot directly.
                 # Load via movl (zero-extends) for ints, movq for longs, then push the 64-bit register.
-                # Use R10 (not AX) — R10 is excluded from register allocation so it
+                # Use R10 (not AX) - R10 is excluded from register allocation so it
                 # cannot hold a pseudo that is live across this push.
                 r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=operand, dst=r10, assembly_type=at))
@@ -2958,7 +2958,7 @@ def _add_stack_allocation(fn: asm.Function, stack_size: int, *, gp_callee_size: 
     if needed_mod == 0:
         aligned = (stack_size + 15) & ~15
     else:
-        # Odd number of pushq saves: AllocateStack must be ≡ 8 (mod 16) so that the
+        # Odd number of pushq saves: AllocateStack must be == 8 (mod 16) so that the
         # combined push+alloc is 0 (mod 16).
         aligned = ((stack_size + 7) // 16) * 16 + 8
     if aligned == 0:

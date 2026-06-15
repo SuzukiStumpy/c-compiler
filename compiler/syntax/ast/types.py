@@ -28,7 +28,7 @@ class IntType(Type):
     """Represents the C ``int`` type.
 
     Used wherever ``int`` appears as a return type or parameter type in the
-    source. The node carries no fields — its identity is its type alone.
+    source. The node carries no fields - its identity is its type alone.
     """
 
 
@@ -46,7 +46,7 @@ class UIntType(Type):
     """Represents the C ``unsigned int`` type.
 
     Used wherever ``unsigned int`` appears as a return type or parameter type in the
-    source. The node carries no fields — its identity is its type alone.
+    source. The node carries no fields - its identity is its type alone.
     """
 
 
@@ -176,12 +176,12 @@ class Union(Type):
 
 
 class Linkage(Enum):
-    """Linkage classification for a declared C identifier (C11 §6.2.2).
+    """Linkage classification for a declared C identifier (C11 sec. 6.2.2).
 
-    ``NONE`` applies to identifiers with no linkage — local (block-scope)
-    variables.  ``INTERNAL`` applies to identifiers with internal linkage —
+    ``NONE`` applies to identifiers with no linkage - local (block-scope)
+    variables.  ``INTERNAL`` applies to identifiers with internal linkage -
     file-scope or static-local variables qualified with ``static``.
-    ``EXTERNAL`` applies to identifiers with external linkage — functions and
+    ``EXTERNAL`` applies to identifiers with external linkage - functions and
     file-scope variables not qualified with ``static``.
     """
 

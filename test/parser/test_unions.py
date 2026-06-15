@@ -108,7 +108,7 @@ class TestUnionDefinition:
         assert members[1] == MemberDeclaration(member_name="y", member_type=LongType())
 
     def test_empty_brace_body_is_a_parse_error(self) -> None:
-        """``union Tag {};`` must raise ``ParseError`` — at least one member required."""
+        """``union Tag {};`` must raise ``ParseError`` - at least one member required."""
         with pytest.raises(ParseError):
             _parse_top(_UNION, _ident("Bad"), _LBRACE, _RBRACE, _SEMICOLON)
 

@@ -149,7 +149,7 @@ class TestPointerOperatorRestrictions:
             resolve(_program(body))
 
     def test_logical_not_pointer_succeeds(self) -> None:
-        """Applying ``!`` to a pointer operand is valid: pointers are scalar types (C11 §6.5.3.3 ¶5)."""
+        """Applying ``!`` to a pointer operand is valid: pointers are scalar types (C11 sec. 6.5.3.3 para.5)."""
         body = _ptr_var("p") + _return_exp(ast.Unary(ast.Not(), ast.Var("p")))
         resolve(_program(body))
 

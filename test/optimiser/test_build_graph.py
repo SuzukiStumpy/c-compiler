@@ -73,7 +73,7 @@ def _fp_sym(*names: str) -> SymbolTable:
 
 
 # ---------------------------------------------------------------------------
-# AsmAdapter — CFG construction dispatch
+# AsmAdapter - CFG construction dispatch
 # ---------------------------------------------------------------------------
 
 
@@ -113,7 +113,7 @@ class TestAsmAdapterCfg:
 
 
 # ---------------------------------------------------------------------------
-# AsmAdapter — defs / uses
+# AsmAdapter - defs / uses
 # ---------------------------------------------------------------------------
 
 
@@ -241,7 +241,7 @@ class TestClassifyPseudos:
 
 
 # ---------------------------------------------------------------------------
-# build_gp_graph — node population and edges
+# build_gp_graph - node population and edges
 # ---------------------------------------------------------------------------
 
 
@@ -329,7 +329,7 @@ class TestBuildGpGraph:
 
 
 # ---------------------------------------------------------------------------
-# build_fp_graph — node population and edges
+# build_fp_graph - node population and edges
 # ---------------------------------------------------------------------------
 
 
@@ -541,25 +541,25 @@ class TestFindUsedAndUpdated:
         assert GPRegisters.DI in regs
 
     def test_call_int_param_uses_di(self) -> None:
-        """One int param → only DI is used (not SI, DX, etc.)."""
+        """One int param -> only DI is used (not SI, DX, etc.)."""
         sym = _fun_sym([IntType])
         used, _ = find_used_and_updated(asm.Call(name="fn"), sym)
         assert self._operand_regs(used) == {GPRegisters.DI}
 
     def test_call_double_param_uses_xmm0(self) -> None:
-        """One double param → only XMM0 is used."""
+        """One double param -> only XMM0 is used."""
         sym = _fun_sym([DoubleType])
         used, _ = find_used_and_updated(asm.Call(name="fn"), sym)
         assert self._operand_regs(used) == {FPRegisters.XMM0}
 
     def test_call_mixed_params_correct_regs(self) -> None:
-        """int, double, int → DI, XMM0, SI."""
+        """int, double, int -> DI, XMM0, SI."""
         sym = _fun_sym([IntType, DoubleType, IntType])
         used, _ = find_used_and_updated(asm.Call(name="fn"), sym)
         assert self._operand_regs(used) == {GPRegisters.DI, FPRegisters.XMM0, GPRegisters.SI}
 
     def test_call_no_params_used_empty(self) -> None:
-        """Zero-param function → no argument registers used."""
+        """Zero-param function -> no argument registers used."""
         sym = _fun_sym([])
         used, _ = find_used_and_updated(asm.Call(name="fn"), sym)
         assert used == []
@@ -656,8 +656,8 @@ class TestTransfer:
         cfg = _make_asm_cfg(instrs)
         tracked: set = self._gp_tracked() | {"x"}
         _, live_after = _transfer(cfg.blocks[0], set(), tracked)
-        # live_after[0] = live set after instr[0] (mov imm→x); x is defined here and used later → live
-        # live_after[1] = live set after instr[1] (mov x→AX); x consumed here → no longer live
+        # live_after[0] = live set after instr[0] (mov imm->x); x is defined here and used later -> live
+        # live_after[1] = live set after instr[1] (mov x->AX); x consumed here -> no longer live
         assert "x" in live_after[0]
         assert "x" not in live_after[1]
 
@@ -668,7 +668,7 @@ class TestTransfer:
         tracked: set = self._gp_tracked() | {"x"}
         live_in, live_after = _transfer(cfg.blocks[0], set(), tracked)
         # After the Ret, x is not live (end_live={}); after the mov it's also not live
-        # (x is defined here but not used after → killed immediately)
+        # (x is defined here but not used after -> killed immediately)
         assert "x" not in live_in
 
     def test_tracked_nodes_filters_out_fp_regs(self) -> None:
@@ -761,7 +761,7 @@ class TestStaticExclusion:
 
 
 # ---------------------------------------------------------------------------
-# _meet — liveness propagation at successors
+# _meet - liveness propagation at successors
 # ---------------------------------------------------------------------------
 
 
@@ -983,7 +983,7 @@ class TestColorGraph:
     def test_spilled_pseudo_has_no_color_and_stays_pruned(self) -> None:
         """A pseudo that cannot be colored has no entry in colors and stays in pruned."""
         # Build a graph where k pseudos all mutually interfere (k = len(ALLOCATABLE_GP)).
-        # Add one more pseudo that interferes with all of them → it must be spilled.
+        # Add one more pseudo that interferes with all of them -> it must be spilled.
         k = len(ALLOCATABLE_GP)
         # Use the real build pipeline on a carefully constructed instruction sequence.
         # Simpler: construct the graph directly.

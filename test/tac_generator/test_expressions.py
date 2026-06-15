@@ -9,7 +9,7 @@ from compiler.utils.exceptions import CodeGenerationError
 from test.tac_generator.helpers import _body, _instrs_for_body, _program_returning
 
 # ---------------------------------------------------------------------------
-# Constant and unary (regression — must not be broken by binary additions)
+# Constant and unary (regression - must not be broken by binary additions)
 # ---------------------------------------------------------------------------
 
 
@@ -17,12 +17,12 @@ class TestTacGeneratorExistingConstructs:
     """Constant and unary constructs continue to translate correctly."""
 
     def test_constant_produces_only_return(self) -> None:
-        """``return 42;`` → ``Return(Constant(42))`` with no guard (already returns)."""
+        """``return 42;`` -> ``Return(Constant(42))`` with no guard (already returns)."""
         instrs = _body(ast.Constant(value=ast.ConstInt(42)))
         assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstInt(42))),)
 
     def test_unary_negate_produces_unary_then_return(self) -> None:
-        """``return -1;`` → ``Unary(Negate, Constant(1), tmp.0)`` + ``Return(tmp.0)``."""
+        """``return -1;`` -> ``Unary(Negate, Constant(1), tmp.0)`` + ``Return(tmp.0)``."""
         instrs = _body(ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1))))
         assert instrs == (
             tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ast.ConstInt(1)), dst=tac.Var(value="tmp.0")),
@@ -74,7 +74,7 @@ class TestTacGeneratorBinaryInstructions:
     """Binary expressions produce the correct instruction sequence and operands."""
 
     def test_two_constants_produce_binary_then_return(self) -> None:
-        """``return 1 + 2;`` → ``Binary(Add, Constant(1), Constant(2), tmp.0)`` + ``Return(tmp.0)``."""
+        """``return 1 + 2;`` -> ``Binary(Add, Constant(1), Constant(2), tmp.0)`` + ``Return(tmp.0)``."""
         instrs = _body(
             ast.Binary(
                 operator=ast.Add(), left=ast.Constant(value=ast.ConstInt(1)), right=ast.Constant(value=ast.ConstInt(2))
@@ -189,7 +189,7 @@ class TestTacGeneratorInstructionOrdering:
         assert instrs[2] == tac.Return(val=tac.Var(value="tmp.1"))
 
     def test_temporaries_are_allocated_in_order(self) -> None:
-        """Temporaries are named ``tmp.0``, ``tmp.1``, … in emission order."""
+        """Temporaries are named ``tmp.0``, ``tmp.1``, ... in emission order."""
         exp = ast.Binary(
             operator=ast.Add(),
             left=ast.Unary(operator=ast.Negate(), exp=ast.Constant(value=ast.ConstInt(1))),
@@ -269,13 +269,13 @@ class TestTacGeneratorUnaryOperators:
     """All unary operator variants translate to their TAC equivalents."""
 
     def test_complement_produces_unary_complement(self) -> None:
-        """``return ~1;`` → ``Unary(Complement, Constant(1), tmp.0)``."""
+        """``return ~1;`` -> ``Unary(Complement, Constant(1), tmp.0)``."""
         instrs = _body(ast.Unary(operator=ast.Complement(), exp=ast.Constant(value=ast.ConstInt(1))))
         assert isinstance(instrs[0], tac.Unary)
         assert instrs[0].operator == tac.Complement()
 
     def test_not_produces_unary_not(self) -> None:
-        """``return !1;`` → ``Unary(Not, Constant(1), tmp.0)``."""
+        """``return !1;`` -> ``Unary(Not, Constant(1), tmp.0)``."""
         instrs = _body(ast.Unary(operator=ast.Not(), exp=ast.Constant(value=ast.ConstInt(1))))
         assert isinstance(instrs[0], tac.Unary)
         assert instrs[0].operator == tac.Not()
@@ -317,7 +317,7 @@ class TestTacGeneratorAndExpression:
         instrs = _body(exp)
         assert isinstance(instrs[0], tac.Unary)  # left side: Negate(1)
         assert isinstance(instrs[1], tac.JumpIfZero)  # short-circuit check on left
-        assert isinstance(instrs[2], tac.Unary)  # right side: Negate(2) — only after the jump
+        assert isinstance(instrs[2], tac.Unary)  # right side: Negate(2) - only after the jump
         assert isinstance(instrs[3], tac.JumpIfZero)  # short-circuit check on right
 
     def test_result_is_returned(self) -> None:
@@ -382,7 +382,7 @@ class TestTacGeneratorOrExpression:
         instrs = _body(exp)
         assert isinstance(instrs[0], tac.Unary)  # left side: Negate(1)
         assert isinstance(instrs[1], tac.JumpIfNotZero)  # short-circuit check on left
-        assert isinstance(instrs[2], tac.Unary)  # right side: Negate(2) — only after jump
+        assert isinstance(instrs[2], tac.Unary)  # right side: Negate(2) - only after jump
         assert isinstance(instrs[3], tac.JumpIfNotZero)  # short-circuit check on right
 
     def test_result_is_returned(self) -> None:
@@ -500,7 +500,7 @@ class TestTacGeneratorIncDecOperators:
     """Pre/post increment and decrement desugar into Binary + Copy sequences."""
 
     def test_pre_increment_full_sequence(self) -> None:
-        """``return ++x;`` → ``Binary(Add, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(x)``."""
+        """``return ++x;`` -> ``Binary(Add, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(x)``."""
         instrs = _body(ast.Unary(operator=ast.PreIncrement(), exp=ast.Var(name="x")))
         assert instrs == (
             tac.Binary(
@@ -514,7 +514,7 @@ class TestTacGeneratorIncDecOperators:
         )
 
     def test_pre_decrement_full_sequence(self) -> None:
-        """``return --x;`` → ``Binary(Sub, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(x)``."""
+        """``return --x;`` -> ``Binary(Sub, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(x)``."""
         instrs = _body(ast.Unary(operator=ast.PreDecrement(), exp=ast.Var(name="x")))
         assert instrs == (
             tac.Binary(
@@ -528,7 +528,7 @@ class TestTacGeneratorIncDecOperators:
         )
 
     def test_post_increment_full_sequence(self) -> None:
-        """``return x++;`` → ``Copy(x, old)``, ``Binary(Add, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(old)``."""
+        """``return x++;`` -> ``Copy(x, old)``, ``Binary(Add, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(old)``."""
         instrs = _body(ast.Unary(operator=ast.PostIncrement(), exp=ast.Var(name="x")))
         assert instrs == (
             tac.Copy(src=tac.Var(value="x"), dst=tac.Var(value="tmp.0")),
@@ -543,7 +543,7 @@ class TestTacGeneratorIncDecOperators:
         )
 
     def test_post_decrement_full_sequence(self) -> None:
-        """``return x--;`` → ``Copy(x, old)``, ``Binary(Sub, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(old)``."""
+        """``return x--;`` -> ``Copy(x, old)``, ``Binary(Sub, x, 1, tmp)``, ``Copy(tmp, x)``, ``Return(old)``."""
         instrs = _body(ast.Unary(operator=ast.PostDecrement(), exp=ast.Var(name="x")))
         assert instrs == (
             tac.Copy(src=tac.Var(value="x"), dst=tac.Var(value="tmp.0")),

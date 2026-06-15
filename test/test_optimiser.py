@@ -148,7 +148,7 @@ class TestMakeControlFlowGraph:
 
 
 # ---------------------------------------------------------------------------
-# cfg_to_instructions — round-trip
+# cfg_to_instructions - round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -223,7 +223,7 @@ class TestOptimizeFunction:
 
 
 # ---------------------------------------------------------------------------
-# optimize_function — unreachable-code elimination
+# optimize_function - unreachable-code elimination
 # ---------------------------------------------------------------------------
 
 _UCE_ONLY = Optimizations(
@@ -375,7 +375,7 @@ class TestDoOptimization:
 
 
 # ---------------------------------------------------------------------------
-# optimize_function — constant folding: Copy type normalisation
+# optimize_function - constant folding: Copy type normalisation
 # ---------------------------------------------------------------------------
 
 _CF_CP_DSE = Optimizations(
@@ -389,7 +389,7 @@ _CF_CP_DSE = Optimizations(
 class TestFoldCopyConstantNormalization:
     """Tests for same-size reinterpretation ``Copy`` constant normalisation in CF.
 
-    When the TAC generator emits a same-size cast (e.g. ``int`` → ``unsigned int``)
+    When the TAC generator emits a same-size cast (e.g. ``int`` -> ``unsigned int``)
     as a ``Copy(ConstInt(-1), Var("u": UInt))``, the constant type mismatches the
     destination type.  ``_fold_copy`` must rewrite the constant to match the
     destination so that subsequent copy propagation can track and substitute it.
@@ -458,7 +458,7 @@ class TestFoldCopyConstantNormalization:
 
 
 # ---------------------------------------------------------------------------
-# optimize_function — copy propagation: CopyFromOffset aggregate substitution
+# optimize_function - copy propagation: CopyFromOffset aggregate substitution
 # ---------------------------------------------------------------------------
 
 _CP_DSE = Optimizations(
@@ -515,7 +515,7 @@ class TestCopyFromOffsetPropagation:
 
 
 # ---------------------------------------------------------------------------
-# optimize_function — copy propagation: CopyToOffset kills aggregate copies
+# optimize_function - copy propagation: CopyToOffset kills aggregate copies
 # ---------------------------------------------------------------------------
 
 

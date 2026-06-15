@@ -31,7 +31,7 @@ class VariableDeclaration:
 
     Attributes:
         name: The name of the variable being declared.
-        init: The initialiser — a ``SingleInit`` wrapping a scalar expression,
+        init: The initialiser - a ``SingleInit`` wrapping a scalar expression,
             a ``CompoundInit`` for brace-enclosed aggregate initialisers, or
             ``None`` if the variable is declared without an initial value.
         var_type: The type of this variable.
@@ -89,7 +89,7 @@ class D(BlockItem):
     """A declaration wrapped as a block item.
 
     Attributes:
-        declaration: The declaration node — either a ``FunDecl`` or a ``VarDecl``.
+        declaration: The declaration node - either a ``FunDecl`` or a ``VarDecl``.
     """
 
     declaration: Declaration
@@ -313,7 +313,7 @@ class For(Statement):
     evaluated if present.
 
     Attributes:
-        init: The initialiser clause — either a declaration (``InitDecl``) or
+        init: The initialiser clause - either a declaration (``InitDecl``) or
             an optional expression (``InitExp``).
         condition: The loop condition tested before each iteration, or ``None``
             for an unbounded loop.

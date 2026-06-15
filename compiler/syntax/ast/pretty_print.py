@@ -48,7 +48,7 @@ def pretty_print(node: object) -> str:
 def _render(value: object, depth: int) -> str:
     """Recursively render a value at the given indentation depth.
 
-    The returned string never starts with leading whitespace — the caller is
+    The returned string never starts with leading whitespace - the caller is
     responsible for prepending the appropriate indent to the first line.
     Subsequent lines, however, carry their own absolute indentation so that
     the whole string can be embedded directly into a parent render.

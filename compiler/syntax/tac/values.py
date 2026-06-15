@@ -115,7 +115,7 @@ class ZeroInit(StaticInit):
 
     @property
     def value(self) -> int:
-        """Return zero — the numeric value of any ``ZeroInit`` initialiser."""
+        """Return zero - the numeric value of any ``ZeroInit`` initialiser."""
         return 0
 
 

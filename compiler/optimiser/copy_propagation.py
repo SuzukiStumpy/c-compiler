@@ -103,7 +103,7 @@ def _types_compatible(src: tac.Val, dst: tac.Val, symbol_table: SymbolTable) -> 
     # Pointer types share the same 64-bit machine representation and may be
     # copied between differently-typed pointer variables.  Long/ULong may also
     # be copied to/from a Pointer (null-pointer constant propagation), but we
-    # must NOT allow Long ↔ ULong here: their signedness differs, and the code
+    # must NOT allow Long <-> ULong here: their signedness differs, and the code
     # generator selects signed vs unsigned comparison instructions based on the
     # type recorded in the symbol table.  Propagating a Long source into a slot
     # typed ULong (or vice-versa) would silently change the comparison operator.
@@ -219,7 +219,7 @@ def meet(
             as produced by ``_build_predecessor_map``.
         block_out: Map from block index to the exit ``CopySet`` computed by
             ``transfer`` for that block in the current iteration.
-        all_copies: The top element of the lattice — the set of every ``Copy``
+        all_copies: The top element of the lattice - the set of every ``Copy``
             instruction in the function.
 
     Returns:
@@ -266,23 +266,23 @@ def transfer(
 
     The function models each instruction class as follows:
 
-    * ``Copy(src, dst)`` — if the reverse copy ``Copy(src=dst, dst=src)``
+    * ``Copy(src, dst)`` - if the reverse copy ``Copy(src=dst, dst=src)``
       already reaches, the instruction is a no-op (src and dst are already
       known equal).  Otherwise all copies that mention ``dst`` are killed; the
       new copy is added only when *src* and *dst* have compatible types (same
       type, or same signedness).
-    * ``FunCall(dst=dst)`` — kills every copy whose ``src`` or ``dst`` is an
+    * ``FunCall(dst=dst)`` - kills every copy whose ``src`` or ``dst`` is an
       aliased variable (address-taken or static, either of which may be
       clobbered by the callee) and every copy that mentions the return-value
       destination ``dst`` (if any).
-    * ``Store`` — kills every copy whose ``src`` or ``dst`` is an aliased
+    * ``Store`` - kills every copy whose ``src`` or ``dst`` is an aliased
       variable, since a store through a pointer may overwrite any aliased
       location.
     * ``Unary``, ``Binary``, and all type-conversion / addressing instructions
-      that write to a ``dst: Val`` field — kill every copy that mentions
+      that write to a ``dst: Val`` field - kill every copy that mentions
       ``dst``.
     * Everything else (``Label``, ``Jump``, ``JumpIfZero``, ``JumpIfNotZero``,
-      ``Return``, ``CopyToOffset``) — leaves the reaching set unchanged.
+      ``Return``, ``CopyToOffset``) - leaves the reaching set unchanged.
 
     Args:
         block: The basic block to analyse.
@@ -296,8 +296,8 @@ def transfer(
     Returns:
         A 2-tuple ``(exit_copies, instr_annotations)`` where *exit_copies* is
         the ``CopySet`` reaching the end of the block and *instr_annotations*
-        is a list — one ``CopySet`` per instruction in ``block.instructions``
-        — recording the reaching copies *before* that instruction executes.
+        is a list - one ``CopySet`` per instruction in ``block.instructions``
+        - recording the reaching copies *before* that instruction executes.
     """
     current: set[tac.Copy] = set(initial)
     instr_annotations: list[CopySet] = []
@@ -308,7 +308,7 @@ def transfer(
         match instr:
             case tac.Copy(src=src, dst=dst):
                 # If the reverse copy already reaches, src == dst is already
-                # known — this instruction changes nothing; skip kill/add.
+                # known - this instruction changes nothing; skip kill/add.
                 if tac.Copy(src=dst, dst=src) in current:
                     continue
                 # Kill all copies that mention dst (it is being overwritten).
@@ -356,7 +356,7 @@ def transfer(
                 # A partial write to an aggregate invalidates any aggregate-level
                 # copy that treats the aggregate as a whole (e.g. Copy(loc, glob)
                 # becomes stale if glob.field is subsequently overwritten, so we
-                # can no longer substitute CopyFromOffset("glob", …) with "loc").
+                # can no longer substitute CopyFromOffset("glob", ...) with "loc").
                 current -= {
                     c
                     for c in current
@@ -436,7 +436,7 @@ def _rewrite_secondary(instr: tac.Instruction, r: CopySet) -> tac.Instruction | 
         case tac.Store(src=src, dst_ptr=dst_ptr):
             # Do not propagate into dst_ptr: the Mov(ptr, AX) pattern in the generated
             # assembly relies on ptr being the Mov source so the coalescing exemption
-            # prevents a spurious ptr↔AX interference edge in the register allocator.
+            # prevents a spurious ptr<->AX interference edge in the register allocator.
             return tac.Store(
                 src=_replace_operand(src, r),
                 dst_ptr=dst_ptr,
@@ -470,9 +470,9 @@ def _rewrite_instruction(
 
     Every ``Val`` operand that is the destination of a reaching copy is
     replaced with that copy's source.  A ``Copy`` instruction that is
-    already redundant — either because it is itself a member of the reaching
+    already redundant - either because it is itself a member of the reaching
     set, or because the reverse copy is reaching (operands are already known
-    equal) — is eliminated by returning ``None``.
+    equal) - is eliminated by returning ``None``.
 
     ``GetAddress`` is deliberately excluded from operand replacement: copy
     propagation establishes value equality but not address equality, so

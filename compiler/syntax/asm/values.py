@@ -64,7 +64,7 @@ class StaticInit(ABC):
 class CharInit(StaticInit):
     """Initialiser for a static variable of C ``char``, ``signed char``, or ``unsigned char`` type.
 
-    Emitted as ``.byte v`` — a single byte in the data segment.
+    Emitted as ``.byte v`` - a single byte in the data segment.
 
     Attributes:
         value: The initial byte value, as a plain Python int.
@@ -136,7 +136,7 @@ class ZeroInit(StaticInit):
 
     @property
     def value(self) -> int:
-        """Return zero — every ``ZeroInit`` initialiser is zero-valued."""
+        """Return zero - every ``ZeroInit`` initialiser is zero-valued."""
         return 0
 
 

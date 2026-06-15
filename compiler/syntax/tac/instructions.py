@@ -172,7 +172,7 @@ class FunCall(Instruction):
     """Call site for a function.
 
     Attributes:
-        fun_val: Value that identifies the callable — a ``Var`` naming a function for a
+        fun_val: Value that identifies the callable - a ``Var`` naming a function for a
             direct call, or a ``Var`` holding a function pointer for an indirect call.
         args: Ordered sequence of arguments to pass to the function.
         dst: The destination that receives the return value, or ``None`` for a void call.

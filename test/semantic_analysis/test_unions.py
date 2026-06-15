@@ -77,7 +77,7 @@ class TestUnionLayout:
         assert entry.members[0].offset == 0
 
     def test_two_int_members_both_at_offset_zero(self) -> None:
-        """``union { int x; int y; }`` — both members at offset 0, size 4."""
+        """``union { int x; int y; }`` - both members at offset 0, size 4."""
         prog = _prog_with_decls(_union_decl("U", _member("x", ast.IntType()), _member("y", ast.IntType())))
         _, _, struct_table = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
@@ -87,7 +87,7 @@ class TestUnionLayout:
             assert m.offset == 0
 
     def test_int_and_long_size_is_long(self) -> None:
-        """``union { int x; long y; }`` — size=8, align=8, both at offset 0."""
+        """``union { int x; long y; }`` - size=8, align=8, both at offset 0."""
         prog = _prog_with_decls(_union_decl("U", _member("x", ast.IntType()), _member("y", ast.LongType())))
         _, _, struct_table = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
@@ -97,7 +97,7 @@ class TestUnionLayout:
             assert m.offset == 0
 
     def test_trailing_padding_rounds_to_alignment(self) -> None:
-        """``union { char c; int x; }`` — size=4 (rounded to int align), align=4."""
+        """``union { char c; int x; }`` - size=4 (rounded to int align), align=4."""
         prog = _prog_with_decls(_union_decl("U", _member("c", ast.Char()), _member("x", ast.IntType())))
         _, _, struct_table = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))

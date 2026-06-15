@@ -19,7 +19,7 @@ class UnaryOperator(ABC):
     """Abstract base for all assembly unary operator nodes.
 
     Each operator is represented as a concrete subclass carrying no data fields
-    — its identity is its type alone.  Consumers should use structural pattern
+    - its identity is its type alone.  Consumers should use structural pattern
     matching (``match``/``case``) to dispatch on the concrete variant rather than
     inspecting the type directly.
     """
@@ -82,7 +82,7 @@ class BinaryOperator(ABC):
     """Abstract base for all assembly binary operator nodes.
 
     Each operator is represented as a concrete subclass carrying no data fields
-    — its identity is its type alone.  Consumers should use structural pattern
+    - its identity is its type alone.  Consumers should use structural pattern
     matching (``match``/``case``) to dispatch on the concrete variant rather than
     inspecting the type directly.
     """

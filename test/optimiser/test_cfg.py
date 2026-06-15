@@ -18,7 +18,7 @@ from compiler.optimiser.cfg import (
 from .helpers import _ci, _function, _var
 
 # ---------------------------------------------------------------------------
-# add_all_edges — edge cases
+# add_all_edges - edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -50,8 +50,8 @@ class TestAddAllEdges:
             tac.Return(val=_ci(0)),
         )
         cfg = make_control_flow_graph(_function(body))
-        # Block 0 ("a"): Jump("b") → BlockId(1)
-        # Block 1 ("b"): Return → EXIT
+        # Block 0 ("a"): Jump("b") -> BlockId(1)
+        # Block 1 ("b"): Return -> EXIT
         assert cfg.blocks[0].successors == [BlockId(1)]
         assert cfg.blocks[1].successors == [EXIT]
 
@@ -66,7 +66,7 @@ class TestAddAllEdges:
             tac.Return(val=_ci(0)),
         )
         cfg = make_control_flow_graph(_function(body))
-        # Block 0 ("entry"): JumpIfZero("done") → [BlockId(2), BlockId(1)]
+        # Block 0 ("entry"): JumpIfZero("done") -> [BlockId(2), BlockId(1)]
         assert cfg.blocks[0].successors == [BlockId(2), BlockId(1)]
 
     def test_jump_if_not_zero_produces_target_and_fallthrough(self) -> None:
@@ -90,7 +90,7 @@ class TestAddAllEdges:
             tac.Return(val=_var("x")),
         )
         cfg = make_control_flow_graph(_function(body))
-        # Block 0 (unlabelled): Copy → falls through to Block 1
+        # Block 0 (unlabelled): Copy -> falls through to Block 1
         assert cfg.blocks[0].successors == [BlockId(1)]
         assert cfg.blocks[1].successors == [EXIT]
 
@@ -117,9 +117,9 @@ class TestAddAllEdges:
             tac.Return(val=_ci(0)),
         )
         cfg = make_control_flow_graph(_function(body))
-        # Block 0 ("loop"): JumpIfZero("done") → [BlockId(2), BlockId(1)]
-        # Block 1 ("body"): Jump("loop") → [BlockId(0)]  — backward edge
-        # Block 2 ("done"): Return → [EXIT]
+        # Block 0 ("loop"): JumpIfZero("done") -> [BlockId(2), BlockId(1)]
+        # Block 1 ("body"): Jump("loop") -> [BlockId(0)]  - backward edge
+        # Block 2 ("done"): Return -> [EXIT]
         assert cfg.blocks[0].successors == [BlockId(2), BlockId(1)]
         assert cfg.blocks[1].successors == [BlockId(0)]
         assert cfg.blocks[2].successors == [EXIT]

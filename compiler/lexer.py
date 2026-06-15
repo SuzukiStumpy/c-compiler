@@ -7,7 +7,7 @@ from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import LexerError
 
 _TOKEN_PATTERNS: list[tuple[str, str]] = [
-    # Keywords — must precede IDENTIFIER
+    # Keywords - must precede IDENTIFIER
     ("INT", r"int\b"),
     ("VOID", r"void\b"),
     ("RETURN", r"return\b"),
@@ -86,7 +86,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LSHIFT", r"<<"),
     ("RSHIFT", r">>"),
     ("CARET", r"\^"),
-    # Logical operators — multi-character tokens must precede their single-char prefixes
+    # Logical operators - multi-character tokens must precede their single-char prefixes
     ("AND", r"&&"),
     ("AMPERSAND", r"&"),
     ("OR", r"\|\|"),
@@ -125,7 +125,7 @@ def lexer(source: Path) -> list[Token]:
 
     Raises:
         LexerError: If any character at the current position cannot begin a
-            valid token. The error carries the source position and ±2 lines of
+            valid token. The error carries the source position and +/-2 lines of
             context from the original C source file.
     """
     text = source.read_text()

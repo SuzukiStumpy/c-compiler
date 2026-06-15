@@ -2,7 +2,7 @@
 
 An ``InterferenceGraph`` records which values (pseudo-registers and hardware
 registers) cannot share a register because they are simultaneously live.  Each
-node is a ``GraphNode`` — either a pseudo-register name (``str``) or a hardware
+node is a ``GraphNode`` - either a pseudo-register name (``str``) or a hardware
 register enum member (``GPRegisters`` or ``FPRegisters``).
 
 The graph is pre-populated with all allocatable hardware register nodes by

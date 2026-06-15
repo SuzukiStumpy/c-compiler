@@ -52,10 +52,10 @@ for the supported assembly subset:
 
 Nodes are organised into submodules by logical role:
 
-    operators     — Unary operator nodes (UnaryOperator, Neg, Not)
-    operands      — Operand nodes (Operand, Imm, Register, Pseudo, Memory)
-    instructions  — Instruction nodes (Instruction, Mov, Ret, Unary, Binary, Cdq, Idiv, AllocateStack)
-    declarations  — Program structure nodes (Function, Program)
+    operators     - Unary operator nodes (UnaryOperator, Neg, Not)
+    operands      - Operand nodes (Operand, Imm, Register, Pseudo, Memory)
+    instructions  - Instruction nodes (Instruction, Mov, Ret, Unary, Binary, Cdq, Idiv, AllocateStack)
+    declarations  - Program structure nodes (Function, Program)
 
 All node types are re-exported from this package so callers can import directly
 from ``compiler.syntax.asm`` without knowing which submodule a type lives in::
@@ -64,7 +64,7 @@ from ``compiler.syntax.asm`` without knowing which submodule a type lives in::
 
 Sum types (``Operand``, ``Instruction``, ``UnaryOperator``) are abstract base
 classes; each variant is a concrete frozen dataclass subclassing the appropriate
-base.  All nodes are immutable — once constructed an assembly AST node cannot be
+base.  All nodes are immutable - once constructed an assembly AST node cannot be
 modified.
 
 ``Pseudo`` operands are an intermediate form used during code generation and must

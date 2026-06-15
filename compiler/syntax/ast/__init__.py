@@ -76,16 +76,16 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
 
 Nodes are organised into submodules by logical role:
 
-    types        — C type nodes (Type, IntType, VoidType, …)
-    expressions  — Expression nodes (Exp, Constant, Unary, Binary, Assignment,
+    types        - C type nodes (Type, IntType, VoidType, ...)
+    expressions  - Expression nodes (Exp, Constant, Unary, Binary, Assignment,
                    Conditional, FunctionCall, SizeOf, SizeOfT, Dot, Arrow)
-    statements   — Statement nodes (Statement, Return, Expression, If, Null,
+    statements   - Statement nodes (Statement, Return, Expression, If, Null,
                    Goto, Label, Break, Continue, While, DoWhile)
-    declarations — Program structure nodes (VariableDeclaration, Declaration,
+    declarations - Program structure nodes (VariableDeclaration, Declaration,
                    FunDecl, VarDecl, StructDecl, MemberDeclaration,
                    StructDeclaration, BlockItem, S, D, Block, Compound, ForInit,
                    InitDecl, InitExp, For, Parameter, Function, Program)
-    operators    — Operators which act upon expressions
+    operators    - Operators which act upon expressions
                    (Complement, Negate, Not,
                    PreIncrement, PreDecrement, PostIncrement, PostDecrement,
                    Add, Subtract, Multiply, Divide, Remainder,
@@ -100,7 +100,7 @@ from ``compiler.syntax.ast`` without knowing which submodule a type lives in::
 
 Sum types (``Type``, ``Exp``, ``Statement``, ``Declaration``, ``BlockItem``,
 ``ForInit``) are abstract base classes; each variant is a concrete frozen
-dataclass subclassing the appropriate base. All nodes are immutable — once
+dataclass subclassing the appropriate base. All nodes are immutable - once
 constructed an AST node cannot be modified.
 """
 

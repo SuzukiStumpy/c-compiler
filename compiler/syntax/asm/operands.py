@@ -16,7 +16,7 @@ Only a subset of hardware registers are valid targets for register allocation.
 
 * **Excluded from GP allocation**: ``SP`` and ``BP`` (stack management);
   ``R10`` and ``R11`` (reserved as scratch registers by the code generator).
-* **FP registers** ``XMM0``–``XMM13`` are allocatable; ``XMM14`` and ``XMM15`` are reserved as scratch registers.
+* **FP registers** ``XMM0``-``XMM13`` are allocatable; ``XMM14`` and ``XMM15`` are reserved as scratch registers.
 """
 
 from abc import ABC, abstractmethod
@@ -195,7 +195,7 @@ class Pseudo(Operand):
         """Raise; pseudo-registers must be resolved before emission.
 
         Raises:
-            AssertionError: Always — ``Pseudo`` operands must be replaced with
+            AssertionError: Always - ``Pseudo`` operands must be replaced with
                 ``Memory`` operands by the pseudo-replacement pass before any
                 code is emitted.
 
@@ -291,7 +291,7 @@ class PseudoMem(Operand):
 
     Similar to ``Pseudo`` but for aggregate (array/struct) types whose storage
     spans more than one scalar register width.  ``offset`` selects a particular
-    byte within the aggregate — 0 designates the whole object's base address.
+    byte within the aggregate - 0 designates the whole object's base address.
 
     ``PseudoMem`` operands must be resolved to ``Memory`` operands by the
     pseudo-replacement pass before emission.
@@ -308,7 +308,7 @@ class PseudoMem(Operand):
         """Raise; PseudoMem operands must be resolved before emission.
 
         Raises:
-            AssertionError: Always — ``PseudoMem`` operands must be replaced
+            AssertionError: Always - ``PseudoMem`` operands must be replaced
                 with ``Memory`` operands by the pseudo-replacement pass.
 
         Returns:
