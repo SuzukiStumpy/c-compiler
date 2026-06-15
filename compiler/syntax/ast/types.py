@@ -202,10 +202,13 @@ class FunType(Type):
     Attributes:
         params: An ordered list of types of each parameter to the function.
         ret: The return type of the function.
+        variadic: ``True`` when the function accepts a variable number of
+            arguments after the declared parameters (C ``...`` ellipsis).
     """
 
     params: tuple[Type, ...]
     ret: Type
+    variadic: bool = False
 
 
 @dataclass(frozen=True, slots=True)

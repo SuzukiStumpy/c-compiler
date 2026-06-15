@@ -2483,14 +2483,18 @@ def _translate_funcall(
 
     # ------------------------------------------------------------------ #
     # Determine return-value classification so we know whether DI is free.
+    # Also record whether this is a variadic call (requires %al = XMM count).
     # ------------------------------------------------------------------ #
     ret_type: Type = VoidType()
+    is_variadic = False
     if symbol_table and fn_name in symbol_table:
         fn_t = symbol_table[fn_name].t
         if isinstance(fn_t, FunType):
             ret_type = fn_t.ret
+            is_variadic = fn_t.variadic
         elif isinstance(fn_t, Pointer) and isinstance(fn_t.referenced, FunType):
             ret_type = fn_t.referenced.ret
+            is_variadic = fn_t.referenced.variadic
 
     gp_ret, xmm_ret, ret_in_memory = classify_return_value(ret_type, stt)
 
@@ -2693,7 +2697,12 @@ def _translate_funcall(
 
     # ------------------------------------------------------------------ #
     # Emit the call instruction.
+    # For variadic functions, System V AMD64 ABI requires %al to hold the
+    # number of XMM registers used for floating-point arguments.
     # ------------------------------------------------------------------ #
+    if is_variadic:
+        al_reg = asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)
+        instrs.append(asm.Mov(src=asm.Imm(xmm_reg_idx), dst=al_reg, assembly_type=asm.Byte()))
     if is_direct:
         instrs.append(asm.Call(fn_name))
     else:

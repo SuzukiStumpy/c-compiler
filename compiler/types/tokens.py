@@ -60,6 +60,7 @@ class TokenType(Enum):
     CONSTCHAR = auto()
     STRING = auto()
     # Punctuation
+    ELLIPSIS = auto()  # ...
     LPAREN = auto()  # (
     RPAREN = auto()  # )
     LBRACE = auto()  # {

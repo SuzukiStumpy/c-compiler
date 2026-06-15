@@ -59,6 +59,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("SEMICOLON", r";"),
     ("COMMA", r","),
     ("ARROW", r"->"),
+    ("ELLIPSIS", r"\.\.\."),
     ("PERIOD", r"\.(?!\d)"),
     # Multi-char tokens containing '=' must precede the single '=' ASSIGNMENT token
     ("PLUS_ASSIGN", r"\+="),

@@ -1014,3 +1014,103 @@ class TestFunctionLinkage:
         analyser = SemanticAnalyser()
         analyser._register_fun_declaration(self._fn("foo", None))
         assert analyser._function_map["foo"].linkage is Linkage.EXTERNAL
+
+
+class TestVariadicFunctions:
+    """Semantic analysis accepts variadic function declarations and relaxes arg-count checks."""
+
+    def _variadic_fn_decl(self, name: str = "foo") -> ast.Function:
+        """Return a variadic function declaration ``int name(int x, ...)``."""
+        return ast.Function(
+            name=name,
+            params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
+            body=None,
+            fun_type=ast.FunType(params=(ast.IntType(),), ret=ast.IntType(), variadic=True),
+        )
+
+    def _call(self, fn_name: str, *args: ast.Exp) -> ast.FunctionCall:
+        """Return an un-typed ``FunctionCall`` AST node."""
+        return ast.FunctionCall(callee=ast.Var(fn_name), args=list(args), exp_type=None)
+
+    def _int_const(self, v: int = 0) -> ast.Constant:
+        return ast.Constant(value=ast.ConstInt(v))
+
+    def test_variadic_decl_resolves_without_error(self) -> None:
+        """A variadic forward declaration resolves successfully."""
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(self._int_const())),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
+        program = ast.Program(declarations=(ast.FunDecl(self._variadic_fn_decl()), ast.FunDecl(main)))
+        resolve(program)  # must not raise
+
+    def test_variadic_call_with_extra_args_resolves_without_error(self) -> None:
+        """Calling a variadic fn with more args than declared params is accepted."""
+        decl = self._variadic_fn_decl("printf")
+        call_stmt = ast.S(ast.Expression(self._call("printf", self._int_const(1), self._int_const(2))))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(call_stmt, ast.S(ast.Return(self._int_const()))),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
+        program = ast.Program(declarations=(ast.FunDecl(decl), ast.FunDecl(main)))
+        resolve(program)  # must not raise
+
+    def test_variadic_call_with_exact_args_resolves_without_error(self) -> None:
+        """Calling a variadic fn with exactly the declared arg count is also accepted."""
+        decl = self._variadic_fn_decl("printf")
+        call_stmt = ast.S(ast.Expression(self._call("printf", self._int_const(1))))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(call_stmt, ast.S(ast.Return(self._int_const()))),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
+        program = ast.Program(declarations=(ast.FunDecl(decl), ast.FunDecl(main)))
+        resolve(program)  # must not raise
+
+    def test_variadic_call_with_too_few_args_raises(self) -> None:
+        """Calling a variadic fn with fewer args than declared params raises ``SemanticError``."""
+        decl = self._variadic_fn_decl("printf")
+        call_stmt = ast.S(ast.Expression(self._call("printf")))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(call_stmt, ast.S(ast.Return(self._int_const()))),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
+        program = ast.Program(declarations=(ast.FunDecl(decl), ast.FunDecl(main)))
+        with pytest.raises(SemanticError):
+            resolve(program)
+
+    def test_non_variadic_call_still_enforces_exact_arg_count(self) -> None:
+        """Extra args to a non-variadic fn still raise ``SemanticError``."""
+        decl = ast.Function(
+            name="foo",
+            params=(ast.Parameter(param_type=ast.IntType(), name="x"),),
+            body=None,
+            fun_type=ast.FunType(params=(ast.IntType(),), ret=ast.IntType(), variadic=False),
+        )
+        call_stmt = ast.S(ast.Expression(self._call("foo", self._int_const(1), self._int_const(2))))
+        main = ast.Function(
+            name="main",
+            params=(),
+            body=(call_stmt, ast.S(ast.Return(self._int_const()))),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
+        program = ast.Program(declarations=(ast.FunDecl(decl), ast.FunDecl(main)))
+        with pytest.raises(SemanticError):
+            resolve(program)
+
+    def test_variadic_flag_preserved_in_symbol_table(self) -> None:
+        """After resolution, the symbol table entry for a variadic fn has ``FunType.variadic == True``."""
+        from compiler.semantic_analysis import SemanticAnalyser
+
+        analyser = SemanticAnalyser()
+        analyser._register_fun_declaration(self._variadic_fn_decl("printf"))
+        entry = analyser._symbol_table["printf"]
+        assert isinstance(entry.t, ast.FunType)
+        assert entry.t.variadic is True

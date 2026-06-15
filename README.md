@@ -66,6 +66,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Local and global variable declarations with optional initialisers
 - Compound initialisers for arrays and structs (`{ ... }`)
 - Function declarations and definitions (multiple per translation unit)
+- Variadic function declarations (`int printf(char *fmt, ...)`) — calling variadic functions is fully supported; System V AMD64 ABI `%al` register is set to the number of floating-point arguments used
 - Struct and union declarations and definitions
 - Storage classes: `static` and `extern`
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
@@ -78,6 +79,7 @@ The semantic analysis phase performs full name resolution and type checking:
 - C11 usual arithmetic conversions and pointer-compatibility rules
 - Linkage resolution for `static` and `extern` identifiers
 - `switch` validation: integer-only controlling expressions; no duplicate `case` values; no floating-point case labels
+- Variadic call sites: extra arguments beyond the declared parameters are type-checked individually; `va_list`/`va_start`/`va_arg`/`va_end` are not yet supported (Tier 2)
 
 ## Prerequisites
 

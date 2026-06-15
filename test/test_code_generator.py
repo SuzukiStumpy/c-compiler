@@ -3218,3 +3218,86 @@ class TestLongDoubleFuncall:
         call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Call))
         post_call = instrs[call_idx + 1 :]
         assert any(isinstance(i, asm.Fstpt) for i in post_call), "expected Fstpt after Call for ld return"
+
+
+# ---------------------------------------------------------------------------
+# Variadic call - %al register
+# ---------------------------------------------------------------------------
+
+
+class TestVariadicCallAlRegister:
+    """Calls to variadic functions must set ``%al`` = number of XMM args used."""
+
+    def _variadic_fn_st(self, name: str = "printf") -> SymbolTable:
+        """Return a symbol table marking *name* as a variadic function."""
+        from compiler.syntax.ast.types import FunType, IntType
+
+        return {
+            name: SymbolTableEntry(
+                t=FunType(params=(IntType(),), ret=IntType(), variadic=True),
+                attrs=__import__("compiler.types.symbols", fromlist=["FunAttr"]).FunAttr(defined=False, globl=True),
+            )
+        }
+
+    def _variadic_call_program(self, *args: tac.Val, name: str = "printf") -> tac.Program:
+        """Build a program that calls variadic *name* with the given args."""
+        return tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var(name),
+                            args=tuple(args),
+                            dst=tac.Var("result"),
+                        ),
+                        tac.Return(val=tac.Constant(value=ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+
+    def test_variadic_call_with_no_fp_args_sets_al_to_zero(self) -> None:
+        """Calling a variadic fn with no floating-point args emits ``movb $0, %al``."""
+        program = self._variadic_call_program(tac.Constant(ConstInt(42)), name="printf")
+        instrs = _fn_instructions_with_table(program, self._variadic_fn_st("printf"))
+        call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Call))
+        pre_call = instrs[:call_idx]
+        al_reg = asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)
+        al_movs = [i for i in pre_call if isinstance(i, asm.Mov) and i.dst == al_reg]
+        assert len(al_movs) == 1, "expected exactly one movb targeting %al before the call"
+        assert al_movs[0].src == asm.Imm(0), f"expected movb $0, %al but got {al_movs[0].src}"
+
+    def test_variadic_call_with_one_fp_arg_sets_al_to_one(self) -> None:
+        """Calling a variadic fn with one double arg emits ``movb $1, %al``."""
+        from compiler.syntax.ast.constants import ConstDouble
+
+        program = self._variadic_call_program(
+            tac.Constant(ConstInt(1)),
+            tac.Constant(ConstDouble(3.14)),
+            name="printf",
+        )
+        instrs = _fn_instructions_with_table(program, self._variadic_fn_st("printf"))
+        call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Call))
+        pre_call = instrs[:call_idx]
+        al_reg = asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)
+        al_movs = [i for i in pre_call if isinstance(i, asm.Mov) and i.dst == al_reg]
+        assert len(al_movs) == 1, "expected exactly one movb targeting %al before the call"
+        assert al_movs[0].src == asm.Imm(1), f"expected movb $1, %al but got {al_movs[0].src}"
+
+    def test_non_variadic_call_does_not_set_al(self) -> None:
+        """Calling a regular (non-variadic) fn must NOT emit a ``movb $N, %al``."""
+        from compiler.syntax.ast.types import FunType, IntType
+        from compiler.types.symbols import FunAttr
+
+        st: SymbolTable = {
+            "foo": SymbolTableEntry(
+                t=FunType(params=(IntType(),), ret=IntType(), variadic=False),
+                attrs=FunAttr(defined=False, globl=True),
+            )
+        }
+        program = self._variadic_call_program(tac.Constant(ConstInt(1)), name="foo")
+        instrs = _fn_instructions_with_table(program, st)
+        al_reg = asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)
+        al_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == al_reg]
+        assert not al_movs, "non-variadic call must not set %al"

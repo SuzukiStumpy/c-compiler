@@ -839,12 +839,15 @@ class FunctionBinding(NamedTuple):
         linkage: The linkage classification for this function.  Functions
             declared without ``static`` carry ``Linkage.EXTERNAL``; those
             declared with ``static`` carry ``Linkage.INTERNAL``.
+        variadic: ``True`` when the function accepts a variable number of
+            arguments after the declared parameters (C ``...`` ellipsis).
     """
 
     has_definition: bool
     param_types: tuple[ast.Type, ...]
     ret_type: ast.Type
     linkage: Linkage = Linkage.EXTERNAL
+    variadic: bool = False
 
 
 class StructureBinding(NamedTuple):
@@ -1139,8 +1142,12 @@ class SemanticAnalyser:
                 return Pointer(self._resolve_type(ref_t))
             case Array(element=elem_t, size=size):
                 return Array(self._resolve_type(elem_t), size)
-            case FunType(params=param_ts, ret=ret_t):
-                return FunType(tuple(self._resolve_type(pt) for pt in param_ts), self._resolve_type(ret_t))
+            case FunType(params=param_ts, ret=ret_t, variadic=variadic):
+                return FunType(
+                    tuple(self._resolve_type(pt) for pt in param_ts),
+                    self._resolve_type(ret_t),
+                    variadic=variadic,
+                )
             case _:
                 return t
 
@@ -1712,6 +1719,56 @@ class SemanticAnalyser:
                 raise SemanticError(f"Duplicate parameter name '{param.name}' in declaration of '{fun.name}'.")
             seen.add(param.name)
 
+    def _check_function_redeclaration_conflicts(
+        self,
+        fun: ast.Function,
+        existing: FunctionBinding,
+        new_param_types: tuple[Type, ...],
+        ret_type: Type,
+        new_variadic: bool,
+        new_linkage: Linkage,
+    ) -> None:
+        """Validate that a redeclaration of *fun.name* is consistent with the prior binding.
+
+        Raises ``SemanticError`` for any of:
+        - mismatched parameter types
+        - mismatched return type
+        - mismatched variadic flag
+        - mismatched linkage
+        - a second definition (body present in both)
+
+        Args:
+            fun: The new declaration or definition being processed.
+            existing: The prior ``FunctionBinding`` already in the function map.
+            new_param_types: The parameter types derived from the new declaration.
+            ret_type: The return type derived from the new declaration.
+            new_variadic: Whether the new declaration is variadic.
+            new_linkage: The linkage computed for the new declaration.
+
+        Raises:
+            SemanticError: On any signature or linkage conflict, or on redefinition.
+        """
+        if existing.param_types != new_param_types:
+            raise SemanticError(
+                f"Conflicting declarations of '{fun.name}': parameter types do not match prior declaration."
+            )
+        if existing.ret_type != ret_type:
+            raise SemanticError(
+                f"Conflicting declarations of '{fun.name}': return type does not match prior declaration."
+            )
+        if existing.variadic != new_variadic:
+            raise SemanticError(
+                f"Conflicting declarations of '{fun.name}': variadic signature does not match prior declaration."
+            )
+        if existing.linkage != new_linkage:
+            raise SemanticError(
+                f"'{fun.name}' previously declared with "
+                f"{'external' if existing.linkage == Linkage.EXTERNAL else 'internal'} linkage; "
+                f"cannot redeclare with {'internal' if new_linkage == Linkage.INTERNAL else 'external'} linkage."
+            )
+        if fun.body is not None and existing.has_definition:
+            raise SemanticError(f"Redefinition of function '{fun.name}'.")
+
     def _register_fun_declaration(self, fun: ast.Function) -> ast.Function:
         """Register a function declaration or definition in the program-wide function map.
 
@@ -1762,7 +1819,7 @@ class SemanticAnalyser:
         if any_adjusted:
             adjusted_param_types = tuple(p.param_type for p in adjusted_params)
             new_fun_type: Type = (
-                FunType(params=adjusted_param_types, ret=fun.fun_type.ret)
+                FunType(params=adjusted_param_types, ret=fun.fun_type.ret, variadic=fun.fun_type.variadic)
                 if isinstance(fun.fun_type, FunType)
                 else fun.fun_type
             )
@@ -1795,6 +1852,7 @@ class SemanticAnalyser:
             raise SemanticError(f"'{fun.name}' redeclared as a function but was previously declared as a variable.")
         new_param_types = tuple(p.param_type for p in fun.params)
         ret_type: Type = fun.fun_type.ret if isinstance(fun.fun_type, FunType) else IntType()
+        new_variadic: bool = fun.fun_type.variadic if isinstance(fun.fun_type, FunType) else False
         existing = self._function_map.get(fun.name)
         if fun.storage_class == StorageClass.Static:
             new_linkage = Linkage.INTERNAL
@@ -1803,28 +1861,16 @@ class SemanticAnalyser:
         else:
             new_linkage = Linkage.EXTERNAL
         if existing is not None:
-            if existing.param_types != new_param_types:
-                raise SemanticError(
-                    f"Conflicting declarations of '{fun.name}': parameter types do not match prior declaration."
-                )
-            if existing.ret_type != ret_type:
-                raise SemanticError(
-                    f"Conflicting declarations of '{fun.name}': return type does not match prior declaration."
-                )
-            if existing.linkage != new_linkage:
-                raise SemanticError(
-                    f"'{fun.name}' previously declared with "
-                    f"{'external' if existing.linkage == Linkage.EXTERNAL else 'internal'} linkage; "
-                    f"cannot redeclare with {'internal' if new_linkage == Linkage.INTERNAL else 'external'} linkage."
-                )
-            if fun.body is not None and existing.has_definition:
-                raise SemanticError(f"Redefinition of function '{fun.name}'.")
+            self._check_function_redeclaration_conflicts(
+                fun, existing, new_param_types, ret_type, new_variadic, new_linkage
+            )
             if fun.body is not None:
                 self._function_map[fun.name] = FunctionBinding(
                     has_definition=True,
                     param_types=new_param_types,
                     ret_type=ret_type,
                     linkage=new_linkage,
+                    variadic=new_variadic,
                 )
         else:
             self._function_map[fun.name] = FunctionBinding(
@@ -1832,6 +1878,7 @@ class SemanticAnalyser:
                 param_types=new_param_types,
                 ret_type=ret_type,
                 linkage=new_linkage,
+                variadic=new_variadic,
             )
         fun_globl = new_linkage == Linkage.EXTERNAL
         prior_sym = self._symbol_table.get(fun.name)
@@ -1839,7 +1886,7 @@ class SemanticAnalyser:
             isinstance(prior_sym.attrs, FunAttr) and prior_sym.attrs.defined if prior_sym is not None else False
         )
         self._symbol_table[fun.name] = SymbolTableEntry(
-            t=FunType(params=new_param_types, ret=ret_type),
+            t=FunType(params=new_param_types, ret=ret_type, variadic=new_variadic),
             attrs=FunAttr(defined=prior_defined or fun.body is not None, globl=fun_globl),
         )
         self._current_block_funs.add(fun.name)
@@ -2217,28 +2264,43 @@ class SemanticAnalyser:
                     fn_binding = self._function_map[fn_name]
                     typed_callee: ast.Exp = ast.Var(
                         fn_name,
-                        exp_type=FunType(params=fn_binding.param_types, ret=fn_binding.ret_type),
+                        exp_type=FunType(
+                            params=fn_binding.param_types,
+                            ret=fn_binding.ret_type,
+                            variadic=fn_binding.variadic,
+                        ),
                     )
                     param_types = fn_binding.param_types
                     fn_ret_type: Type = fn_binding.ret_type
+                    is_variadic_call = fn_binding.variadic
                 else:
                     typed_callee = self._typecheck_and_convert(callee)
                     callee_type = typed_callee.exp_type
                     if isinstance(callee_type, FunType):
                         param_types = callee_type.params
                         fn_ret_type = callee_type.ret
+                        is_variadic_call = callee_type.variadic
                     elif isinstance(callee_type, Pointer) and isinstance(callee_type.referenced, FunType):
                         param_types = callee_type.referenced.params
                         fn_ret_type = callee_type.referenced.ret
+                        is_variadic_call = callee_type.referenced.variadic
                     else:
                         raise SemanticError("Callee expression is not a function or function pointer.")
                 expected = len(param_types)
-                if len(args) != expected:
+                if is_variadic_call:
+                    if len(args) < expected:
+                        raise SemanticError(
+                            f"Variadic function called with {len(args)} argument(s) but requires at least {expected}."
+                        )
+                elif len(args) != expected:
                     raise SemanticError(f"Function called with {len(args)} argument(s) but declared with {expected}.")
                 typed_args = [
                     _convert_by_assignment(self._typecheck_and_convert(arg), param_type)
                     for arg, param_type in zip(args, param_types)
                 ]
+                # Extra args beyond declared params (variadic only) — typecheck without assignment conversion.
+                for extra_arg in args[expected:]:
+                    typed_args.append(self._typecheck_and_convert(extra_arg))
                 return ast.FunctionCall(typed_callee, typed_args, exp_type=fn_ret_type)
             case ast.Cast(target_type=target_type, exp=exp):
                 target_type = self._resolve_type(target_type)
@@ -2641,7 +2703,11 @@ class SemanticAnalyser:
                     unique_name = self._variable_map[name].unique_name
                 elif name in self._function_map:
                     fn_binding = self._function_map[name]
-                    fun_type = FunType(params=fn_binding.param_types, ret=fn_binding.ret_type)
+                    fun_type = FunType(
+                        params=fn_binding.param_types,
+                        ret=fn_binding.ret_type,
+                        variadic=fn_binding.variadic,
+                    )
                     return ast.Var(name, exp_type=Pointer(fun_type))
                 else:
                     raise SemanticError(f"Undeclared variable {name}!")

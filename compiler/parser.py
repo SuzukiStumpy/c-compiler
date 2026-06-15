@@ -824,36 +824,46 @@ class Parser:
 
         return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag), storage
 
-    def _parse_params(self) -> tuple[Parameter, ...]:
+    def _parse_params(self) -> tuple[tuple[Parameter, ...], bool]:
         """Parse the parameter list between the parentheses of a function declaration.
 
         Grammar::
 
-            param-list ::= "void" | "int" identifier {"," "int" identifier}
+            param-list ::= "void"
+                         | param {"," param} ["," "..."]
 
-        Handles three forms:
+        Handles four forms:
 
         * ``()`` - empty parameter list.
         * ``(void)`` - explicit "no parameters" marker; treated as empty.
         * ``("int" identifier {"," "int" identifier})`` - one or more typed parameters.
+        * ``("int" identifier {"," "int" identifier} "," "...")`` - variadic.
 
         Returns:
-            A tuple of zero or more ``Parameter`` nodes.
+            A ``(params, variadic)`` pair where ``params`` is a tuple of zero or more
+            ``Parameter`` nodes and ``variadic`` is ``True`` when a trailing ``...``
+            was found.
 
         Raises:
-            ParseError: If any parameter type or identifier is missing or malformed.
+            ParseError: If any parameter type or identifier is missing or malformed,
+                or if ``...`` appears without at least one preceding named parameter.
         """
         token = self._peek()
         if token is None or token.type == TokenType.RPAREN:
-            return ()
+            return (), False
         if token.type == TokenType.VOID and self._peek(1) is not None and self._peek(1).type == TokenType.RPAREN:  # type: ignore[union-attr]
             self._consume()
-            return ()
+            return (), False
+        if token.type == TokenType.ELLIPSIS:
+            raise self._token_error("'...' must follow at least one named parameter", token)
         params: list[Parameter] = [self._parse_param()]
         while self._match(TokenType.COMMA):
             self._consume()
+            if self._match(TokenType.ELLIPSIS):
+                self._consume()
+                return tuple(params), True
             params.append(self._parse_param())
-        return tuple(params)
+        return tuple(params), False
 
     def _parse_param(self) -> Parameter:
         """Parse a single typed parameter declaration.
@@ -955,12 +965,17 @@ class Parser:
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
 
         self._consume()  # consume "("
-        params = self._parse_params()
+        params, is_variadic = self._parse_params()
         self._expect(TokenType.RPAREN)
         param_types = tuple(p.param_type for p in params)
 
-        def _fun(t: Type, _st: Callable[[Type], Type] = simple_transform, _pt: tuple[Type, ...] = param_types) -> Type:
-            return _st(FunType(params=_pt, ret=t))
+        def _fun(
+            t: Type,
+            _st: Callable[[Type], Type] = simple_transform,
+            _pt: tuple[Type, ...] = param_types,
+            _v: bool = is_variadic,
+        ) -> Type:
+            return _st(FunType(params=_pt, ret=t, variadic=_v))
 
         return name, _fun, params
 
@@ -2219,12 +2234,17 @@ class Parser:
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
 
         self._consume()  # consume "("
-        params = self._parse_params()
+        params, is_variadic = self._parse_params()
         self._expect(TokenType.RPAREN)
         param_types = tuple(p.param_type for p in params)
 
-        def _fun(t: Type, _st: Callable[[Type], Type] = simple_transform, _pt: tuple[Type, ...] = param_types) -> Type:
-            return _st(FunType(params=_pt, ret=t))
+        def _fun(
+            t: Type,
+            _st: Callable[[Type], Type] = simple_transform,
+            _pt: tuple[Type, ...] = param_types,
+            _v: bool = is_variadic,
+        ) -> Type:
+            return _st(FunType(params=_pt, ret=t, variadic=_v))
 
         return name, _fun, params
 

@@ -1545,3 +1545,74 @@ class TestLongDoubleType:
         """``long double long`` is a parse error."""
         with pytest.raises(Exception):
             parse([_LONG, _DOUBLE_TOK, _LONG, _ident("x"), _SEMICOLON])
+
+
+class TestVariadicDeclarations:
+    """Parser recognises variadic parameter lists using the ``...`` ellipsis."""
+
+    def test_variadic_forward_declaration_sets_variadic_flag(self) -> None:
+        """``int foo(int x, ...)`` forward declaration has ``fun_type.variadic == True``."""
+        from test.parser.helpers import _tok
+
+        _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
+        tokens = [_INT, _ident("foo"), _LPAREN, _INT, _ident("x"), _COMMA, _ELLIPSIS, _RPAREN, _SEMICOLON]
+        prog = parse(tokens)
+        decl = prog.declarations[0]
+        assert isinstance(decl, FunDecl)
+        fd = decl.function_declaration
+        assert fd.fun_type.variadic is True
+
+    def test_variadic_forward_declaration_preserves_named_params(self) -> None:
+        """Named parameters before ``...`` are still captured."""
+        from test.parser.helpers import _tok
+
+        _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
+        tokens = [_INT, _ident("foo"), _LPAREN, _INT, _ident("x"), _COMMA, _ELLIPSIS, _RPAREN, _SEMICOLON]
+        prog = parse(tokens)
+        decl = prog.declarations[0]
+        assert isinstance(decl, FunDecl)
+        fd = decl.function_declaration
+        assert len(fd.params) == 1
+        assert fd.params[0].name == "x"
+
+    def test_non_variadic_declaration_has_variadic_false(self) -> None:
+        """A normal function declaration has ``fun_type.variadic == False``."""
+        tokens = [_INT, _ident("foo"), _LPAREN, _INT, _ident("x"), _RPAREN, _SEMICOLON]
+        prog = parse(tokens)
+        decl = prog.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.variadic is False
+
+    def test_variadic_definition_sets_variadic_flag(self) -> None:
+        """A variadic function definition also has ``fun_type.variadic == True``."""
+        from test.parser.helpers import _tok
+
+        _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _INT,
+            _ident("x"),
+            _COMMA,
+            _ELLIPSIS,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        prog = parse(tokens)
+        decl = prog.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.variadic is True
+
+    def test_ellipsis_only_allowed_after_at_least_one_named_param(self) -> None:
+        """``int foo(...)`` with no preceding named param raises ``ParseError``."""
+        from test.parser.helpers import _tok
+
+        _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
+        tokens = [_INT, _ident("foo"), _LPAREN, _ELLIPSIS, _RPAREN, _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)

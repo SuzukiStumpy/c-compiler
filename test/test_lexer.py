@@ -759,3 +759,17 @@ def test_llu_suffix_also_produces_ulonglong_token(preprocess_c_file: Preprocesso
     ull_tokens = [t for t in tokens if t.type == TokenType.ULONGLONG]
     assert ull_tokens, "expected ULONGLONG token for '123LLU'"
     assert ull_tokens[0].value == "123LLU"
+
+
+def test_ellipsis_produces_ellipsis_token(preprocess_c_file: Preprocessor) -> None:
+    """``...`` in a variadic parameter list is lexed as a single ``ELLIPSIS`` token."""
+    tokens = lexer(preprocess_c_file("valid/variadic_decl.c"))
+    ellipsis_tokens = [t for t in tokens if t.value == "..."]
+    assert len(ellipsis_tokens) == 1
+    assert ellipsis_tokens[0].type == TokenType.ELLIPSIS
+
+
+def test_ellipsis_not_lexed_as_three_period_tokens(preprocess_c_file: Preprocessor) -> None:
+    """``...`` must produce one ``ELLIPSIS`` token, not three ``PERIOD`` tokens."""
+    tokens = lexer(preprocess_c_file("valid/variadic_decl.c"))
+    assert not any(t.type == TokenType.PERIOD for t in tokens)
