@@ -8,7 +8,9 @@ at the semantic analysis stage with a ``SemanticError``, and that
 import pytest
 
 import compiler.syntax.ast as ast
-from compiler.semantic_analysis import resolve
+from compiler.semantic_analysis import get_common_type, is_arithmetic, is_integer, resolve, type_alignment, type_size
+from compiler.syntax.ast.constants import ConstFloat, ConstLongDouble, ConstLongLong, ConstULongLong
+from compiler.syntax.ast.types import LongDoubleType
 from compiler.utils.exceptions import SemanticError
 from test.semantic_analysis.helpers import _make_prog, _program, _vd
 
@@ -461,61 +463,43 @@ class TestShortTypeSizes:
 
     def test_sizeof_short_is_2(self) -> None:
         """``sizeof(short)`` evaluates to 2."""
-        from compiler.semantic_analysis import type_size
-
         assert type_size(ast.ShortType(), {}) == 2
 
     def test_sizeof_unsigned_short_is_2(self) -> None:
         """``sizeof(unsigned short)`` evaluates to 2."""
-        from compiler.semantic_analysis import type_size
-
         assert type_size(ast.UShortType(), {}) == 2
 
     def test_short_is_arithmetic(self) -> None:
         """``ShortType`` is classified as arithmetic and integer."""
-        from compiler.semantic_analysis import is_arithmetic, is_integer
-
         assert is_arithmetic(ast.ShortType())
         assert is_integer(ast.ShortType())
 
     def test_unsigned_short_is_arithmetic(self) -> None:
         """``UShortType`` is classified as arithmetic and integer."""
-        from compiler.semantic_analysis import is_arithmetic, is_integer
-
         assert is_arithmetic(ast.UShortType())
         assert is_integer(ast.UShortType())
 
     def test_short_promotes_to_int_in_arithmetic(self) -> None:
         """``short + short`` resolves with ``IntType`` result (integer promotion)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.ShortType(), ast.ShortType())
         assert result == ast.IntType()
 
     def test_unsigned_short_promotes_to_int_in_arithmetic(self) -> None:
         """``unsigned short + unsigned short`` resolves with ``IntType`` (promotion)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.UShortType(), ast.UShortType())
         assert result == ast.IntType()
 
     def test_short_plus_int_gives_int(self) -> None:
         """``short + int`` resolves to ``IntType`` (short promotes to int)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.ShortType(), ast.IntType())
         assert result == ast.IntType()
 
     def test_short_alignment_is_2(self) -> None:
         """Alignment of ``short`` is 2 bytes."""
-        from compiler.semantic_analysis import type_alignment
-
         assert type_alignment(ast.ShortType(), {}) == 2
 
     def test_unsigned_short_alignment_is_2(self) -> None:
         """Alignment of ``unsigned short`` is 2 bytes."""
-        from compiler.semantic_analysis import type_alignment
-
         assert type_alignment(ast.UShortType(), {}) == 2
 
     def test_short_variable_is_accepted(self) -> None:
@@ -534,53 +518,37 @@ class TestInt128TypeSizes:
 
     def test_sizeof_int128_is_16(self) -> None:
         """``sizeof(__int128)`` evaluates to 16."""
-        from compiler.semantic_analysis import type_size
-
         assert type_size(ast.Int128Type(), {}) == 16
 
     def test_sizeof_unsigned_int128_is_16(self) -> None:
         """``sizeof(unsigned __int128)`` evaluates to 16."""
-        from compiler.semantic_analysis import type_size
-
         assert type_size(ast.UInt128Type(), {}) == 16
 
     def test_int128_is_arithmetic(self) -> None:
         """``Int128Type`` is classified as arithmetic and integer."""
-        from compiler.semantic_analysis import is_arithmetic, is_integer
-
         assert is_arithmetic(ast.Int128Type())
         assert is_integer(ast.Int128Type())
 
     def test_unsigned_int128_is_arithmetic(self) -> None:
         """``UInt128Type`` is classified as arithmetic and integer."""
-        from compiler.semantic_analysis import is_arithmetic, is_integer
-
         assert is_arithmetic(ast.UInt128Type())
         assert is_integer(ast.UInt128Type())
 
     def test_int128_alignment_is_16(self) -> None:
         """Alignment of ``__int128`` is 16 bytes per SysV AMD64 ABI."""
-        from compiler.semantic_analysis import type_alignment
-
         assert type_alignment(ast.Int128Type(), {}) == 16
 
     def test_unsigned_int128_alignment_is_16(self) -> None:
         """Alignment of ``unsigned __int128`` is 16 bytes per SysV AMD64 ABI."""
-        from compiler.semantic_analysis import type_alignment
-
         assert type_alignment(ast.UInt128Type(), {}) == 16
 
     def test_int128_common_type_signed_wins_if_equal_size(self) -> None:
         """``__int128 + unsigned __int128`` gives ``unsigned __int128`` (C usual arithmetic)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.Int128Type(), ast.UInt128Type())
         assert result == ast.UInt128Type()
 
     def test_int128_wider_than_long(self) -> None:
         """``__int128 + long`` gives ``__int128`` (wider wins)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.Int128Type(), ast.LongType())
         assert result == ast.Int128Type()
 
@@ -600,74 +568,52 @@ class TestLongLongTypeSizes:
 
     def test_sizeof_long_long_is_8(self) -> None:
         """``sizeof(long long)`` evaluates to 8."""
-        from compiler.semantic_analysis import type_size
-
         assert type_size(ast.LongLongType(), {}) == 8
 
     def test_sizeof_unsigned_long_long_is_8(self) -> None:
         """``sizeof(unsigned long long)`` evaluates to 8."""
-        from compiler.semantic_analysis import type_size
-
         assert type_size(ast.ULongLongType(), {}) == 8
 
     def test_long_long_is_arithmetic(self) -> None:
         """``LongLongType`` is classified as arithmetic and integer."""
-        from compiler.semantic_analysis import is_arithmetic, is_integer
-
         assert is_arithmetic(ast.LongLongType())
         assert is_integer(ast.LongLongType())
 
     def test_unsigned_long_long_is_arithmetic(self) -> None:
         """``ULongLongType`` is classified as arithmetic and integer."""
-        from compiler.semantic_analysis import is_arithmetic, is_integer
-
         assert is_arithmetic(ast.ULongLongType())
         assert is_integer(ast.ULongLongType())
 
     def test_long_long_alignment_is_8(self) -> None:
         """Alignment of ``long long`` is 8 bytes."""
-        from compiler.semantic_analysis import type_alignment
-
         assert type_alignment(ast.LongLongType(), {}) == 8
 
     def test_unsigned_long_long_alignment_is_8(self) -> None:
         """Alignment of ``unsigned long long`` is 8 bytes."""
-        from compiler.semantic_analysis import type_alignment
-
         assert type_alignment(ast.ULongLongType(), {}) == 8
 
     def test_long_long_plus_long_long_gives_long_long(self) -> None:
         """``long long + long long`` resolves to ``LongLongType`` (same rank)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.LongLongType(), ast.LongLongType())
         assert result == ast.LongLongType()
 
     def test_unsigned_long_long_plus_long_long_gives_unsigned(self) -> None:
         """``unsigned long long + long long`` gives ``ULongLongType`` (unsigned wins)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.ULongLongType(), ast.LongLongType())
         assert result == ast.ULongLongType()
 
     def test_long_long_plus_int_gives_long_long(self) -> None:
         """``long long + int`` resolves to ``LongLongType`` (wider wins)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.LongLongType(), ast.IntType())
         assert result == ast.LongLongType()
 
     def test_long_long_variable_is_accepted(self) -> None:
         """A local ``long long`` variable declaration resolves without error."""
-        from compiler.syntax.ast.constants import ConstLongLong
-
         body = (_vd("x", ast.Constant(ConstLongLong(0)), ast.LongLongType()),) + _return_exp(_int_const())
         resolve(_program(body))  # must not raise
 
     def test_unsigned_long_long_variable_is_accepted(self) -> None:
         """A local ``unsigned long long`` variable declaration resolves without error."""
-        from compiler.syntax.ast.constants import ConstULongLong
-
         body = (_vd("x", ast.Constant(ConstULongLong(0)), ast.ULongLongType()),) + _return_exp(_int_const())
         resolve(_program(body))  # must not raise
 
@@ -677,36 +623,26 @@ class TestFloatType:
 
     def test_float_variable_is_accepted(self) -> None:
         """A local ``float`` variable declaration resolves without error."""
-        from compiler.syntax.ast.constants import ConstFloat
-
         body = (_vd("x", ast.Constant(ConstFloat(0.0)), ast.FloatType()),) + _return_exp(_int_const())
         resolve(_program(body))
 
     def test_float_plus_float_gives_float(self) -> None:
         """``float + float`` common type is ``FloatType``."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.FloatType(), ast.FloatType())
         assert result == ast.FloatType()
 
     def test_float_plus_double_gives_double(self) -> None:
         """``float + double`` common type is ``DoubleType`` (double is wider)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.FloatType(), ast.DoubleType())
         assert result == ast.DoubleType()
 
     def test_double_plus_float_gives_double(self) -> None:
         """``double + float`` common type is ``DoubleType``."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.DoubleType(), ast.FloatType())
         assert result == ast.DoubleType()
 
     def test_float_is_not_integer_type(self) -> None:
         """``FloatType`` is rejected by bitwise operators (not an integer type)."""
-        from compiler.syntax.ast.constants import ConstFloat
-
         float_const = ast.Constant(value=ConstFloat(1.0))
         prog = _program(_return_exp(ast.Unary(ast.Complement(), float_const)))
         with pytest.raises(SemanticError, match="integer operand"):
@@ -714,8 +650,6 @@ class TestFloatType:
 
     def test_float_plus_int_gives_float(self) -> None:
         """``float + int`` common type is ``FloatType`` (float is wider than int)."""
-        from compiler.semantic_analysis import get_common_type
-
         result = get_common_type(ast.FloatType(), ast.IntType())
         assert result == ast.FloatType()
 
@@ -725,61 +659,37 @@ class TestLongDoubleType:
 
     def test_long_double_size_is_16(self) -> None:
         """``sizeof(long double)`` returns 16 on x86-64 Linux."""
-        from compiler.semantic_analysis import type_size
-        from compiler.syntax.ast.types import LongDoubleType
-
         assert type_size(LongDoubleType(), {}) == 16
 
     def test_long_double_alignment_is_16(self) -> None:
         """``long double`` has 16-byte alignment on x86-64 Linux."""
-        from compiler.semantic_analysis import type_alignment
-        from compiler.syntax.ast.types import LongDoubleType
-
         assert type_alignment(LongDoubleType(), {}) == 16
 
     def test_long_double_is_arithmetic(self) -> None:
         """``LongDoubleType`` is an arithmetic type."""
-        from compiler.semantic_analysis import is_arithmetic
-        from compiler.syntax.ast.types import LongDoubleType
-
         assert is_arithmetic(LongDoubleType())
 
     def test_long_double_is_not_integer(self) -> None:
         """``LongDoubleType`` is not an integer type."""
-        from compiler.semantic_analysis import is_integer
-        from compiler.syntax.ast.types import LongDoubleType
-
         assert not is_integer(LongDoubleType())
 
     def test_long_double_plus_double_gives_long_double(self) -> None:
         """``long double + double`` common type is ``LongDoubleType``."""
-        from compiler.semantic_analysis import get_common_type
-        from compiler.syntax.ast.types import LongDoubleType
-
         result = get_common_type(LongDoubleType(), ast.DoubleType())
         assert result == LongDoubleType()
 
     def test_long_double_plus_float_gives_long_double(self) -> None:
         """``long double + float`` common type is ``LongDoubleType``."""
-        from compiler.semantic_analysis import get_common_type
-        from compiler.syntax.ast.types import LongDoubleType
-
         result = get_common_type(LongDoubleType(), ast.FloatType())
         assert result == LongDoubleType()
 
     def test_long_double_plus_int_gives_long_double(self) -> None:
         """``long double + int`` common type is ``LongDoubleType``."""
-        from compiler.semantic_analysis import get_common_type
-        from compiler.syntax.ast.types import LongDoubleType
-
         result = get_common_type(LongDoubleType(), ast.IntType())
         assert result == LongDoubleType()
 
     def test_long_double_is_not_integer_so_bitwise_complement_raises(self) -> None:
         """Applying ``~`` to ``long double`` raises ``SemanticError``."""
-        from compiler.syntax.ast.constants import ConstLongDouble
-        from compiler.syntax.ast.types import LongDoubleType
-
         ld_const = ast.Constant(value=ConstLongDouble(1.0), exp_type=LongDoubleType())
         prog = _program(_return_exp(ast.Unary(ast.Complement(), ld_const)))
         with pytest.raises(SemanticError, match="integer operand"):

@@ -29,12 +29,24 @@ from compiler.syntax.ast import (
     VarDecl,
     VariableDeclaration,
 )
+from compiler.syntax.ast.constants import ConstFloat, ConstLongDouble, ConstLongLong, ConstULongLong
 from compiler.syntax.ast.expressions import Binary, Var  # noqa: F401
 from compiler.syntax.ast.operators import Add, PostIncrement
+from compiler.syntax.ast.types import (
+    FloatType,
+    Int128Type,
+    LongDoubleType,
+    LongLongType,
+    ShortType,
+    UInt128Type,
+    ULongLongType,
+    UShortType,
+)
 from compiler.types.tokens import TokenType
 from compiler.utils.exceptions import ParseError
 from test.parser.helpers import (
     _ASSIGNMENT,
+    _ASTERISK,
     _CHAR,
     _COMMA,
     _EXTERN,
@@ -590,8 +602,6 @@ class TestLongTypeSpecifiers:
 
     def test_long_variable_declaration(self) -> None:
         """``long x;`` -> ``VarDecl`` with ``var_type=LongType()``."""
-        from test.parser.helpers import _LONG
-
         tokens = [_LONG, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -600,8 +610,6 @@ class TestLongTypeSpecifiers:
 
     def test_long_int_variable_declaration(self) -> None:
         """``long int x;`` -> ``VarDecl`` with ``var_type=LongType()`` - C standard combination."""
-        from test.parser.helpers import _LONG
-
         tokens = [_LONG, _INT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -610,8 +618,6 @@ class TestLongTypeSpecifiers:
 
     def test_int_long_variable_declaration(self) -> None:
         """``int long x;`` -> ``VarDecl`` with ``var_type=LongType()`` - specifiers in either order."""
-        from test.parser.helpers import _LONG
-
         tokens = [_INT, _LONG, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -620,8 +626,6 @@ class TestLongTypeSpecifiers:
 
     def test_long_variable_with_storage_class(self) -> None:
         """``static long x;`` - storage class and ``long`` type are both recorded."""
-        from test.parser.helpers import _LONG
-
         tokens = [_STATIC, _LONG, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -632,8 +636,6 @@ class TestLongTypeSpecifiers:
 
     def test_long_function_return_type(self) -> None:
         """``long foo(void);`` -> forward declaration with ``LongType`` return."""
-        from test.parser.helpers import _LONG
-
         tokens = [_LONG, _ident("foo"), _LPAREN, _VOID, _RPAREN, _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -644,8 +646,6 @@ class TestLongTypeSpecifiers:
 
     def test_long_parameter(self) -> None:
         """``int foo(long x) {}`` - parameter has ``param_type=LongType()``."""
-        from test.parser.helpers import _LONG
-
         tokens = [_INT, _ident("foo"), _LPAREN, _LONG, _ident("x"), _RPAREN, _LBRACE, _RBRACE]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -654,8 +654,6 @@ class TestLongTypeSpecifiers:
 
     def test_long_int_parameter(self) -> None:
         """``int foo(long int x) {}`` - ``long int`` parameter resolves to ``LongType``."""
-        from test.parser.helpers import _LONG
-
         tokens = [_INT, _ident("foo"), _LPAREN, _LONG, _INT, _ident("x"), _RPAREN, _LBRACE, _RBRACE]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -672,8 +670,6 @@ class TestLongTypeSpecifiers:
 # ---------------------------------------------------------------------------
 # Pointer declarators
 # ---------------------------------------------------------------------------
-
-from test.parser.helpers import _ASTERISK  # noqa: E402
 
 
 class TestPointerVariableDeclarations:
@@ -1088,8 +1084,6 @@ class TestShortTypes:
 
     def test_short_variable_declaration(self) -> None:
         """``short x;`` at file scope produces a ``ShortType`` variable."""
-        from compiler.syntax.ast.types import ShortType
-
         tokens = [_SHORT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1098,8 +1092,6 @@ class TestShortTypes:
 
     def test_short_int_variable_declaration(self) -> None:
         """``short int x;`` is equivalent to ``short x;``."""
-        from compiler.syntax.ast.types import ShortType
-
         tokens = [_SHORT, _INT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1108,8 +1100,6 @@ class TestShortTypes:
 
     def test_signed_short_variable_declaration(self) -> None:
         """``signed short x;`` produces a ``ShortType`` variable."""
-        from compiler.syntax.ast.types import ShortType
-
         tokens = [_SIGNED, _SHORT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1118,8 +1108,6 @@ class TestShortTypes:
 
     def test_unsigned_short_variable_declaration(self) -> None:
         """``unsigned short x;`` produces a ``UShortType`` variable."""
-        from compiler.syntax.ast.types import UShortType
-
         tokens = [_UNSIGNED, _SHORT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1128,8 +1116,6 @@ class TestShortTypes:
 
     def test_unsigned_short_int_variable_declaration(self) -> None:
         """``unsigned short int x;`` produces a ``UShortType`` variable."""
-        from compiler.syntax.ast.types import UShortType
-
         tokens = [_UNSIGNED, _SHORT, _INT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1138,8 +1124,6 @@ class TestShortTypes:
 
     def test_short_return_type(self) -> None:
         """``short foo(void) { return 0; }`` parses with a ``ShortType`` return."""
-        from compiler.syntax.ast.types import ShortType
-
         tokens = [_SHORT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1148,8 +1132,6 @@ class TestShortTypes:
 
     def test_short_parameter(self) -> None:
         """``int foo(short x) { ... }`` has a ``ShortType`` parameter."""
-        from compiler.syntax.ast.types import ShortType
-
         tokens = [
             _INT,
             _ident("foo"),
@@ -1185,8 +1167,6 @@ class TestInt128Types:
 
     def test_int128_variable_declaration(self) -> None:
         """``__int128 x;`` at file scope produces an ``Int128Type`` variable."""
-        from compiler.syntax.ast.types import Int128Type
-
         tokens = [_INT128, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1195,8 +1175,6 @@ class TestInt128Types:
 
     def test_unsigned_int128_variable_declaration(self) -> None:
         """``unsigned __int128 x;`` produces a ``UInt128Type`` variable."""
-        from compiler.syntax.ast.types import UInt128Type
-
         tokens = [_UNSIGNED, _INT128, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1205,8 +1183,6 @@ class TestInt128Types:
 
     def test_signed_int128_variable_declaration(self) -> None:
         """``signed __int128 x;`` is equivalent to ``__int128 x;``."""
-        from compiler.syntax.ast.types import Int128Type
-
         tokens = [_SIGNED, _INT128, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1215,8 +1191,6 @@ class TestInt128Types:
 
     def test_int128_return_type(self) -> None:
         """``__int128 foo(void) { ... }`` parses with ``Int128Type`` return."""
-        from compiler.syntax.ast.types import Int128Type
-
         tokens = [
             _INT128,
             _ident("foo"),
@@ -1257,8 +1231,6 @@ class TestLongLongTypes:
 
     def test_long_long_variable_declaration(self) -> None:
         """``long long x;`` at file scope produces a ``LongLongType`` variable."""
-        from compiler.syntax.ast.types import LongLongType
-
         tokens = [_LONG, _LONG, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1267,8 +1239,6 @@ class TestLongLongTypes:
 
     def test_long_long_int_variable_declaration(self) -> None:
         """``long long int x;`` is equivalent to ``long long x;``."""
-        from compiler.syntax.ast.types import LongLongType
-
         tokens = [_LONG, _LONG, _INT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1277,8 +1247,6 @@ class TestLongLongTypes:
 
     def test_signed_long_long_variable_declaration(self) -> None:
         """``signed long long x;`` produces a ``LongLongType`` variable."""
-        from compiler.syntax.ast.types import LongLongType
-
         tokens = [_SIGNED, _LONG, _LONG, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1287,8 +1255,6 @@ class TestLongLongTypes:
 
     def test_unsigned_long_long_variable_declaration(self) -> None:
         """``unsigned long long x;`` produces a ``ULongLongType`` variable."""
-        from compiler.syntax.ast.types import ULongLongType
-
         tokens = [_UNSIGNED, _LONG, _LONG, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1297,8 +1263,6 @@ class TestLongLongTypes:
 
     def test_unsigned_long_long_int_variable_declaration(self) -> None:
         """``unsigned long long int x;`` produces a ``ULongLongType`` variable."""
-        from compiler.syntax.ast.types import ULongLongType
-
         tokens = [_UNSIGNED, _LONG, _LONG, _INT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1307,8 +1271,6 @@ class TestLongLongTypes:
 
     def test_long_long_return_type(self) -> None:
         """``long long foo(void) { ... }`` parses with ``LongLongType`` return."""
-        from compiler.syntax.ast.types import LongLongType
-
         tokens = [
             _LONG,
             _LONG,
@@ -1329,8 +1291,6 @@ class TestLongLongTypes:
 
     def test_long_long_param_type(self) -> None:
         """``int foo(long long x) { ... }`` parses with ``LongLongType`` parameter."""
-        from compiler.syntax.ast.types import LongLongType
-
         tokens = [
             _INT,
             _ident("foo"),
@@ -1358,9 +1318,6 @@ class TestLongLongTypes:
 
     def test_ll_literal_produces_const_long_long(self) -> None:
         """``42LL`` parses as ``ConstLongLong(42)`` with ``LongLongType``."""
-        from compiler.syntax.ast.constants import ConstLongLong
-        from compiler.syntax.ast.types import LongLongType
-
         ll_tok = _tok(TokenType.LONGLONG, "42LL")
         exp = _parsed_exp(ll_tok)
         assert isinstance(exp, Constant)
@@ -1369,9 +1326,6 @@ class TestLongLongTypes:
 
     def test_ull_literal_produces_const_ulong_long(self) -> None:
         """``42ULL`` parses as ``ConstULongLong(42)`` with ``ULongLongType``."""
-        from compiler.syntax.ast.constants import ConstULongLong
-        from compiler.syntax.ast.types import ULongLongType
-
         ull_tok = _tok(TokenType.ULONGLONG, "42ULL")
         exp = _parsed_exp(ull_tok)
         assert isinstance(exp, Constant)
@@ -1391,8 +1345,6 @@ class TestFloatType:
 
     def test_float_variable_declaration(self) -> None:
         """``float x;`` at file scope produces a ``FloatType`` variable."""
-        from compiler.syntax.ast.types import FloatType
-
         tokens = [_FLOAT, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1401,8 +1353,6 @@ class TestFloatType:
 
     def test_float_return_type(self) -> None:
         """``float foo(void) { return 0; }`` parses with a ``FloatType`` return."""
-        from compiler.syntax.ast.types import FloatType
-
         tokens = [_FLOAT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1411,8 +1361,6 @@ class TestFloatType:
 
     def test_float_parameter(self) -> None:
         """``int foo(float x) { ... }`` has a ``FloatType`` parameter."""
-        from compiler.syntax.ast.types import FloatType
-
         tokens = [
             _INT,
             _ident("foo"),
@@ -1433,9 +1381,6 @@ class TestFloatType:
 
     def test_float_literal_produces_const_float(self) -> None:
         """``1.5f`` parses as ``ConstFloat(1.5)`` with ``FloatType``."""
-        from compiler.syntax.ast.constants import ConstFloat
-        from compiler.syntax.ast.types import FloatType
-
         fp_tok = _tok(TokenType.FPFLOAT, "1.5f")
         exp = _parsed_exp(fp_tok)
         assert isinstance(exp, Constant)
@@ -1444,9 +1389,6 @@ class TestFloatType:
 
     def test_float_exponent_literal_produces_const_float(self) -> None:
         """``1e5F`` parses as ``ConstFloat(1e5)`` with ``FloatType``."""
-        from compiler.syntax.ast.constants import ConstFloat
-        from compiler.syntax.ast.types import FloatType
-
         fp_tok = _tok(TokenType.FPFLOAT, "1e5F")
         exp = _parsed_exp(fp_tok)
         assert isinstance(exp, Constant)
@@ -1466,8 +1408,6 @@ class TestLongDoubleType:
 
     def test_long_double_variable_declaration(self) -> None:
         """``long double x;`` at file scope produces a ``LongDoubleType`` variable."""
-        from compiler.syntax.ast.types import LongDoubleType
-
         tokens = [_LONG, _DOUBLE_TOK, _ident("x"), _SEMICOLON]
         result = parse(tokens)
         decl = result.declarations[0]
@@ -1476,8 +1416,6 @@ class TestLongDoubleType:
 
     def test_long_double_return_type(self) -> None:
         """``long double foo(void) { return 0; }`` parses with ``LongDoubleType`` return."""
-        from compiler.syntax.ast.types import LongDoubleType
-
         tokens = [
             _LONG,
             _DOUBLE_TOK,
@@ -1498,8 +1436,6 @@ class TestLongDoubleType:
 
     def test_long_double_parameter(self) -> None:
         """``int foo(long double x) { ... }`` has a ``LongDoubleType`` parameter."""
-        from compiler.syntax.ast.types import LongDoubleType
-
         tokens = [
             _INT,
             _ident("foo"),
@@ -1521,9 +1457,6 @@ class TestLongDoubleType:
 
     def test_long_double_literal_produces_const_long_double(self) -> None:
         """``1.5L`` parses as ``ConstLongDouble(1.5)`` with ``LongDoubleType``."""
-        from compiler.syntax.ast.constants import ConstLongDouble
-        from compiler.syntax.ast.types import LongDoubleType
-
         fp_tok = _tok(TokenType.FPLONGDOUBLE, "1.5L")
         exp = _parsed_exp(fp_tok)
         assert isinstance(exp, Constant)
@@ -1532,9 +1465,6 @@ class TestLongDoubleType:
 
     def test_long_double_exponent_literal_produces_const_long_double(self) -> None:
         """``1e5l`` parses as ``ConstLongDouble(1e5)`` with ``LongDoubleType``."""
-        from compiler.syntax.ast.constants import ConstLongDouble
-        from compiler.syntax.ast.types import LongDoubleType
-
         fp_tok = _tok(TokenType.FPLONGDOUBLE, "1e5l")
         exp = _parsed_exp(fp_tok)
         assert isinstance(exp, Constant)
@@ -1552,8 +1482,6 @@ class TestVariadicDeclarations:
 
     def test_variadic_forward_declaration_sets_variadic_flag(self) -> None:
         """``int foo(int x, ...)`` forward declaration has ``fun_type.variadic == True``."""
-        from test.parser.helpers import _tok
-
         _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
         tokens = [_INT, _ident("foo"), _LPAREN, _INT, _ident("x"), _COMMA, _ELLIPSIS, _RPAREN, _SEMICOLON]
         prog = parse(tokens)
@@ -1564,8 +1492,6 @@ class TestVariadicDeclarations:
 
     def test_variadic_forward_declaration_preserves_named_params(self) -> None:
         """Named parameters before ``...`` are still captured."""
-        from test.parser.helpers import _tok
-
         _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
         tokens = [_INT, _ident("foo"), _LPAREN, _INT, _ident("x"), _COMMA, _ELLIPSIS, _RPAREN, _SEMICOLON]
         prog = parse(tokens)
@@ -1585,8 +1511,6 @@ class TestVariadicDeclarations:
 
     def test_variadic_definition_sets_variadic_flag(self) -> None:
         """A variadic function definition also has ``fun_type.variadic == True``."""
-        from test.parser.helpers import _tok
-
         _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
         tokens = [
             _INT,
@@ -1610,8 +1534,6 @@ class TestVariadicDeclarations:
 
     def test_ellipsis_only_allowed_after_at_least_one_named_param(self) -> None:
         """``int foo(...)`` with no preceding named param raises ``ParseError``."""
-        from test.parser.helpers import _tok
-
         _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
         tokens = [_INT, _ident("foo"), _LPAREN, _ELLIPSIS, _RPAREN, _SEMICOLON]
         with pytest.raises(ParseError):

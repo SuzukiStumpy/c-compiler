@@ -10,7 +10,10 @@ import compiler.syntax.tac as tac
 from compiler.optimiser import do_optimization
 from compiler.optimiser.cfg import ControlFlowGraph, cfg_to_instructions, make_control_flow_graph
 from compiler.optimiser.tac_main import optimize_function
+from compiler.syntax.ast.constants import ConstInt, ConstUInt, ConstULong
+from compiler.syntax.ast.types import IntType, UIntType, ULongType
 from compiler.types.optimizations import Optimizations
+from compiler.types.symbols import LocalAttr, SymbolTableEntry
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -345,8 +348,6 @@ class TestDoOptimization:
 
     def test_static_variable_passes_through_unchanged(self) -> None:
         """``StaticVariable`` entries are not passed to ``optimize_function``."""
-        from compiler.syntax.ast.types import IntType
-
         sv = tac.StaticVariable(name="x", globl=False, t=IntType(), init=(tac.IntInit(0),))
         program = tac.Program(top_level=(sv,))
         result = do_optimization(program, _ALL_OPT)
@@ -354,8 +355,6 @@ class TestDoOptimization:
 
     def test_static_constant_passes_through_unchanged(self) -> None:
         """``StaticConstant`` entries are not passed to ``optimize_function``."""
-        from compiler.syntax.ast.types import IntType
-
         sc = tac.StaticConstant(name="k", t=IntType(), init=tac.IntInit(42))
         program = tac.Program(top_level=(sc,))
         result = do_optimization(program, _ALL_OPT)
@@ -363,8 +362,6 @@ class TestDoOptimization:
 
     def test_mixed_program_preserves_order(self) -> None:
         """A program mixing functions and static variables keeps its top-level order."""
-        from compiler.syntax.ast.types import IntType
-
         fn = _function((tac.Return(val=_const(1)),))
         sv = tac.StaticVariable(name="g", globl=True, t=IntType(), init=(tac.IntInit(0),))
         program = tac.Program(top_level=(fn, sv))
@@ -402,10 +399,6 @@ class TestFoldCopyConstantNormalization:
         Without normalisation, the signedness mismatch blocks CP and the Copy
         survives in the output.
         """
-        from compiler.syntax.ast.constants import ConstUInt
-        from compiler.syntax.ast.types import UIntType
-        from compiler.types.symbols import LocalAttr, SymbolTableEntry
-
         sym: dict[str, SymbolTableEntry] = {
             "u": SymbolTableEntry(t=UIntType(), attrs=LocalAttr()),
         }
@@ -423,10 +416,6 @@ class TestFoldCopyConstantNormalization:
 
         Simulates ``unsigned long u = (unsigned long)(-1L); return u;``.
         """
-        from compiler.syntax.ast.constants import ConstULong
-        from compiler.syntax.ast.types import ULongType
-        from compiler.types.symbols import LocalAttr, SymbolTableEntry
-
         sym: dict[str, SymbolTableEntry] = {
             "u": SymbolTableEntry(t=ULongType(), attrs=LocalAttr()),
         }
@@ -442,10 +431,6 @@ class TestFoldCopyConstantNormalization:
 
         Simulates ``int i = (int)(0xFFFFFFFF); return i;``.
         """
-        from compiler.syntax.ast.constants import ConstInt
-        from compiler.syntax.ast.types import IntType
-        from compiler.types.symbols import LocalAttr, SymbolTableEntry
-
         sym: dict[str, SymbolTableEntry] = {
             "i": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
         }

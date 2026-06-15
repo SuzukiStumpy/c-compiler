@@ -6,7 +6,7 @@ or TAC generator.
 """
 
 import compiler.syntax.tac as tac
-from compiler.optimiser.cfg import make_control_flow_graph
+from compiler.optimiser.cfg import ControlFlowGraph, make_control_flow_graph
 from compiler.optimiser.copy_propagation import (
     _replace_operand,
     _rewrite_instruction,
@@ -366,8 +366,6 @@ class TestCopyPropagation:
 
     def test_empty_cfg_is_a_no_op(self) -> None:
         """An empty CFG is returned unchanged without error."""
-        from compiler.optimiser.cfg import ControlFlowGraph
-
         cfg: ControlFlowGraph[tac.Instruction] = ControlFlowGraph(
             name="f", globl=False, params=(), blocks=[], source_file="", source_line=0
         )

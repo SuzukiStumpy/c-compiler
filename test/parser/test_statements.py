@@ -32,7 +32,7 @@ from compiler.syntax.ast import (
     VariableDeclaration,
     While,
 )
-from compiler.syntax.ast.expressions import Binary, Unary, Var
+from compiler.syntax.ast.expressions import Assignment, Binary, Unary, Var
 from compiler.syntax.ast.operators import Add, GreaterThan, LessThan, PostIncrement
 from compiler.utils.exceptions import ParseError
 from test.parser.helpers import (
@@ -698,8 +698,6 @@ class TestForStatements:
 
     def test_for_with_expression_init(self) -> None:
         """``for (i = 0; i < 10; i++) ;`` - expression init clause."""
-        from compiler.syntax.ast.expressions import Assignment
-
         result = _parsed_stmt(
             _FOR,
             _LPAREN,

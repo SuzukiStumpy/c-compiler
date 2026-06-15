@@ -4,6 +4,8 @@ Tests ``constant_folding`` in isolation, building TAC nodes directly without
 invoking the lexer, parser, or TAC generator.
 """
 
+import math
+
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.optimiser.constant_folding import constant_folding
@@ -691,16 +693,12 @@ class TestFoldDoubleToInt:
 
     def test_inf_not_folded(self) -> None:
         """``DoubleToInt(inf, dst)`` is not folded - non-finite source."""
-        import math
-
         instr = tac.DoubleToInt(src=_cd(math.inf), dst=_var("tmp"))
         fn = _function((instr,))
         assert constant_folding(fn, _sym("tmp", IntType())) is fn
 
     def test_nan_not_folded(self) -> None:
         """``DoubleToInt(nan, dst)`` is not folded - non-finite source."""
-        import math
-
         instr = tac.DoubleToInt(src=_cd(math.nan), dst=_var("tmp"))
         fn = _function((instr,))
         assert constant_folding(fn, _sym("tmp", IntType())) is fn
@@ -745,8 +743,6 @@ class TestFoldDoubleToUInt:
 
     def test_inf_not_folded(self) -> None:
         """``DoubleToUInt(inf, dst)`` is not folded - non-finite source."""
-        import math
-
         instr = tac.DoubleToUInt(src=_cd(math.inf), dst=_var("tmp"))
         fn = _function((instr,))
         assert constant_folding(fn, _sym("tmp", UIntType())) is fn

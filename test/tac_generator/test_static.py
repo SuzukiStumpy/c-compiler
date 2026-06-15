@@ -4,6 +4,7 @@ import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.tac_generator import _convert_symbols_to_tacky, generate
 from compiler.types.symbols import (
+    FloatInit,
     FunAttr,
     Initial,
     Int128Init,
@@ -154,8 +155,6 @@ class TestConvertSymbolsToTacky:
 
     def test_float_init_emits_tac_float_init(self) -> None:
         """``Initial((FloatInit(1.5),))`` produces ``tac.FloatInit(1.5)``."""
-        from compiler.types.symbols import FloatInit
-
         symbols = {
             "x": SymbolTableEntry(t=ast.FloatType(), attrs=StaticAttr(init=Initial((FloatInit(1.5),)), globl=False))
         }

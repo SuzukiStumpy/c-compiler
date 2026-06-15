@@ -5,6 +5,10 @@ register pre-population, and interference edge generation for both the GP
 and FP passes.
 """
 
+import math
+
+import pytest
+
 import compiler.syntax.asm as asm
 import compiler.syntax.ast as ast
 from compiler.optimiser.asm_main import (
@@ -22,7 +26,7 @@ from compiler.optimiser.asm_main import (
     find_used_and_updated,
     replace_pseudoregs,
 )
-from compiler.optimiser.cfg import ASM_ADAPTER, EXIT, BlockId, BoundaryNode, ControlFlowGraph
+from compiler.optimiser.cfg import ASM_ADAPTER, EXIT, BasicBlock, BlockId, BoundaryNode, ControlFlowGraph
 from compiler.optimiser.interference_graph import InterferenceGraph
 from compiler.syntax.asm.operands import (
     ALLOCATABLE_FP,
@@ -696,9 +700,7 @@ class TestTransfer:
 
     def test_empty_block_live_in_equals_end_live(self) -> None:
         """A block with no instructions passes end_live straight through as live_in."""
-        from compiler.optimiser.cfg import BasicBlock as _BB
-
-        block = _BB(label=None, instructions=[])
+        block = BasicBlock(label=None, instructions=[])
         block.successors = []
         tracked = self._gp_tracked()
         live_in, live_after = _transfer(block, {GPRegisters.AX}, tracked)
@@ -877,8 +879,6 @@ class TestMeet:
 
     def test_entry_as_successor_raises(self) -> None:
         """ENTRY appearing as a block successor must raise ValueError."""
-        import pytest
-
         cfg = _make_asm_cfg([asm.Ret()])
         # Manually inject ENTRY as a successor to simulate a malformed CFG.
         cfg.blocks[0].successors.append(BoundaryNode.ENTRY)
@@ -926,8 +926,6 @@ class TestAddSpillCosts:
 
     def test_hw_register_gets_infinite_cost(self) -> None:
         """Hardware-register nodes receive math.inf as their spill cost."""
-        import math
-
         g = build_gp_graph([asm.Ret()])
         add_spill_costs(g, [asm.Ret()])
         for reg in ALLOCATABLE_GP:

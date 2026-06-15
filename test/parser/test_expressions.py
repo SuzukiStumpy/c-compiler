@@ -12,6 +12,7 @@ from compiler.syntax.ast import (
     Dereference,
     IntType,
     LongType,
+    Pointer,
     String,
     Unary,
 )
@@ -22,6 +23,7 @@ from compiler.syntax.ast.operators import (
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    Complement,
     Divide,
     Equal,
     GreaterOrEqual,
@@ -61,6 +63,7 @@ from test.parser.helpers import (
     _INT,
     _LBRACE,
     _LEQ,
+    _LONG,
     _LPAREN,
     _LSHIFT,
     _LT,
@@ -80,6 +83,7 @@ from test.parser.helpers import (
     _VOID,
     _charconst,
     _ident,
+    _longint,
     _number,
     _parsed_exp,
     _string_tok,
@@ -99,8 +103,6 @@ class TestUnaryExpressions:
 
     def test_complement(self) -> None:
         """``return ~1;`` -> Unary(Complement(), Constant(ConstInt(1)))."""
-        from compiler.syntax.ast.operators import Complement
-
         assert _parsed_exp(_BITWISE_NOT, _number("1")) == Unary(Complement(), Constant(ConstInt(1)))
 
     def test_double_negate(self) -> None:
@@ -109,8 +111,6 @@ class TestUnaryExpressions:
 
     def test_negate_complement(self) -> None:
         """``return -~1;`` -> Unary(Negate(), Unary(Complement(), Constant(ConstInt(1))))."""
-        from compiler.syntax.ast.operators import Complement
-
         assert _parsed_exp(_MINUS, _BITWISE_NOT, _number("1")) == Unary(
             Negate(), Unary(Complement(), Constant(ConstInt(1)))
         )
@@ -526,14 +526,10 @@ class TestConstantLiterals:
 
     def test_long_suffix_small_value_produces_const_long(self) -> None:
         """``42L`` always produces ``ConstLong`` regardless of value magnitude."""
-        from test.parser.helpers import _longint
-
         assert _parsed_exp(_longint("42L")) == Constant(ConstLong(42))
 
     def test_long_suffix_exceeding_long_max_raises_parse_error(self) -> None:
         """``9223372036854775808L`` exceeds LONG_MAX and raises ``ParseError``."""
-        from test.parser.helpers import _longint
-
         tokens = [
             _INT,
             _ident("main"),
@@ -560,8 +556,6 @@ class TestCastExpressions:
 
     def test_cast_to_long(self) -> None:
         """``(long)1`` -> ``Cast(LongType(), Constant(ConstInt(1)))``."""
-        from test.parser.helpers import _LONG
-
         assert _parsed_exp(_LPAREN, _LONG, _RPAREN, _number("1")) == Cast(
             target_type=LongType(), exp=Constant(ConstInt(1))
         )
@@ -572,49 +566,36 @@ class TestCastExpressions:
 
     def test_cast_long_int(self) -> None:
         """``(long int)1`` -> ``Cast(LongType(), ...)`` - combined specifiers."""
-        from test.parser.helpers import _LONG
-
         assert _parsed_exp(_LPAREN, _LONG, _INT, _RPAREN, _number("1")) == Cast(
             target_type=LongType(), exp=Constant(ConstInt(1))
         )
 
     def test_cast_int_long(self) -> None:
         """``(int long)1`` -> ``Cast(LongType(), ...)`` - specifiers in either order."""
-        from test.parser.helpers import _LONG
-
         assert _parsed_exp(_LPAREN, _INT, _LONG, _RPAREN, _number("1")) == Cast(
             target_type=LongType(), exp=Constant(ConstInt(1))
         )
 
     def test_cast_result_used_in_binary(self) -> None:
         """``(long)1 + 2`` - cast binds tighter than addition."""
-        from test.parser.helpers import _LONG
-
         assert _parsed_exp(_LPAREN, _LONG, _RPAREN, _number("1"), _PLUS, _number("2")) == Binary(
             Add(), Cast(target_type=LongType(), exp=Constant(ConstInt(1))), Constant(ConstInt(2))
         )
 
     def test_nested_cast(self) -> None:
         """``(int)(long)x`` - inner cast is the operand of the outer cast."""
-        from test.parser.helpers import _LONG
-
         assert _parsed_exp(_LPAREN, _INT, _RPAREN, _LPAREN, _LONG, _RPAREN, _ident("x")) == Cast(
             target_type=IntType(), exp=Cast(target_type=LongType(), exp=Var("x"))
         )
 
     def test_cast_to_pointer(self) -> None:
         """``(int *)x`` -> ``Cast(Pointer(IntType()), Var("x"))``."""
-        from compiler.syntax.ast import Pointer
-        from test.parser.helpers import _LONG  # noqa: F401
-
         assert _parsed_exp(_LPAREN, _INT, _ASTERISK, _RPAREN, _ident("x")) == Cast(
             target_type=Pointer(IntType()), exp=Var("x")
         )
 
     def test_cast_to_double_pointer(self) -> None:
         """``(int **)x`` -> ``Cast(Pointer(Pointer(IntType())), Var("x"))``."""
-        from compiler.syntax.ast import Pointer
-
         assert _parsed_exp(_LPAREN, _INT, _ASTERISK, _ASTERISK, _RPAREN, _ident("x")) == Cast(
             target_type=Pointer(Pointer(IntType())), exp=Var("x")
         )
@@ -704,3 +685,35 @@ class TestCharConstantAndStringLiterals:
     def test_adjacent_string_literals_are_concatenated(self) -> None:
         """``"foo" "bar"`` -> ``String(b"foobar")``."""
         assert _parsed_exp(_string_tok('"foo"'), _string_tok('"bar"')) == String(b"foobar")
+
+
+class TestAlternateIntegerLiteralBases:
+    """Parser correctly converts hex, octal, and binary integer literals to their decimal values."""
+
+    def test_hex_number_parses_to_correct_int_value(self) -> None:
+        """``0xFF`` -> ``Constant(ConstInt(255))``."""
+        assert _parsed_exp(_number("0xFF")) == Constant(ConstInt(255))
+
+    def test_hex_uppercase_prefix_parses_to_correct_int_value(self) -> None:
+        """``0XFF`` -> ``Constant(ConstInt(255))``."""
+        assert _parsed_exp(_number("0XFF")) == Constant(ConstInt(255))
+
+    def test_hex_longint_parses_to_correct_value(self) -> None:
+        """``0xDEADl`` -> ``Constant(ConstLong(57005))``."""
+        assert _parsed_exp(_longint("0xDEADl")) == Constant(ConstLong(0xDEAD))
+
+    def test_octal_number_parses_to_correct_int_value(self) -> None:
+        """``0777`` -> ``Constant(ConstInt(511))``."""
+        assert _parsed_exp(_number("0777")) == Constant(ConstInt(511))
+
+    def test_octal_zero_parses_as_decimal_zero(self) -> None:
+        """``0`` alone is decimal zero, not octal."""
+        assert _parsed_exp(_number("0")) == Constant(ConstInt(0))
+
+    def test_binary_number_parses_to_correct_int_value(self) -> None:
+        """``0b1010`` -> ``Constant(ConstInt(10))``."""
+        assert _parsed_exp(_number("0b1010")) == Constant(ConstInt(10))
+
+    def test_binary_uppercase_prefix_parses_to_correct_int_value(self) -> None:
+        """``0B1100`` -> ``Constant(ConstInt(12))``."""
+        assert _parsed_exp(_number("0B1100")) == Constant(ConstInt(12))

@@ -27,6 +27,17 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 
 Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant.
 
+Integer literals are accepted in all four C bases:
+
+| Prefix | Base | Example |
+|--------|------|---------|
+| *(none)* | Decimal | `255` |
+| `0` | Octal | `0377` |
+| `0x` / `0X` | Hexadecimal | `0xFF` |
+| `0b` / `0B` | Binary (GCC extension) | `0b11111111` |
+
+All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to every base.
+
 > **`__int128` note** — The type is fully recognised through the pipeline (lexer → parser → semantic analysis → TAC → assembly emission). Static variables with constant initialisers are emitted as two consecutive `.quad` directives (little-endian lo/hi). Local-variable arithmetic, multi-word instruction sequences (`adcq`/`sbbq`), and the SysV AMD64 two-register calling convention for 128-bit values are not yet implemented; any expression-level use of `__int128` beyond zero-initialisation will produce incorrect or incomplete code.
 
 ### Expressions

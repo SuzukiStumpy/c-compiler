@@ -1107,8 +1107,6 @@ class TestVariadicFunctions:
 
     def test_variadic_flag_preserved_in_symbol_table(self) -> None:
         """After resolution, the symbol table entry for a variadic fn has ``FunType.variadic == True``."""
-        from compiler.semantic_analysis import SemanticAnalyser
-
         analyser = SemanticAnalyser()
         analyser._register_fun_declaration(self._variadic_fn_decl("printf"))
         entry = analyser._symbol_table["printf"]

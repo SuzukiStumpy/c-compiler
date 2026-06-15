@@ -514,6 +514,33 @@ class Parser:
         return ParseError(message, "<unknown>", 0, 0, "", [])
 
     # ------------------------------------------------------------------
+    # Numeric literal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_int_value(text: str) -> int:
+        """Convert a C integer literal string (after suffix stripping) to a Python int.
+
+        Handles all C integer bases: hexadecimal (``0x``/``0X``), binary (``0b``/``0B``,
+        a GCC extension), C-style octal (leading ``0`` followed by octal digits), and
+        decimal.  Python's ``int(x, 0)`` cannot be used directly because it does not
+        accept C-style octal (``0777`` must be written ``0o777`` in Python 3).
+
+        Args:
+            text: The literal text with any type suffix already stripped.
+
+        Returns:
+            The numeric value of the literal.
+        """
+        if text.startswith(("0x", "0X")):
+            return int(text, 16)
+        if text.startswith(("0b", "0B")):
+            return int(text, 2)
+        if len(text) > 1 and text[0] == "0":
+            return int(text, 8)
+        return int(text, 10)
+
+    # ------------------------------------------------------------------
     # Typedef scope helpers
     # ------------------------------------------------------------------
 
@@ -1896,7 +1923,7 @@ class Parser:
             return fp
         if token.type == TokenType.NUMBER:
             self._consume()
-            val = int(token.value)
+            val = self._parse_int_value(token.value)
             if val <= 2_147_483_647:
                 return Constant(value=ConstInt(val), exp_type=IntType())
             if val <= 9_223_372_036_854_775_807:
@@ -1906,7 +1933,7 @@ class Parser:
             )
         if token.type == TokenType.LONGLONG:
             self._consume()
-            val = int(token.value.rstrip("lL"))
+            val = self._parse_int_value(token.value.rstrip("lL"))
             if val > 9_223_372_036_854_775_807:
                 raise self._token_error(
                     f"integer constant {val} is too large for type 'long long' (max 9223372036854775807)", token
@@ -1914,7 +1941,7 @@ class Parser:
             return Constant(value=ConstLongLong(val), exp_type=LongLongType())
         if token.type == TokenType.ULONGLONG:
             self._consume()
-            val = int(token.value.rstrip("uUlL"))
+            val = self._parse_int_value(token.value.rstrip("uUlL"))
             if val > 18_446_744_073_709_551_615:
                 raise self._token_error(
                     f"integer constant {val} is too large for type 'unsigned long long' (max 18446744073709551615)",
@@ -1923,7 +1950,7 @@ class Parser:
             return Constant(value=ConstULongLong(val), exp_type=ULongLongType())
         if token.type == TokenType.LONGINT:
             self._consume()
-            val = int(token.value.rstrip("lL"))
+            val = self._parse_int_value(token.value.rstrip("lL"))
             if val > 9_223_372_036_854_775_807:
                 raise self._token_error(
                     f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
@@ -1931,7 +1958,7 @@ class Parser:
             return Constant(value=ConstLong(val), exp_type=LongType())
         if token.type == TokenType.UINT:
             self._consume()
-            val = int(token.value.rstrip("uU"))
+            val = self._parse_int_value(token.value.rstrip("uU"))
             if val <= 4_294_967_295:
                 return Constant(value=ConstUInt(val), exp_type=UIntType())
             if val <= 18_446_744_073_709_551_615:
@@ -1941,7 +1968,7 @@ class Parser:
             )
         if token.type == TokenType.ULONG:
             self._consume()
-            val = int(token.value.rstrip("uUlL"))
+            val = self._parse_int_value(token.value.rstrip("uUlL"))
             if val > 18_446_744_073_709_551_615:
                 raise self._token_error(
                     f"integer constant {val} is too large for type 'unsigned long' (max 18446744073709551615)", token

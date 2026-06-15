@@ -581,6 +581,121 @@ def test_mixed_case_longlong_suffix_raises_lexer_error(preprocess_c_file: Prepro
 
 
 # ---------------------------------------------------------------------------
+# Hexadecimal integer literals
+# ---------------------------------------------------------------------------
+
+
+def test_hex_integer_lexed_as_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.NUMBER and t.value == "0xFF" for t in tokens)
+
+
+def test_hex_integer_uppercase_prefix_lexed_as_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.NUMBER and t.value == "0XFF" for t in tokens)
+
+
+def test_hex_longint_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.LONGINT and t.value == "0xDEADl" for t in tokens)
+
+
+def test_hex_uint_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.UINT and t.value == "0xCAFEu" for t in tokens)
+
+
+def test_hex_ulong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "0xDEADul" for t in tokens)
+
+
+def test_hex_longlong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.LONGLONG and t.value == "0xDEADBEEFll" for t in tokens)
+
+
+def test_hex_ulonglong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_literals.c"))
+    assert any(t.type == TokenType.ULONGLONG and t.value == "0xDEADBEEFull" for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# Octal integer literals
+# ---------------------------------------------------------------------------
+
+
+def test_octal_integer_lexed_as_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/octal_literals.c"))
+    assert any(t.type == TokenType.NUMBER and t.value == "0777" for t in tokens)
+
+
+def test_octal_longint_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/octal_literals.c"))
+    assert any(t.type == TokenType.LONGINT and t.value == "0777l" for t in tokens)
+
+
+def test_octal_uint_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/octal_literals.c"))
+    assert any(t.type == TokenType.UINT and t.value == "0777u" for t in tokens)
+
+
+def test_octal_ulong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/octal_literals.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "0777ul" for t in tokens)
+
+
+def test_octal_longlong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/octal_literals.c"))
+    assert any(t.type == TokenType.LONGLONG and t.value == "0777ll" for t in tokens)
+
+
+def test_octal_ulonglong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/octal_literals.c"))
+    assert any(t.type == TokenType.ULONGLONG and t.value == "0777ull" for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# Binary integer literals (GCC extension: 0b/0B prefix)
+# ---------------------------------------------------------------------------
+
+
+def test_binary_integer_lexed_as_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.NUMBER and t.value == "0b1010" for t in tokens)
+
+
+def test_binary_integer_uppercase_prefix_lexed_as_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.NUMBER and t.value == "0B1100" for t in tokens)
+
+
+def test_binary_longint_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.LONGINT and t.value == "0b1010l" for t in tokens)
+
+
+def test_binary_uint_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.UINT and t.value == "0b1010u" for t in tokens)
+
+
+def test_binary_ulong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.ULONG and t.value == "0b1010ul" for t in tokens)
+
+
+def test_binary_longlong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.LONGLONG and t.value == "0b1010ll" for t in tokens)
+
+
+def test_binary_ulonglong_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/binary_literals.c"))
+    assert any(t.type == TokenType.ULONGLONG and t.value == "0b1010ull" for t in tokens)
+
+
+# ---------------------------------------------------------------------------
 # char keyword (CHAR)
 # ---------------------------------------------------------------------------
 

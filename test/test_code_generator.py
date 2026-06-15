@@ -9,13 +9,22 @@ import pytest
 
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
-from compiler.code_generator import generate
+from compiler.code_generator import (
+    _asm_type,
+    _is_unsigned,
+    _reg_width,
+    _static_alignment,
+    _translate_static_init,
+    _type_size,
+    generate,
+)
 from compiler.syntax.ast.constants import (
     ConstChar,
     ConstDouble,
     ConstFloat,
     ConstInt,
     ConstLong,
+    ConstLongDouble,
     ConstLongLong,
     ConstShort,
     ConstUChar,
@@ -26,7 +35,9 @@ from compiler.syntax.ast.types import (
     Char,
     DoubleType,
     FloatType,
+    FunType,
     IntType,
+    LongDoubleType,
     LongLongType,
     LongType,
     SChar,
@@ -35,9 +46,10 @@ from compiler.syntax.ast.types import (
     UIntType,
     ULongLongType,
     ULongType,
+    Union,
     UShortType,
 )
-from compiler.types.symbols import LocalAttr, SymbolTable, SymbolTableEntry
+from compiler.types.symbols import FunAttr, LocalAttr, MemberEntry, StructEntry, SymbolTable, SymbolTableEntry
 from compiler.utils.exceptions import CodeGenerationError
 
 
@@ -1535,41 +1547,29 @@ class TestAsmTypeChar:
 
     def test_const_char_returns_byte(self) -> None:
         """``ConstChar`` constant maps to ``Byte`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         assert _asm_type(tac.Constant(value=ConstChar(65))) == asm.Byte()
 
     def test_const_uchar_returns_byte(self) -> None:
         """``ConstUChar`` constant maps to ``Byte`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         assert _asm_type(tac.Constant(value=ConstUChar(200))) == asm.Byte()
 
     def test_schar_var_returns_byte(self) -> None:
         """``SChar`` variable maps to ``Byte`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(c=SChar)
         assert _asm_type(tac.Var("c"), st) == asm.Byte()
 
     def test_uchar_var_returns_byte(self) -> None:
         """``UChar`` variable maps to ``Byte`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(c=UChar)
         assert _asm_type(tac.Var("c"), st) == asm.Byte()
 
     def test_char_var_returns_byte(self) -> None:
         """``Char`` variable maps to ``Byte`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(c=Char)
         assert _asm_type(tac.Var("c"), st) == asm.Byte()
 
     def test_int_var_still_returns_longword(self) -> None:
         """``IntType`` variable still maps to ``Longword`` (regression guard)."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(x=IntType)
         assert _asm_type(tac.Var("x"), st) == asm.Longword()
 
@@ -1579,20 +1579,14 @@ class TestRegWidthByte:
 
     def test_byte_returns_width_byte(self) -> None:
         """``_reg_width(Byte())`` returns ``Width.BYTE``."""
-        from compiler.code_generator import _reg_width
-
         assert _reg_width(asm.Byte()) == asm.Width.BYTE
 
     def test_longword_still_returns_dword(self) -> None:
         """``_reg_width(Longword())`` still returns ``Width.DWORD`` (regression guard)."""
-        from compiler.code_generator import _reg_width
-
         assert _reg_width(asm.Longword()) == asm.Width.DWORD
 
     def test_quadword_still_returns_qword(self) -> None:
         """``_reg_width(Quadword())`` still returns ``Width.QWORD`` (regression guard)."""
-        from compiler.code_generator import _reg_width
-
         assert _reg_width(asm.Quadword()) == asm.Width.QWORD
 
 
@@ -2061,8 +2055,6 @@ class TestDoubleToUCharConversion:
 
     def test_double_to_uint_still_uses_cvttsd2siq_then_movl(self) -> None:
         """``DoubleToUInt(dst=UIntType)`` still uses the quadword-then-truncate path (regression guard)."""
-        from compiler.syntax.ast.types import UIntType
-
         st = _make_symbol_table(d=DoubleType, x=UIntType)
         instrs = _fn_instructions_with_table(_double_to_uchar_program("x"), st)
         cvts = [i for i in instrs if isinstance(i, asm.Cvttsd2si)]
@@ -2119,8 +2111,6 @@ class TestUCharToDoubleConversion:
 
     def test_uint_to_double_still_uses_movl_zero_extend_path(self) -> None:
         """``UIntToDouble(src=UIntType)`` still uses the 32-bit zero-extend path (regression guard)."""
-        from compiler.syntax.ast.types import UIntType
-
         st = _make_symbol_table(x=UIntType, d=DoubleType)
         instrs = _fn_instructions_with_table(_uchar_to_double_program("x"), st)
         assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs), "uint src should not produce MoveZeroExtend"
@@ -2504,9 +2494,6 @@ class TestUnionCodegen:
 
     def test_copy_from_offset_with_union_type_generates_assembly(self) -> None:
         """CopyFromOffset on a union-typed variable generates Mov instructions without error."""
-        from compiler.syntax.ast.types import Union
-        from compiler.types.symbols import MemberEntry, StructEntry
-
         union_tag = ".UFoo.0"
         union_table = {
             union_tag: StructEntry(
@@ -2535,9 +2522,6 @@ class TestUnionCodegen:
 
     def test_copy_to_offset_with_union_type_generates_assembly(self) -> None:
         """CopyToOffset on a union-typed variable generates Mov instructions without error."""
-        from compiler.syntax.ast.types import Union
-        from compiler.types.symbols import MemberEntry, StructEntry
-
         union_tag = ".UFoo.0"
         union_table = {
             union_tag: StructEntry(
@@ -2561,9 +2545,6 @@ class TestUnionCodegen:
 
     def test_copy_between_union_vars_uses_chunked_moves(self) -> None:
         """Copy(src=union_var, dst=union_var) generates chunked moves, not a single scalar Mov."""
-        from compiler.syntax.ast.types import Union
-        from compiler.types.symbols import MemberEntry, StructEntry
-
         union_tag = ".UFoo.0"
         # Union of size 8: long member dominates.
         union_table = {
@@ -2612,34 +2593,24 @@ class TestAsmTypeShort:
 
     def test_const_short_returns_word(self) -> None:
         """``ConstShort`` constant maps to ``Word`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         assert _asm_type(tac.Constant(value=ConstShort(42))) == asm.Word()
 
     def test_const_ushort_returns_word(self) -> None:
         """``ConstUShort`` constant maps to ``Word`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         assert _asm_type(tac.Constant(value=ConstUShort(65535))) == asm.Word()
 
     def test_short_var_returns_word(self) -> None:
         """``ShortType`` variable maps to ``Word`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(s=ShortType)
         assert _asm_type(tac.Var("s"), st) == asm.Word()
 
     def test_ushort_var_returns_word(self) -> None:
         """``UShortType`` variable maps to ``Word`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(u=UShortType)
         assert _asm_type(tac.Var("u"), st) == asm.Word()
 
     def test_int_var_still_returns_longword(self) -> None:
         """``IntType`` variable still maps to ``Longword`` (regression guard)."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(x=IntType)
         assert _asm_type(tac.Var("x"), st) == asm.Longword()
 
@@ -2649,20 +2620,14 @@ class TestRegWidthWord:
 
     def test_word_returns_width_word(self) -> None:
         """``_reg_width(Word())`` returns ``Width.WORD``."""
-        from compiler.code_generator import _reg_width
-
         assert _reg_width(asm.Word()) == asm.Width.WORD
 
     def test_byte_still_returns_byte(self) -> None:
         """``_reg_width(Byte())`` still returns ``Width.BYTE`` (regression guard)."""
-        from compiler.code_generator import _reg_width
-
         assert _reg_width(asm.Byte()) == asm.Width.BYTE
 
     def test_longword_still_returns_dword(self) -> None:
         """``_reg_width(Longword())`` still returns ``Width.DWORD`` (regression guard)."""
-        from compiler.code_generator import _reg_width
-
         assert _reg_width(asm.Longword()) == asm.Width.DWORD
 
 
@@ -2671,27 +2636,19 @@ class TestTranslateStaticInitShortInt128:
 
     def test_short_init_translates_to_asm_short_init(self) -> None:
         """``tac.ShortInit(42)`` maps to ``asm.ShortInit(42)``."""
-        from compiler.code_generator import _translate_static_init
-
         assert _translate_static_init(tac.ShortInit(42)) == asm.ShortInit(42)
 
     def test_ushort_init_translates_to_asm_ushort_init(self) -> None:
         """``tac.UShortInit(65535)`` maps to ``asm.UShortInit(65535)``."""
-        from compiler.code_generator import _translate_static_init
-
         assert _translate_static_init(tac.UShortInit(65535)) == asm.UShortInit(65535)
 
     def test_int128_init_translates_to_asm_int128_init(self) -> None:
         """``tac.Int128Init(big)`` maps to ``asm.Int128Init(big)``."""
-        from compiler.code_generator import _translate_static_init
-
         big = (1 << 100) + 7
         assert _translate_static_init(tac.Int128Init(big)) == asm.Int128Init(big)
 
     def test_uint128_init_translates_to_asm_uint128_init(self) -> None:
         """``tac.UInt128Init(big)`` maps to ``asm.UInt128Init(big)``."""
-        from compiler.code_generator import _translate_static_init
-
         big = (1 << 127) + 99
         assert _translate_static_init(tac.UInt128Init(big)) == asm.UInt128Init(big)
 
@@ -2701,27 +2658,19 @@ class TestAsmTypeLongLong:
 
     def test_const_longlong_returns_quadword(self) -> None:
         """``ConstLongLong`` constant maps to ``Quadword`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         assert _asm_type(tac.Constant(value=ConstLongLong(42))) == asm.Quadword()
 
     def test_const_ulonglong_returns_quadword(self) -> None:
         """``ConstULongLong`` constant maps to ``Quadword`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         assert _asm_type(tac.Constant(value=ConstULongLong(100))) == asm.Quadword()
 
     def test_longlong_var_returns_quadword(self) -> None:
         """``LongLongType`` variable maps to ``Quadword`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(ll=LongLongType)
         assert _asm_type(tac.Var("ll"), st) == asm.Quadword()
 
     def test_ulonglong_var_returns_quadword(self) -> None:
         """``ULongLongType`` variable maps to ``Quadword`` assembly type."""
-        from compiler.code_generator import _asm_type
-
         st = _make_symbol_table(ull=ULongLongType)
         assert _asm_type(tac.Var("ull"), st) == asm.Quadword()
 
@@ -2731,27 +2680,19 @@ class TestIsUnsignedLongLong:
 
     def test_const_ulonglong_is_unsigned(self) -> None:
         """``ConstULongLong`` is classified as unsigned."""
-        from compiler.code_generator import _is_unsigned
-
         assert _is_unsigned(tac.Constant(value=ConstULongLong(0))) is True
 
     def test_const_longlong_is_not_unsigned(self) -> None:
         """``ConstLongLong`` is classified as signed."""
-        from compiler.code_generator import _is_unsigned
-
         assert _is_unsigned(tac.Constant(value=ConstLongLong(0))) is False
 
     def test_ulonglong_var_is_unsigned(self) -> None:
         """``ULongLongType`` variable is classified as unsigned."""
-        from compiler.code_generator import _is_unsigned
-
         st = _make_symbol_table(ull=ULongLongType)
         assert _is_unsigned(tac.Var("ull"), st) is True
 
     def test_longlong_var_is_not_unsigned(self) -> None:
         """``LongLongType`` variable is classified as signed."""
-        from compiler.code_generator import _is_unsigned
-
         st = _make_symbol_table(ll=LongLongType)
         assert _is_unsigned(tac.Var("ll"), st) is False
 
@@ -2828,8 +2769,6 @@ def _ld_symbol_table(**extra: type) -> SymbolTable:
     Returns:
         A ``SymbolTable`` with long-double entries for standard LD test vars.
     """
-    from compiler.syntax.ast.types import LongDoubleType
-
     base = {n: SymbolTableEntry(t=LongDoubleType(), attrs=LocalAttr()) for n in ("a", "b", "r", "x")}
     extra_entries = {name: SymbolTableEntry(t=t(), attrs=LocalAttr()) for name, t in extra.items()}
     return {**base, **extra_entries}
@@ -2840,15 +2779,10 @@ class TestLongDoubleAsmType:
 
     def test_const_long_double_returns_long_double(self) -> None:
         """``ConstLongDouble`` constant maps to ``LongDouble()`` assembly type."""
-        from compiler.code_generator import _asm_type
-        from compiler.syntax.ast.constants import ConstLongDouble
-
         assert _asm_type(tac.Constant(value=ConstLongDouble(1.5))) == asm.LongDouble()
 
     def test_long_double_var_returns_long_double(self) -> None:
         """A ``LongDoubleType`` variable maps to ``LongDouble()``."""
-        from compiler.code_generator import _asm_type
-
         st = _ld_symbol_table()
         assert _asm_type(tac.Var("x"), st) == asm.LongDouble()
 
@@ -2858,16 +2792,10 @@ class TestLongDoubleTypeSizeAndAlign:
 
     def test_type_size_is_16(self) -> None:
         """``_type_size(LongDoubleType())`` returns 16."""
-        from compiler.code_generator import _type_size
-        from compiler.syntax.ast.types import LongDoubleType
-
         assert _type_size(LongDoubleType()) == 16
 
     def test_static_alignment_is_16(self) -> None:
         """``_static_alignment(LongDoubleType())`` returns 16."""
-        from compiler.code_generator import _static_alignment
-        from compiler.syntax.ast.types import LongDoubleType
-
         assert _static_alignment(LongDoubleType()) == 16
 
 
@@ -2876,8 +2804,6 @@ class TestLongDoubleStaticInit:
 
     def test_long_double_static_init(self) -> None:
         """``tac.LongDoubleInit(3.14)`` translates to ``asm.LongDoubleInit(3.14)``."""
-        from compiler.code_generator import _translate_static_init
-
         result = _translate_static_init(tac.LongDoubleInit(3.14))
         assert isinstance(result, asm.LongDoubleInit)
         assert result.value == 3.14
@@ -3145,8 +3071,6 @@ class TestLongDoubleParam:
 
     def _ld_param_st(self) -> SymbolTable:
         """Symbol table: ``x`` is ``LongDoubleType`` local."""
-        from compiler.syntax.ast.types import LongDoubleType
-
         return {"x": SymbolTableEntry(t=LongDoubleType(), attrs=LocalAttr())}
 
     def test_ld_param_uses_fldt(self) -> None:
@@ -3190,9 +3114,6 @@ class TestLongDoubleFuncall:
 
     def _ld_arg_st(self, ret_type: type | None = None) -> SymbolTable:
         """Symbol table: ``x`` is LongDoubleType local; ``foo`` has the given return type."""
-        from compiler.syntax.ast.types import FunType, LongDoubleType
-        from compiler.types.symbols import FunAttr
-
         ret = (ret_type or IntType)()
         st: SymbolTable = {
             "x": SymbolTableEntry(t=LongDoubleType(), attrs=LocalAttr()),
@@ -3212,8 +3133,6 @@ class TestLongDoubleFuncall:
 
     def test_ld_return_emits_fstpt(self) -> None:
         """A call returning long double emits ``Fstpt`` to capture ST0 after the call."""
-        from compiler.syntax.ast.types import LongDoubleType
-
         instrs = _fn_instructions_with_table(self._ld_arg_program(), self._ld_arg_st(LongDoubleType))
         call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Call))
         post_call = instrs[call_idx + 1 :]
@@ -3230,12 +3149,10 @@ class TestVariadicCallAlRegister:
 
     def _variadic_fn_st(self, name: str = "printf") -> SymbolTable:
         """Return a symbol table marking *name* as a variadic function."""
-        from compiler.syntax.ast.types import FunType, IntType
-
         return {
             name: SymbolTableEntry(
                 t=FunType(params=(IntType(),), ret=IntType(), variadic=True),
-                attrs=__import__("compiler.types.symbols", fromlist=["FunAttr"]).FunAttr(defined=False, globl=True),
+                attrs=FunAttr(defined=False, globl=True),
             )
         }
 
@@ -3270,8 +3187,6 @@ class TestVariadicCallAlRegister:
 
     def test_variadic_call_with_one_fp_arg_sets_al_to_one(self) -> None:
         """Calling a variadic fn with one double arg emits ``movb $1, %al``."""
-        from compiler.syntax.ast.constants import ConstDouble
-
         program = self._variadic_call_program(
             tac.Constant(ConstInt(1)),
             tac.Constant(ConstDouble(3.14)),
@@ -3287,9 +3202,6 @@ class TestVariadicCallAlRegister:
 
     def test_non_variadic_call_does_not_set_al(self) -> None:
         """Calling a regular (non-variadic) fn must NOT emit a ``movb $N, %al``."""
-        from compiler.syntax.ast.types import FunType, IntType
-        from compiler.types.symbols import FunAttr
-
         st: SymbolTable = {
             "foo": SymbolTableEntry(
                 t=FunType(params=(IntType(),), ret=IntType(), variadic=False),

@@ -5,18 +5,40 @@ node types in the ``compiler.syntax.asm`` package.
 """
 
 import dataclasses
+import struct
 
 import pytest
 
 from compiler.syntax.asm import (
+    AddFloat,
     AllocateStack,
+    Binary,
     Byte,
     Call,
     Cmp,
     CondCodes,
     DeallocateStack,
+    Double,
+    Faddp,
+    Fchs,
+    Fdivp,
+    Fildl,
+    Fildq,
+    Fisttpl,
+    Fisttpq,
+    Fldl,
+    Flds,
+    Fldt,
     Float,
     FloatInit,
+    Fmulp,
+    FPRegisters,
+    Fstp0,
+    Fstpl,
+    Fstps,
+    Fstpt,
+    Fsubp,
+    Fucomip,
     Function,
     GPRegisters,
     Imm,
@@ -25,6 +47,7 @@ from compiler.syntax.asm import (
     Jmp,
     JmpCC,
     Label,
+    LongDoubleInit,
     Longword,
     Memory,
     Mov,
@@ -46,6 +69,7 @@ from compiler.syntax.asm import (
     Width,
     Word,
 )
+from compiler.syntax.asm.values import AssemblyType
 
 # ---------------------------------------------------------------------------
 # Operand nodes
@@ -664,8 +688,6 @@ class TestWordAssemblyType:
 
     def test_word_is_assembly_type(self) -> None:
         """``Word()`` is an instance of ``AssemblyType``."""
-        from compiler.syntax.asm.values import AssemblyType
-
         assert isinstance(Word(), AssemblyType)
 
     def test_word_equality(self) -> None:
@@ -763,8 +785,6 @@ class TestFloatInitStaticVariableEmit:
 
     def test_float_init_nonzero_emits_long_directive(self) -> None:
         """``FloatInit(1.5)`` emits a ``.long <bits>`` directive with the IEEE 754 bit pattern."""
-        import struct
-
         (bits,) = struct.unpack("I", struct.pack("f", 1.5))
         var = StaticVariable(identifier="f", globl=False, alignment=4, init=(FloatInit(1.5),))
         assert f"      .long {bits}" in var.emit()
@@ -785,8 +805,6 @@ class TestFloatInitStaticConstantEmit:
 
     def test_float_constant_emits_long_directive(self) -> None:
         """``FloatInit(1.5)`` in a ``StaticConstant`` emits ``.long <bits>``."""
-        import struct
-
         (bits,) = struct.unpack("I", struct.pack("f", 1.5))
         const = StaticConstant(identifier="float_const", alignment=4, init=FloatInit(1.5))
         assert f"      .long {bits}" in const.emit()
@@ -797,8 +815,6 @@ class TestMovFloatEmit:
 
     def test_movss_emitted_for_float(self) -> None:
         """``Mov(..., assembly_type=Float())`` emits the ``movss`` mnemonic."""
-        from compiler.syntax.asm import FPRegisters
-
         xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
         xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
         mov = Mov(src=xmm0, dst=xmm1, assembly_type=Float())
@@ -806,8 +822,6 @@ class TestMovFloatEmit:
 
     def test_movsd_still_emitted_for_double(self) -> None:
         """``Mov(..., assembly_type=Double())`` still emits ``movsd`` (regression guard)."""
-        from compiler.syntax.asm import Double, FPRegisters
-
         xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
         xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
         mov = Mov(src=xmm0, dst=xmm1, assembly_type=Double())
@@ -819,8 +833,6 @@ class TestBinaryFloatEmit:
 
     def test_addss_emitted_for_add_float(self) -> None:
         """``Binary(AddFloat(), ...)`` emits ``addss``."""
-        from compiler.syntax.asm import AddFloat, Binary, FPRegisters
-
         xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
         xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
         instr = Binary(operator=AddFloat(), src1=xmm0, src2=xmm1, dst=xmm0, assembly_type=Float())
@@ -828,8 +840,6 @@ class TestBinaryFloatEmit:
 
     def test_movss_emitted_when_src1_ne_dst(self) -> None:
         """When src1 != dst, ``Binary(AddFloat())`` prefixes a ``movss`` copy."""
-        from compiler.syntax.asm import AddFloat, Binary, FPRegisters
-
         xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
         xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
         xmm2 = Register(FPRegisters.XMM2, Width.QWORD)
@@ -848,8 +858,6 @@ class TestCmpFloatEmitsUcomiss:
 
     def test_cmp_double_still_emits_ucomisd(self) -> None:
         """``Cmp`` with ``Double()`` still emits ``ucomisd`` (regression guard)."""
-        from compiler.syntax.asm import Double
-
         cmp = Cmp(op1=Imm(0), op2=Register(GPRegisters.R10, Width.DWORD), assembly_type=Double())
         assert "ucomisd" in cmp.emit()
 
@@ -864,22 +872,16 @@ class TestLongDoubleInitEmit:
 
     def test_long_double_init_nonzero_goes_to_data(self) -> None:
         """Non-zero ``LongDoubleInit`` uses ``.data`` section."""
-        from compiler.syntax.asm import LongDoubleInit, StaticVariable
-
         var = StaticVariable(identifier="ld", globl=False, alignment=16, init=(LongDoubleInit(1.5),))
         assert ".data" in var.emit()
 
     def test_long_double_init_zero_goes_to_bss(self) -> None:
         """Zero ``LongDoubleInit`` uses ``.bss`` section."""
-        from compiler.syntax.asm import LongDoubleInit, StaticVariable
-
         var = StaticVariable(identifier="ld", globl=False, alignment=16, init=(LongDoubleInit(0.0),))
         assert ".bss" in var.emit()
 
     def test_long_double_init_emits_quad_short_and_zero_pad(self) -> None:
         """``LongDoubleInit(1.5)`` emits ``.quad`` (mantissa), ``.short`` (exp), ``.zero 6`` (pad)."""
-        from compiler.syntax.asm import LongDoubleInit, StaticVariable
-
         var = StaticVariable(identifier="ld", globl=False, alignment=16, init=(LongDoubleInit(1.5),))
         text = var.emit()
         assert ".quad" in text
@@ -888,8 +890,6 @@ class TestLongDoubleInitEmit:
 
     def test_static_constant_long_double_emits_quad_short_and_zero_pad(self) -> None:
         """``StaticConstant`` with ``LongDoubleInit(1.5)`` emits ``.quad``, ``.short``, ``.zero 6``."""
-        from compiler.syntax.asm import LongDoubleInit, StaticConstant
-
         const = StaticConstant(identifier="ld_const", alignment=16, init=LongDoubleInit(1.5))
         text = const.emit()
         assert ".quad" in text
@@ -902,113 +902,79 @@ class TestX87Instructions:
 
     def test_fldt_emits_fldt(self) -> None:
         """``Fldt(Memory(...))`` emits ``fldt``."""
-        from compiler.syntax.asm import Fldt
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-16)
         assert "fldt" in Fldt(src=mem).emit()
 
     def test_fstpt_emits_fstpt(self) -> None:
         """``Fstpt(Memory(...))`` emits ``fstpt``."""
-        from compiler.syntax.asm import Fstpt
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-32)
         assert "fstpt" in Fstpt(dst=mem).emit()
 
     def test_faddp_emits_faddp(self) -> None:
         """``Faddp()`` emits ``faddp``."""
-        from compiler.syntax.asm import Faddp
-
         assert "faddp" in Faddp().emit()
 
     def test_fsubp_emits_fsubrp(self) -> None:
         """``Fsubp()`` emits ``fsubrp`` (AT&T reversal: ST(1) = ST(1) - ST(0))."""
-        from compiler.syntax.asm import Fsubp
-
         assert Fsubp().emit().strip() == "fsubrp"
 
     def test_fmulp_emits_fmulp(self) -> None:
         """``Fmulp()`` emits ``fmulp``."""
-        from compiler.syntax.asm import Fmulp
-
         assert "fmulp" in Fmulp().emit()
 
     def test_fdivp_emits_fdivrp(self) -> None:
         """``Fdivp()`` emits ``fdivrp`` (AT&T reversal: ST(1) = ST(1) / ST(0))."""
-        from compiler.syntax.asm import Fdivp
-
         assert Fdivp().emit().strip() == "fdivrp"
 
     def test_fchs_emits_fchs(self) -> None:
         """``Fchs()`` emits ``fchs`` (negate ST0)."""
-        from compiler.syntax.asm import Fchs
-
         assert "fchs" in Fchs().emit()
 
     def test_fucomip_emits_fucomip(self) -> None:
         """``Fucomip()`` emits ``fucomip``."""
-        from compiler.syntax.asm import Fucomip
-
         assert "fucomip" in Fucomip().emit()
 
     def test_fstp0_emits_fstp_st0(self) -> None:
         """``Fstp0()`` emits ``fstp %st(0)`` (pop and discard)."""
-        from compiler.syntax.asm import Fstp0
-
         text = Fstp0().emit()
         assert "fstp" in text
 
     def test_fildl_emits_fildl(self) -> None:
         """``Fildl(Memory(...))`` emits ``fildl``."""
-        from compiler.syntax.asm import Fildl
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fildl" in Fildl(src=mem).emit()
 
     def test_fildq_emits_fildq(self) -> None:
         """``Fildq(Memory(...))`` emits ``fildq``."""
-        from compiler.syntax.asm import Fildq
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fildq" in Fildq(src=mem).emit()
 
     def test_fisttpl_emits_fisttpl(self) -> None:
         """``Fisttpl(Memory(...))`` emits ``fisttpl`` (store truncated int32, pop)."""
-        from compiler.syntax.asm import Fisttpl
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fisttpl" in Fisttpl(dst=mem).emit()
 
     def test_fisttpq_emits_fisttpq(self) -> None:
         """``Fisttpq(Memory(...))`` emits ``fisttpq`` (store truncated int64, pop)."""
-        from compiler.syntax.asm import Fisttpq
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fisttpq" in Fisttpq(dst=mem).emit()
 
     def test_fldl_emits_fldl(self) -> None:
         """``Fldl(Memory(...))`` emits ``fldl`` (load double to x87)."""
-        from compiler.syntax.asm import Fldl
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fldl" in Fldl(src=mem).emit()
 
     def test_fstpl_emits_fstpl(self) -> None:
         """``Fstpl(Memory(...))`` emits ``fstpl`` (store x87 as double, pop)."""
-        from compiler.syntax.asm import Fstpl
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fstpl" in Fstpl(dst=mem).emit()
 
     def test_flds_emits_flds(self) -> None:
         """``Flds(Memory(...))`` emits ``flds`` (load float to x87)."""
-        from compiler.syntax.asm import Flds
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "flds" in Flds(src=mem).emit()
 
     def test_fstps_emits_fstps(self) -> None:
         """``Fstps(Memory(...))`` emits ``fstps`` (store x87 as float, pop)."""
-        from compiler.syntax.asm import Fstps
-
         mem = Memory(reg=Register(GPRegisters.BP, Width.QWORD), offset=-8)
         assert "fstps" in Fstps(dst=mem).emit()

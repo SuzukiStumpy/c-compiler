@@ -6,6 +6,11 @@ from pathlib import Path
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import LexerError
 
+# Matches any valid C integer literal base: hex (0x/0X), binary (0b/0B, GCC extension),
+# octal (leading 0 followed by octal digits), or decimal.  Ordered so that more specific
+# prefixes win over the plain-decimal fallback.
+_INT_BASE: str = r"(?:0[xX][0-9a-fA-F]+|0[bB][01]+|0[0-7]+|[0-9]+)"
+
 _TOKEN_PATTERNS: list[tuple[str, str]] = [
     # Keywords - must precede IDENTIFIER
     ("INT", r"int\b"),
@@ -41,12 +46,12 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("FPLONGDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[lL](?![\w.])"),
     ("FPFLOAT", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[fF](?![\w.])"),
     ("FPDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)(?![\w.])"),
-    ("ULONGLONG", r"[0-9]+(?:(?:ll|LL)[uU]|[uU](?:ll|LL))(?![\w.])"),
-    ("LONGLONG", r"[0-9]+(?:ll|LL)(?![\w.])"),
-    ("ULONG", r"[0-9]+(?:[lL][uU]|[uU][lL])(?![\w.])"),
-    ("LONGINT", r"[0-9]+[lL](?![\w.])"),
-    ("UINT", r"[0-9]+[uU](?![\w.])"),
-    ("NUMBER", r"[0-9]+(?![\w.])"),
+    ("ULONGLONG", rf"{_INT_BASE}(?:(?:ll|LL)[uU]|[uU](?:ll|LL))(?![\w.])"),
+    ("LONGLONG", rf"{_INT_BASE}(?:ll|LL)(?![\w.])"),
+    ("ULONG", rf"{_INT_BASE}(?:[lL][uU]|[uU][lL])(?![\w.])"),
+    ("LONGINT", rf"{_INT_BASE}[lL](?![\w.])"),
+    ("UINT", rf"{_INT_BASE}[uU](?![\w.])"),
+    ("NUMBER", rf"{_INT_BASE}(?![\w.])"),
     ("CONSTCHAR", r"'([^'\\\n]|\\['\"?\\abfnrtv])'"),
     ("STRING", r"\"([^\"\\\n]|\\['\"\\?abfnrtv])*\""),
     # Punctuation
