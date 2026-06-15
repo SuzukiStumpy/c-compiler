@@ -180,6 +180,7 @@ from compiler.syntax.ast import (
     Subtract,
     Switch,
     Type,
+    TypedefDecl,
     UChar,
     UInt128Type,
     UIntType,
@@ -257,10 +258,14 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
 )
 
 # Type specifiers plus storage-class keywords; the full set consumed by _parse_specifiers.
+# TYPEDEF is included so that _parse_block_item recognises it as the start of a declaration.
+# IDENTIFIER is intentionally absent here; typedef-name resolution is done dynamically by
+# the Parser instance based on its scope stack.
 _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | frozenset(
     {
         TokenType.STATIC,
         TokenType.EXTERN,
+        TokenType.TYPEDEF,
     }
 )
 
@@ -276,6 +281,9 @@ class Parser:
         _tokens: The complete token stream to parse.
         _pos: Index of the next token to be consumed.
         _last: The most recently consumed token, used to anchor EOF errors.
+        _typedef_scopes: Stack of sets of typedef names, one frame per open scope.
+            The outermost frame (index 0) holds file-scope typedef names.
+            Lookup walks from the innermost frame outward; the innermost match wins.
     """
 
     def __init__(self, tokens: list[Token]) -> None:
@@ -287,6 +295,7 @@ class Parser:
         self._tokens = tokens
         self._pos = 0
         self._last: Token | None = None
+        self._typedef_scopes: list[dict[str, Type]] = [{}]
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -500,6 +509,52 @@ class Parser:
         return ParseError(message, "<unknown>", 0, 0, "", [])
 
     # ------------------------------------------------------------------
+    # Typedef scope helpers
+    # ------------------------------------------------------------------
+
+    def _is_typedef_name(self, name: str) -> bool:
+        """Return True if ``name`` is a typedef name visible in the current scope.
+
+        Walks the scope stack from innermost to outermost; the first frame that
+        contains ``name`` wins.
+
+        Args:
+            name: The identifier string to look up.
+
+        Returns:
+            ``True`` when ``name`` resolves to a typedef in any enclosing scope.
+        """
+        for frame in reversed(self._typedef_scopes):
+            if name in frame:
+                return True
+        return False
+
+    def _lookup_typedef(self, name: str) -> Type | None:
+        """Return the ``Type`` that ``name`` aliases, or ``None`` if not a typedef.
+
+        Searches from the innermost scope outward.
+
+        Args:
+            name: The identifier string to look up.
+
+        Returns:
+            The aliased ``Type``, or ``None`` when the name is not a typedef.
+        """
+        for frame in reversed(self._typedef_scopes):
+            if name in frame:
+                return frame[name]
+        return None
+
+    def _register_typedef(self, name: str, aliased_type: Type) -> None:
+        """Register ``name`` as a typedef alias for ``aliased_type`` in the innermost scope.
+
+        Args:
+            name: The alias identifier to register.
+            aliased_type: The ``Type`` node that ``name`` maps to.
+        """
+        self._typedef_scopes[-1][name] = aliased_type
+
+    # ------------------------------------------------------------------
     # Type-specifier helpers
     # ------------------------------------------------------------------
 
@@ -708,6 +763,10 @@ class Parser:
         union_tag: str | None = None
 
         while (peek := self._peek()) is not None and peek.type in _DECLARATION_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
+            if peek.type == TokenType.TYPEDEF:
+                # TYPEDEF is intercepted by _parse_declaration before _parse_specifiers is called;
+                # if it appears here something is wrong — stop and let _resolve_type raise.
+                break
             if peek.type == TokenType.STRUCT:
                 if type_seen:
                     raise self._token_error("'struct' cannot be combined with other type specifiers", peek)
@@ -741,6 +800,15 @@ class Parser:
                     raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
                 type_seen.add(tok.type)
                 last_type_tok = tok
+
+        # If no type specifiers were consumed yet, check for a typedef-name identifier.
+        if not type_seen and struct_tag is None and union_tag is None:
+            peek = self._peek()
+            if peek is not None and peek.type == TokenType.IDENTIFIER:
+                resolved = self._lookup_typedef(peek.value)
+                if resolved is not None:
+                    self._consume()
+                    return resolved, storage
 
         return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag), storage
 
@@ -924,18 +992,20 @@ class Parser:
                 ``}`` is found, or any block item is malformed.
         """
         self._expect(TokenType.LBRACE)
-
+        self._typedef_scopes.append({})
         items: list[BlockItem] = []
-        while True:
-            token = self._peek()
-            if token is None:
-                raise self._eof_error("expected '}', got end of input")
-            if token.type == TokenType.RBRACE:
-                break
-            items.append(self._parse_block_item())
-
-        # Eat the final RBRACE before we return
-        self._consume()
+        try:
+            while True:
+                token = self._peek()
+                if token is None:
+                    raise self._eof_error("expected '}', got end of input")
+                if token.type == TokenType.RBRACE:
+                    break
+                items.append(self._parse_block_item())
+            # Eat the final RBRACE before we return
+            self._consume()
+        finally:
+            self._typedef_scopes.pop()
         return tuple(items)
 
     def _parse_block_item(self) -> BlockItem:
@@ -952,7 +1022,10 @@ class Parser:
             ParseError: If the item is malformed.
         """
         token = self._peek()
-        if token is not None and token.type in _DECLARATION_SPECIFIER_TOKENS:
+        if token is not None and (
+            token.type in _DECLARATION_SPECIFIER_TOKENS
+            or (token.type == TokenType.IDENTIFIER and self._is_typedef_name(token.value))
+        ):
             return D(declaration=self._parse_declaration())
         return S(statement=self._parse_statement())
 
@@ -1006,6 +1079,15 @@ class Parser:
                 and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
             ):
                 return self._parse_union_declaration()
+
+        if self._match(TokenType.TYPEDEF):
+            self._consume()  # consume 'typedef'
+            base_type = self._parse_type()
+            alias_name, transform, _ = self._parse_declarator()
+            self._expect(TokenType.SEMICOLON)
+            full_typedef_type = transform(base_type)
+            self._register_typedef(alias_name, full_typedef_type)
+            return TypedefDecl(name=alias_name, aliased_type=full_typedef_type)
 
         first_token = self._peek()
         base_type, storage = self._parse_specifiers()
@@ -1906,6 +1988,12 @@ class Parser:
                 specifier appears more than once, or if ``double`` is combined
                 with another type specifier.
         """
+        peek = self._peek()
+        if peek is not None and peek.type == TokenType.IDENTIFIER:
+            resolved = self._lookup_typedef(peek.value)
+            if resolved is not None:
+                self._consume()
+                return resolved
         seen, last_tok, struct_tag, union_tag = self._consume_type_specifiers()
         return self._resolve_type(seen, last_tok, struct_tag, union_tag)
 

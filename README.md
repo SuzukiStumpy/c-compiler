@@ -66,6 +66,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Function declarations and definitions (multiple per translation unit)
 - Struct and union declarations and definitions
 - Storage classes: `static` and `extern`
+- `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 
 ### Semantic analysis
 
@@ -233,12 +234,6 @@ None of the three C11 type qualifiers are recognised by the lexer or parser:
 
 Any source file that uses these qualifiers will fail to parse.
 
-### `typedef`
-
-`typedef` (sec. 6.7.8) is not implemented. This is the single most impactful missing feature in practice: preprocessed standard-library headers (`<stddef.h>`, `<stdint.h>`, `<stdio.h>`, etc.) all emit `typedef` declarations for `size_t`, `ptrdiff_t`, `uint32_t`, and hundreds of other names. Without `typedef` support the compiler cannot consume any preprocessed system header.
-
-A design has been agreed (see the project memory); implementation has not yet started.
-
 ### Atomic types and thread-local storage
 
 C11 introduced a concurrency model alongside `<stdatomic.h>`:
@@ -292,7 +287,7 @@ Separate compilation of individual files followed by linking with a system linke
 
 ### Standard library
 
-No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI and do not rely on `typedef` names that would prevent their headers from being included (see above).
+No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are now recognised, though other missing features (type qualifiers, `enum`, variadic functions) may still prevent some headers from parsing cleanly.
 
 ---
 

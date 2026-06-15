@@ -33,6 +33,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("SIZEOF", r"sizeof\b"),
     ("STRUCT", r"struct\b"),
     ("UNION", r"union\b"),
+    ("TYPEDEF", r"typedef\b"),
     # Identifiers and literals — INT128 must precede IDENTIFIER so __int128 is not classified as IDENTIFIER
     ("INT128", r"__int128\b"),
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),

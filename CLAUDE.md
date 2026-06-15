@@ -44,6 +44,7 @@ uv run test
 - All functions must have type annotations (ANN rules are enabled)
 - All modules, types and functions should have docstrings attached explaining their usage.  In addition, functions should have parameters, return values and exceptions explained in the docstring.  Use Google-style formatting.
 - Before adding any code, tests MUST be written.  Adopt a TDD workflow: Red, Green, Refactor.
+- When adding new functionality, work from front to back in the compiler pipeline.  Ensure that tests at each stage pass before proceeding to the next.
 
 ## Architecture
 

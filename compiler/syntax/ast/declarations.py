@@ -254,6 +254,22 @@ class UnionDecl(Declaration):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedefDecl(Declaration):
+    """A typedef declaration, binding an alias name to an aliased type.
+
+    Resolved entirely by the parser; downstream stages do not see typedef names.
+    Semantic analysis and later stages should skip ``TypedefDecl`` nodes.
+
+    Attributes:
+        name: The alias identifier introduced by the typedef.
+        aliased_type: The concrete ``Type`` that ``name`` maps to.
+    """
+
+    name: str
+    aliased_type: Type
+
+
+@dataclass(frozen=True, slots=True)
 class Program:
     """The root AST node representing a complete translation unit.
 

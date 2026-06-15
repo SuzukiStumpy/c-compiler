@@ -39,6 +39,7 @@ class TokenType(Enum):
     SIZEOF = auto()
     STRUCT = auto()
     UNION = auto()
+    TYPEDEF = auto()
     INT128 = auto()
     # Synthetic type-specifier sentinel – not produced by the lexer; used internally
     # by the parser to represent the two-token ``long long`` specifier as a single
