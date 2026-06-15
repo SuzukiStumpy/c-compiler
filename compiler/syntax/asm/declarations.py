@@ -13,11 +13,15 @@ from compiler.syntax.asm.operands import GPRegisters, Operand, Width
 from compiler.syntax.asm.values import (
     CharInit,
     DoubleInit,
+    Int128Init,
     IntInit,
     LongInit,
     PointerInit,
+    ShortInit,
     StaticInit,
     StringInit,
+    UInt128Init,
+    UShortInit,
     ZeroInit,
 )
 
@@ -191,7 +195,11 @@ class StaticVariable(TopLevel):
             lines.append(_asm_line(".globl", self.identifier))
 
         in_bss = all(
-            isinstance(i, ZeroInit) or (isinstance(i, (CharInit, IntInit, LongInit)) and i.value == 0)
+            isinstance(i, ZeroInit)
+            or (
+                isinstance(i, (CharInit, ShortInit, UShortInit, IntInit, LongInit, Int128Init, UInt128Init))
+                and i.value == 0
+            )
             for i in self.init
         )
         lines.append(_asm_line(".bss" if in_bss else ".data"))
@@ -202,6 +210,8 @@ class StaticVariable(TopLevel):
             match init:
                 case CharInit(value=v):
                     lines.append(_asm_line(".byte", str(v)))
+                case ShortInit(value=v) | UShortInit(value=v):
+                    lines.append(_asm_line(".short", str(v)))
                 case ZeroInit(bytes=n):
                     lines.append(_asm_line(".zero", str(n)))
                 case IntInit(value=0):
@@ -212,6 +222,12 @@ class StaticVariable(TopLevel):
                     lines.append(_asm_line(".zero", "8"))
                 case LongInit(value=v):
                     lines.append(_asm_line(".quad", str(v)))
+                case Int128Init(value=v) | UInt128Init(value=v):
+                    mask64 = (1 << 64) - 1
+                    lo = v & mask64
+                    hi = (v >> 64) & mask64
+                    lines.append(_asm_line(".quad", str(lo)))
+                    lines.append(_asm_line(".quad", str(hi)))
                 case DoubleInit(value=0.0):
                     lines.append(_asm_line(".zero", "8"))
                 case DoubleInit() as d:

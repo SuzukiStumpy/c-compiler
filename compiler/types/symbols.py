@@ -118,6 +118,58 @@ class UCharInit(StaticInit):
 
 
 @dataclass(frozen=True, slots=True)
+class ShortInit(StaticInit):
+    """2-byte signed short integer initialiser element (C ``short`` / ``signed short``).
+
+    Attributes:
+        value: The signed integer value to store.  Never zero - use ``ZeroInit(2)``
+            for a zero-valued 2-byte element.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class UShortInit(StaticInit):
+    """2-byte unsigned short integer initialiser element (C ``unsigned short``).
+
+    Attributes:
+        value: The unsigned integer value to store.  Never zero - use ``ZeroInit(2)``
+            for a zero-valued 2-byte element.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class Int128Init(StaticInit):
+    """16-byte signed 128-bit integer initialiser element (GCC ``__int128``).
+
+    Python ``int`` is arbitrary-precision so the full 128-bit signed range is
+    stored without loss.  Never zero - use ``ZeroInit(16)`` for a zero-valued element.
+
+    Attributes:
+        value: The signed integer value.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class UInt128Init(StaticInit):
+    """16-byte unsigned 128-bit integer initialiser element (GCC ``unsigned __int128``).
+
+    Python ``int`` is arbitrary-precision so the full 128-bit unsigned range is
+    stored without loss.  Never zero - use ``ZeroInit(16)`` for a zero-valued element.
+
+    Attributes:
+        value: The unsigned integer value.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
 class ZeroInit(StaticInit):
     """Zero-fill initialiser element spanning ``bytes`` bytes.
 

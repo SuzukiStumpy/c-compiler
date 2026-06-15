@@ -33,6 +33,7 @@ class Width(IntEnum):
     """
 
     BYTE = 1
+    WORD = 2
     DWORD = 4
     QWORD = 8
 
@@ -45,22 +46,22 @@ class GPRegisters(Enum):
     same name because they are only ever addressed at full 64-bit width.
     """
 
-    AX = {Width.QWORD: "rax", Width.DWORD: "eax", Width.BYTE: "al"}
-    BX = {Width.QWORD: "rbx", Width.DWORD: "ebx", Width.BYTE: "bl"}
-    CX = {Width.QWORD: "rcx", Width.DWORD: "ecx", Width.BYTE: "cl"}
-    DX = {Width.QWORD: "rdx", Width.DWORD: "edx", Width.BYTE: "dl"}
-    DI = {Width.QWORD: "rdi", Width.DWORD: "edi", Width.BYTE: "dil"}
-    SI = {Width.QWORD: "rsi", Width.DWORD: "esi", Width.BYTE: "sil"}
-    R8 = {Width.QWORD: "r8", Width.DWORD: "r8d", Width.BYTE: "r8b"}
-    R9 = {Width.QWORD: "r9", Width.DWORD: "r9d", Width.BYTE: "r9b"}
-    R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.BYTE: "r10b"}
-    R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.BYTE: "r11b"}
-    R12 = {Width.QWORD: "r12", Width.DWORD: "r12d", Width.BYTE: "r12b"}
-    R13 = {Width.QWORD: "r13", Width.DWORD: "r13d", Width.BYTE: "r13b"}
-    R14 = {Width.QWORD: "r14", Width.DWORD: "r14d", Width.BYTE: "r14b"}
-    R15 = {Width.QWORD: "r15", Width.DWORD: "r15d", Width.BYTE: "r15b"}
-    SP = {Width.QWORD: "rsp", Width.DWORD: "rsp", Width.BYTE: "rsp"}
-    BP = {Width.QWORD: "rbp", Width.DWORD: "rbp", Width.BYTE: "rbp"}
+    AX = {Width.QWORD: "rax", Width.DWORD: "eax", Width.WORD: "ax", Width.BYTE: "al"}
+    BX = {Width.QWORD: "rbx", Width.DWORD: "ebx", Width.WORD: "bx", Width.BYTE: "bl"}
+    CX = {Width.QWORD: "rcx", Width.DWORD: "ecx", Width.WORD: "cx", Width.BYTE: "cl"}
+    DX = {Width.QWORD: "rdx", Width.DWORD: "edx", Width.WORD: "dx", Width.BYTE: "dl"}
+    DI = {Width.QWORD: "rdi", Width.DWORD: "edi", Width.WORD: "di", Width.BYTE: "dil"}
+    SI = {Width.QWORD: "rsi", Width.DWORD: "esi", Width.WORD: "si", Width.BYTE: "sil"}
+    R8 = {Width.QWORD: "r8", Width.DWORD: "r8d", Width.WORD: "r8w", Width.BYTE: "r8b"}
+    R9 = {Width.QWORD: "r9", Width.DWORD: "r9d", Width.WORD: "r9w", Width.BYTE: "r9b"}
+    R10 = {Width.QWORD: "r10", Width.DWORD: "r10d", Width.WORD: "r10w", Width.BYTE: "r10b"}
+    R11 = {Width.QWORD: "r11", Width.DWORD: "r11d", Width.WORD: "r11w", Width.BYTE: "r11b"}
+    R12 = {Width.QWORD: "r12", Width.DWORD: "r12d", Width.WORD: "r12w", Width.BYTE: "r12b"}
+    R13 = {Width.QWORD: "r13", Width.DWORD: "r13d", Width.WORD: "r13w", Width.BYTE: "r13b"}
+    R14 = {Width.QWORD: "r14", Width.DWORD: "r14d", Width.WORD: "r14w", Width.BYTE: "r14b"}
+    R15 = {Width.QWORD: "r15", Width.DWORD: "r15d", Width.WORD: "r15w", Width.BYTE: "r15b"}
+    SP = {Width.QWORD: "rsp", Width.DWORD: "rsp", Width.WORD: "rsp", Width.BYTE: "rsp"}
+    BP = {Width.QWORD: "rbp", Width.DWORD: "rbp", Width.WORD: "rbp", Width.BYTE: "rbp"}
 
 
 class FPRegisters(Enum):

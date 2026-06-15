@@ -178,6 +178,7 @@ from compiler.syntax.ast import (
     Switch,
     Type,
     UChar,
+    UInt128Type,
     UIntType,
     ULongType,
     Unary,
@@ -185,12 +186,14 @@ from compiler.syntax.ast import (
     Union,
     UnionDecl,
     UnionDeclaration,
+    UShortType,
     Var,
     VarDecl,
     VariableDeclaration,
     VoidType,
     While,
 )
+from compiler.syntax.ast.types import Int128Type, ShortType
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -241,6 +244,8 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.UNSIGNED,
         TokenType.DOUBLE,
         TokenType.CHAR,
+        TokenType.SHORT,
+        TokenType.INT128,
         TokenType.VOID,
         TokenType.STRUCT,
         TokenType.UNION,
@@ -544,7 +549,7 @@ class Parser:
             last_tok = tok
         return frozenset(seen), last_tok, struct_tag, union_tag
 
-    def _resolve_type(
+    def _resolve_type(  # noqa: C901 - function too complex
         self,
         seen: frozenset[TokenType],
         last_tok: Token | None,
@@ -606,6 +611,20 @@ class Parser:
             if TokenType.SIGNED in seen:
                 return SChar()
             return Char()
+        if TokenType.SHORT in seen:
+            invalid = seen - {TokenType.SHORT, TokenType.INT, TokenType.SIGNED, TokenType.UNSIGNED}
+            if invalid:
+                raise self._token_error("'short' may only be combined with 'int', 'signed', or 'unsigned'", last_tok)
+            if TokenType.UNSIGNED in seen:
+                return UShortType()
+            return ShortType()
+        if TokenType.INT128 in seen:
+            invalid = seen - {TokenType.INT128, TokenType.SIGNED, TokenType.UNSIGNED}
+            if invalid:
+                raise self._token_error("'__int128' may only be combined with 'signed' or 'unsigned'", last_tok)
+            if TokenType.UNSIGNED in seen:
+                return UInt128Type()
+            return Int128Type()
         if TokenType.LONG in seen and TokenType.UNSIGNED in seen:
             return ULongType()
         if TokenType.UNSIGNED in seen:

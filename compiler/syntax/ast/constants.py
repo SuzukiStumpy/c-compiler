@@ -114,3 +114,57 @@ class ConstUChar(Const):
     """
 
     val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstShort(Const):
+    """Represents a signed 16-bit short integer constant within the C code.
+
+    Appears in zero-initialisers and after truncation from wider types.
+
+    Attributes:
+        val: The signed integer value in the range [-32768, 32767].
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstUShort(Const):
+    """Represents an unsigned 16-bit short integer constant within the C code.
+
+    Appears in zero-initialisers and after truncation from wider types.
+
+    Attributes:
+        val: The unsigned integer value in the range [0, 65535].
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstInt128(Const):
+    """Represents a signed 128-bit integer constant within the C code.
+
+    Python ``int`` is arbitrary-precision so the full 128-bit range is stored
+    without loss.
+
+    Attributes:
+        val: The signed integer value in the range [-2**127, 2**127 - 1].
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstUInt128(Const):
+    """Represents an unsigned 128-bit integer constant within the C code.
+
+    Python ``int`` is arbitrary-precision so the full 128-bit range is stored
+    without loss.
+
+    Attributes:
+        val: The unsigned integer value in the range [0, 2**128 - 1].
+    """
+
+    val: int

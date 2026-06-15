@@ -1080,3 +1080,175 @@ class TestCharTypeDeclarations:
         vd = item.declaration.variable_declaration
         assert vd.var_type == Pointer(Char())
         assert vd.init == SingleInit(String(b"hi"))
+
+
+# ---------------------------------------------------------------------------
+# 16-bit integer types (short / unsigned short)
+# ---------------------------------------------------------------------------
+
+_SHORT = _tok(TokenType.SHORT, "short")
+_INT128 = _tok(TokenType.INT128, "__int128")
+
+
+class TestShortTypes:
+    """Parser recognises ``short`` and ``unsigned short`` type specifiers."""
+
+    def test_short_variable_declaration(self) -> None:
+        """``short x;`` at file scope produces a ``ShortType`` variable."""
+        from compiler.syntax.ast.types import ShortType
+
+        tokens = [_SHORT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == ShortType()
+
+    def test_short_int_variable_declaration(self) -> None:
+        """``short int x;`` is equivalent to ``short x;``."""
+        from compiler.syntax.ast.types import ShortType
+
+        tokens = [_SHORT, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == ShortType()
+
+    def test_signed_short_variable_declaration(self) -> None:
+        """``signed short x;`` produces a ``ShortType`` variable."""
+        from compiler.syntax.ast.types import ShortType
+
+        tokens = [_SIGNED, _SHORT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == ShortType()
+
+    def test_unsigned_short_variable_declaration(self) -> None:
+        """``unsigned short x;`` produces a ``UShortType`` variable."""
+        from compiler.syntax.ast.types import UShortType
+
+        tokens = [_UNSIGNED, _SHORT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == UShortType()
+
+    def test_unsigned_short_int_variable_declaration(self) -> None:
+        """``unsigned short int x;`` produces a ``UShortType`` variable."""
+        from compiler.syntax.ast.types import UShortType
+
+        tokens = [_UNSIGNED, _SHORT, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == UShortType()
+
+    def test_short_return_type(self) -> None:
+        """``short foo(void) { return 0; }`` parses with a ``ShortType`` return."""
+        from compiler.syntax.ast.types import ShortType
+
+        tokens = [_SHORT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.ret == ShortType()
+
+    def test_short_parameter(self) -> None:
+        """``int foo(short x) { ... }`` has a ``ShortType`` parameter."""
+        from compiler.syntax.ast.types import ShortType
+
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _SHORT,
+            _ident("x"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params[0].param_type == ShortType()
+
+    def test_short_long_combination_is_rejected(self) -> None:
+        """``short long x;`` is a parse error."""
+        tokens = [_SHORT, _tok(TokenType.LONG, "long"), _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# 128-bit integer types (__int128 / unsigned __int128)
+# ---------------------------------------------------------------------------
+
+
+class TestInt128Types:
+    """Parser recognises ``__int128`` and ``unsigned __int128`` type specifiers."""
+
+    def test_int128_variable_declaration(self) -> None:
+        """``__int128 x;`` at file scope produces an ``Int128Type`` variable."""
+        from compiler.syntax.ast.types import Int128Type
+
+        tokens = [_INT128, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Int128Type()
+
+    def test_unsigned_int128_variable_declaration(self) -> None:
+        """``unsigned __int128 x;`` produces a ``UInt128Type`` variable."""
+        from compiler.syntax.ast.types import UInt128Type
+
+        tokens = [_UNSIGNED, _INT128, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == UInt128Type()
+
+    def test_signed_int128_variable_declaration(self) -> None:
+        """``signed __int128 x;`` is equivalent to ``__int128 x;``."""
+        from compiler.syntax.ast.types import Int128Type
+
+        tokens = [_SIGNED, _INT128, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == Int128Type()
+
+    def test_int128_return_type(self) -> None:
+        """``__int128 foo(void) { ... }`` parses with ``Int128Type`` return."""
+        from compiler.syntax.ast.types import Int128Type
+
+        tokens = [
+            _INT128,
+            _ident("foo"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.ret == Int128Type()
+
+    def test_int128_combined_with_int_is_rejected(self) -> None:
+        """``__int128 int x;`` is a parse error."""
+        tokens = [_INT128, _INT, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+    def test_int128_combined_with_long_is_rejected(self) -> None:
+        """``__int128 long x;`` is a parse error."""
+        tokens = [_INT128, _tok(TokenType.LONG, "long"), _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)

@@ -19,6 +19,7 @@ from compiler.syntax.asm import (
     GPRegisters,
     Imm,
     Instruction,
+    Int128Init,
     Jmp,
     JmpCC,
     Label,
@@ -34,10 +35,14 @@ from compiler.syntax.asm import (
     Register,
     Ret,
     SetCC,
+    ShortInit,
     StaticConstant,
     StaticVariable,
     StringInit,
+    UInt128Init,
+    UShortInit,
     Width,
+    Word,
 )
 
 # ---------------------------------------------------------------------------
@@ -645,3 +650,102 @@ class TestStaticConstantStringComment:
         """Comment shows printable content plus ``\\0`` for null-terminated strings."""
         const = StaticConstant(identifier="s", alignment=1, init=StringInit(b"Hi", null_terminated=True))
         assert "      # String: Hi\\0" in const.emit()
+
+
+# ---------------------------------------------------------------------------
+# Word AssemblyType
+# ---------------------------------------------------------------------------
+
+
+class TestWordAssemblyType:
+    """``Word`` is a concrete frozen dataclass for 16-bit assembly type."""
+
+    def test_word_is_assembly_type(self) -> None:
+        """``Word()`` is an instance of ``AssemblyType``."""
+        from compiler.syntax.asm.values import AssemblyType
+
+        assert isinstance(Word(), AssemblyType)
+
+    def test_word_equality(self) -> None:
+        """Two ``Word()`` instances compare equal."""
+        assert Word() == Word()
+
+    def test_word_not_equal_to_byte(self) -> None:
+        """``Word()`` is not equal to ``Byte()``."""
+        assert Word() != Byte()
+
+    def test_word_not_equal_to_longword(self) -> None:
+        """``Word()`` is not equal to ``Longword()``."""
+        assert Word() != Longword()
+
+
+# ---------------------------------------------------------------------------
+# Short and __int128 StaticVariable emission
+# ---------------------------------------------------------------------------
+
+
+class TestShortStaticVariableEmit:
+    """``StaticVariable.emit()`` handles ``ShortInit`` and ``UShortInit``."""
+
+    def test_short_init_nonzero_emits_short_directive(self) -> None:
+        """``ShortInit(42)`` emits a ``.short 42`` directive."""
+        var = StaticVariable(identifier="s", globl=False, alignment=2, init=(ShortInit(42),))
+        assert "      .short 42" in var.emit()
+
+    def test_short_init_zero_goes_to_bss(self) -> None:
+        """``ShortInit(0)`` triggers ``.bss`` section selection."""
+        var = StaticVariable(identifier="s", globl=False, alignment=2, init=(ShortInit(0),))
+        assert ".bss" in var.emit()
+
+    def test_ushort_init_nonzero_emits_short_directive(self) -> None:
+        """``UShortInit(65535)`` emits a ``.short 65535`` directive."""
+        var = StaticVariable(identifier="u", globl=False, alignment=2, init=(UShortInit(65535),))
+        assert "      .short 65535" in var.emit()
+
+    def test_ushort_init_zero_goes_to_bss(self) -> None:
+        """``UShortInit(0)`` triggers ``.bss`` section selection."""
+        var = StaticVariable(identifier="u", globl=False, alignment=2, init=(UShortInit(0),))
+        assert ".bss" in var.emit()
+
+    def test_short_init_negative_emits_signed_value(self) -> None:
+        """``ShortInit(-1)`` emits a ``.short -1`` directive."""
+        var = StaticVariable(identifier="s", globl=False, alignment=2, init=(ShortInit(-1),))
+        assert "      .short -1" in var.emit()
+
+
+class TestInt128StaticVariableEmit:
+    """``StaticVariable.emit()`` handles ``Int128Init`` and ``UInt128Init``."""
+
+    def test_int128_init_nonzero_emits_two_quad_directives(self) -> None:
+        """``Int128Init(1)`` emits two ``.quad`` directives (lo=1, hi=0)."""
+        var = StaticVariable(identifier="x", globl=False, alignment=16, init=(Int128Init(1),))
+        lines = [ln.strip() for ln in var.emit().splitlines()]
+        quads = [ln for ln in lines if ln.startswith(".quad")]
+        assert len(quads) == 2
+        assert quads[0] == ".quad 1"
+        assert quads[1] == ".quad 0"
+
+    def test_int128_init_zero_goes_to_bss(self) -> None:
+        """``Int128Init(0)`` triggers ``.bss`` section selection."""
+        var = StaticVariable(identifier="x", globl=False, alignment=16, init=(Int128Init(0),))
+        assert ".bss" in var.emit()
+
+    def test_uint128_init_large_value_splits_correctly(self) -> None:
+        """``UInt128Init`` with a value spanning both halves emits correct lo/hi quads."""
+        val = (0xDEADBEEFCAFEBABE << 64) | 0x0102030405060708
+        var = StaticVariable(identifier="x", globl=False, alignment=16, init=(UInt128Init(val),))
+        lines = [ln.strip() for ln in var.emit().splitlines()]
+        quads = [ln for ln in lines if ln.startswith(".quad")]
+        assert len(quads) == 2
+        assert quads[0] == f".quad {0x0102030405060708}"
+        assert quads[1] == f".quad {0xDEADBEEFCAFEBABE}"
+
+    def test_int128_negative_splits_to_signed_halves(self) -> None:
+        """``Int128Init(-1)`` emits lo=-1 as unsigned 64-bit max and hi=-1 as unsigned 64-bit max."""
+        var = StaticVariable(identifier="x", globl=False, alignment=16, init=(Int128Init(-1),))
+        lines = [ln.strip() for ln in var.emit().splitlines()]
+        quads = [ln for ln in lines if ln.startswith(".quad")]
+        assert len(quads) == 2
+        mask64 = (1 << 64) - 1
+        assert quads[0] == f".quad {mask64}"
+        assert quads[1] == f".quad {mask64}"

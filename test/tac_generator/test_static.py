@@ -6,12 +6,16 @@ from compiler.tac_generator import _convert_symbols_to_tacky, generate
 from compiler.types.symbols import (
     FunAttr,
     Initial,
+    Int128Init,
     IntInit,
     LongInit,
     NoInitializer,
+    ShortInit,
     StaticAttr,
     SymbolTableEntry,
     Tentative,
+    UInt128Init,
+    UShortInit,
     ZeroInit,
 )
 from test.tac_generator.helpers import _instrs_for_body
@@ -337,3 +341,78 @@ class TestTacFunctionGlobl:
         prog = ast.Program(declarations=(ast.FunDecl(self._make_fn("helper", globl=False)),))
         result = generate(prog, {})
         assert result.functions[0].globl is False
+
+
+# ---------------------------------------------------------------------------
+# Short and __int128 static init lowering
+# ---------------------------------------------------------------------------
+
+
+class TestShortStaticInit:
+    """``ShortInit`` and ``UShortInit`` symbol-table inits are lowered to TAC."""
+
+    def test_short_init_nonzero_emits_short_init(self) -> None:
+        """``ShortInit(42)`` lowers to ``tac.ShortInit(42)``."""
+        symbols = {
+            "s": SymbolTableEntry(t=ast.ShortType(), attrs=StaticAttr(init=Initial((ShortInit(42),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="s", globl=False, t=ast.ShortType(), init=(tac.ShortInit(42),))]
+
+    def test_short_init_zero_emits_zero_init(self) -> None:
+        """``ZeroInit(2)`` for a short lowers to ``tac.ZeroInit(2)``."""
+        symbols = {
+            "s": SymbolTableEntry(t=ast.ShortType(), attrs=StaticAttr(init=Initial((ZeroInit(2),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="s", globl=False, t=ast.ShortType(), init=(tac.ZeroInit(2),))]
+
+    def test_ushort_init_nonzero_emits_ushort_init(self) -> None:
+        """``UShortInit(65535)`` lowers to ``tac.UShortInit(65535)``."""
+        symbols = {
+            "u": SymbolTableEntry(t=ast.UShortType(), attrs=StaticAttr(init=Initial((UShortInit(65535),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="u", globl=False, t=ast.UShortType(), init=(tac.UShortInit(65535),))]
+
+    def test_ushort_tentative_emits_zero_init(self) -> None:
+        """Tentative ``unsigned short`` emits ``ZeroInit(2)``."""
+        symbols = {"u": SymbolTableEntry(t=ast.UShortType(), attrs=StaticAttr(init=Tentative(), globl=True))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="u", globl=True, t=ast.UShortType(), init=(tac.ZeroInit(2),))]
+
+
+class TestInt128StaticInit:
+    """``Int128Init`` and ``UInt128Init`` symbol-table inits are lowered to TAC."""
+
+    def test_int128_init_nonzero_emits_int128_init(self) -> None:
+        """``Int128Init(value)`` lowers to ``tac.Int128Init(value)``."""
+        big = (1 << 100) + 7
+        symbols = {
+            "x": SymbolTableEntry(t=ast.Int128Type(), attrs=StaticAttr(init=Initial((Int128Init(big),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.Int128Type(), init=(tac.Int128Init(big),))]
+
+    def test_int128_init_zero_emits_zero_init(self) -> None:
+        """``ZeroInit(16)`` for __int128 lowers to ``tac.ZeroInit(16)``."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.Int128Type(), attrs=StaticAttr(init=Initial((ZeroInit(16),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.Int128Type(), init=(tac.ZeroInit(16),))]
+
+    def test_uint128_init_nonzero_emits_uint128_init(self) -> None:
+        """``UInt128Init(value)`` lowers to ``tac.UInt128Init(value)``."""
+        big = (1 << 127) + 99
+        symbols = {
+            "x": SymbolTableEntry(t=ast.UInt128Type(), attrs=StaticAttr(init=Initial((UInt128Init(big),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.UInt128Type(), init=(tac.UInt128Init(big),))]
+
+    def test_uint128_tentative_emits_zero_init(self) -> None:
+        """Tentative ``unsigned __int128`` emits ``ZeroInit(16)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.UInt128Type(), attrs=StaticAttr(init=Tentative(), globl=True))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=True, t=ast.UInt128Type(), init=(tac.ZeroInit(16),))]

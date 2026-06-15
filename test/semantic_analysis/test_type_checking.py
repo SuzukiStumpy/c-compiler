@@ -449,3 +449,142 @@ class TestSizeOfTypeChecking:
         prog = _program(_return_exp(ast.SizeOf(void_cast)))
         with pytest.raises(SemanticError, match="incomplete"):
             resolve(prog)
+
+
+# ---------------------------------------------------------------------------
+# 16-bit (short) type size and common-type behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestShortTypeSizes:
+    """Semantic analysis provides correct sizes and promotions for ``short`` types."""
+
+    def test_sizeof_short_is_2(self) -> None:
+        """``sizeof(short)`` evaluates to 2."""
+        from compiler.semantic_analysis import type_size
+
+        assert type_size(ast.ShortType(), {}) == 2
+
+    def test_sizeof_unsigned_short_is_2(self) -> None:
+        """``sizeof(unsigned short)`` evaluates to 2."""
+        from compiler.semantic_analysis import type_size
+
+        assert type_size(ast.UShortType(), {}) == 2
+
+    def test_short_is_arithmetic(self) -> None:
+        """``ShortType`` is classified as arithmetic and integer."""
+        from compiler.semantic_analysis import is_arithmetic, is_integer
+
+        assert is_arithmetic(ast.ShortType())
+        assert is_integer(ast.ShortType())
+
+    def test_unsigned_short_is_arithmetic(self) -> None:
+        """``UShortType`` is classified as arithmetic and integer."""
+        from compiler.semantic_analysis import is_arithmetic, is_integer
+
+        assert is_arithmetic(ast.UShortType())
+        assert is_integer(ast.UShortType())
+
+    def test_short_promotes_to_int_in_arithmetic(self) -> None:
+        """``short + short`` resolves with ``IntType`` result (integer promotion)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.ShortType(), ast.ShortType())
+        assert result == ast.IntType()
+
+    def test_unsigned_short_promotes_to_int_in_arithmetic(self) -> None:
+        """``unsigned short + unsigned short`` resolves with ``IntType`` (promotion)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.UShortType(), ast.UShortType())
+        assert result == ast.IntType()
+
+    def test_short_plus_int_gives_int(self) -> None:
+        """``short + int`` resolves to ``IntType`` (short promotes to int)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.ShortType(), ast.IntType())
+        assert result == ast.IntType()
+
+    def test_short_alignment_is_2(self) -> None:
+        """Alignment of ``short`` is 2 bytes."""
+        from compiler.semantic_analysis import type_alignment
+
+        assert type_alignment(ast.ShortType(), {}) == 2
+
+    def test_unsigned_short_alignment_is_2(self) -> None:
+        """Alignment of ``unsigned short`` is 2 bytes."""
+        from compiler.semantic_analysis import type_alignment
+
+        assert type_alignment(ast.UShortType(), {}) == 2
+
+    def test_short_variable_is_accepted(self) -> None:
+        """A local ``short`` variable declaration resolves without error."""
+        body = (_vd("x", ast.Constant(ast.ConstInt(5)), ast.ShortType()),) + _return_exp(_int_const())
+        resolve(_program(body))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# 128-bit (__int128) type size and behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestInt128TypeSizes:
+    """Semantic analysis provides correct sizes and promotions for ``__int128`` types."""
+
+    def test_sizeof_int128_is_16(self) -> None:
+        """``sizeof(__int128)`` evaluates to 16."""
+        from compiler.semantic_analysis import type_size
+
+        assert type_size(ast.Int128Type(), {}) == 16
+
+    def test_sizeof_unsigned_int128_is_16(self) -> None:
+        """``sizeof(unsigned __int128)`` evaluates to 16."""
+        from compiler.semantic_analysis import type_size
+
+        assert type_size(ast.UInt128Type(), {}) == 16
+
+    def test_int128_is_arithmetic(self) -> None:
+        """``Int128Type`` is classified as arithmetic and integer."""
+        from compiler.semantic_analysis import is_arithmetic, is_integer
+
+        assert is_arithmetic(ast.Int128Type())
+        assert is_integer(ast.Int128Type())
+
+    def test_unsigned_int128_is_arithmetic(self) -> None:
+        """``UInt128Type`` is classified as arithmetic and integer."""
+        from compiler.semantic_analysis import is_arithmetic, is_integer
+
+        assert is_arithmetic(ast.UInt128Type())
+        assert is_integer(ast.UInt128Type())
+
+    def test_int128_alignment_is_16(self) -> None:
+        """Alignment of ``__int128`` is 16 bytes per SysV AMD64 ABI."""
+        from compiler.semantic_analysis import type_alignment
+
+        assert type_alignment(ast.Int128Type(), {}) == 16
+
+    def test_unsigned_int128_alignment_is_16(self) -> None:
+        """Alignment of ``unsigned __int128`` is 16 bytes per SysV AMD64 ABI."""
+        from compiler.semantic_analysis import type_alignment
+
+        assert type_alignment(ast.UInt128Type(), {}) == 16
+
+    def test_int128_common_type_signed_wins_if_equal_size(self) -> None:
+        """``__int128 + unsigned __int128`` gives ``unsigned __int128`` (C usual arithmetic)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.Int128Type(), ast.UInt128Type())
+        assert result == ast.UInt128Type()
+
+    def test_int128_wider_than_long(self) -> None:
+        """``__int128 + long`` gives ``__int128`` (wider wins)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.Int128Type(), ast.LongType())
+        assert result == ast.Int128Type()
+
+    def test_int128_variable_is_accepted(self) -> None:
+        """A local ``__int128`` variable declaration resolves without error."""
+        body = (_vd("x", ast.Constant(ast.ConstInt(0)), ast.Int128Type()),) + _return_exp(_int_const())
+        resolve(_program(body))  # must not raise

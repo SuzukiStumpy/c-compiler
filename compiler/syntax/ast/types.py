@@ -116,6 +116,46 @@ class SChar(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class ShortType(Type):
+    """Represents the C ``short`` type (16-bit signed integer).
+
+    Used wherever ``short``, ``short int``, ``signed short``, or ``signed short int``
+    appears as a return type, parameter type, or variable type. The node carries
+    no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class UShortType(Type):
+    """Represents the C ``unsigned short`` type (16-bit unsigned integer).
+
+    Used wherever ``unsigned short`` or ``unsigned short int`` appears as a
+    return type, parameter type, or variable type. The node carries no fields -
+    its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class Int128Type(Type):
+    """Represents the GCC ``__int128`` extension type (128-bit signed integer).
+
+    This is a compiler extension, not part of standard C11.  On x86-64 (SysV ABI)
+    the type is 16 bytes wide with 16-byte alignment.  It is passed and returned
+    in two consecutive integer registers (lo word first).  The node carries no
+    fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class UInt128Type(Type):
+    """Represents the GCC ``unsigned __int128`` extension type (128-bit unsigned integer).
+
+    See ``Int128Type`` for ABI notes.  The node carries no fields - its identity
+    is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class FunType(Type):
     """Represents the type signature of a function definition.
 

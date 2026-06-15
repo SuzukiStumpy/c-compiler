@@ -61,7 +61,18 @@ import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.optimiser.asm_main import allocate_registers
 from compiler.semantic_analysis import type_size
-from compiler.syntax.ast.constants import ConstChar, ConstDouble, ConstInt, ConstLong, ConstUChar, ConstUInt, ConstULong
+from compiler.syntax.ast.constants import (
+    ConstChar,
+    ConstDouble,
+    ConstInt,
+    ConstLong,
+    ConstShort,
+    ConstUChar,
+    ConstUInt,
+    ConstUInt128,
+    ConstULong,
+    ConstUShort,
+)
 from compiler.syntax.ast.types import Array as ArrayType
 from compiler.syntax.ast.types import (
     Char,
@@ -71,12 +82,15 @@ from compiler.syntax.ast.types import (
     LongType,
     Pointer,
     SChar,
+    ShortType,
     Structure,
     Type,
     UChar,
+    UInt128Type,
     UIntType,
     ULongType,
     Union,
+    UShortType,
     VoidType,
 )
 from compiler.types.symbols import FunAttr, StaticAttr, StructTypeTable, SymbolTable
@@ -138,6 +152,8 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
     match val:
         case tac.Constant(value=ConstChar() | ConstUChar()):
             return asm.Byte()
+        case tac.Constant(value=ConstShort() | ConstUShort()):
+            return asm.Word()
         case tac.Constant(value=ConstInt() | ConstUInt()):
             return asm.Longword()
         case tac.Constant(value=ConstLong() | ConstULong()):
@@ -152,6 +168,8 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
                     return asm.Double()
                 case Char() | SChar() | UChar():
                     return asm.Byte()
+                case ShortType() | UShortType():
+                    return asm.Word()
                 case _:
                     return asm.Longword()
         case _:
@@ -169,6 +187,8 @@ def _reg_width(assembly_type: asm.AssemblyType) -> asm.Width:
     """
     if assembly_type == asm.Byte():
         return asm.Width.BYTE
+    if assembly_type == asm.Word():
+        return asm.Width.WORD
     return asm.Width.DWORD if assembly_type == asm.Longword() else asm.Width.QWORD
 
 
@@ -186,10 +206,10 @@ def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
         ``True`` for ``unsigned int`` and ``unsigned long`` values; ``False`` otherwise.
     """
     match val:
-        case tac.Constant(value=ConstUChar() | ConstUInt() | ConstULong()):
+        case tac.Constant(value=ConstUChar() | ConstUShort() | ConstUInt() | ConstULong() | ConstUInt128()):
             return True
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
-            return isinstance(symbol_table[name].t, (UChar, UIntType, ULongType, Pointer))
+            return isinstance(symbol_table[name].t, (UChar, UShortType, UIntType, ULongType, Pointer, UInt128Type))
         case _:
             return False
 
@@ -266,7 +286,18 @@ def _classify_type_at_offset(
     match t:
         case DoubleType():
             eightbytes[eb] = _merge_class(eightbytes[eb], EightbyteClass.SSE)
-        case IntType() | LongType() | UIntType() | ULongType() | Char() | SChar() | UChar() | Pointer():
+        case (
+            IntType()
+            | LongType()
+            | UIntType()
+            | ULongType()
+            | Char()
+            | SChar()
+            | UChar()
+            | ShortType()
+            | UShortType()
+            | Pointer()
+        ):
             eightbytes[eb] = _merge_class(eightbytes[eb], EightbyteClass.INTEGER)
         case ArrayType(element=elem_t, size=n):
             elem_size = type_size(elem_t, struct_type_table)
@@ -611,6 +642,14 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
             return asm.DoubleInit(v)
         case tac.CharInit(value=v):
             return asm.CharInit(v)
+        case tac.ShortInit(value=v):
+            return asm.ShortInit(v)
+        case tac.UShortInit(value=v):
+            return asm.UShortInit(v)
+        case tac.Int128Init(value=v):
+            return asm.Int128Init(v)
+        case tac.UInt128Init(value=v):
+            return asm.UInt128Init(v)
         case tac.ZeroInit(bytes=n):
             return asm.ZeroInit(n)
         case tac.StringInit(string=s, null_terminated=nt):

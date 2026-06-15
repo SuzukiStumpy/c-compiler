@@ -29,10 +29,12 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("UNSIGNED", r"unsigned\b"),
     ("DOUBLE", r"double\b"),
     ("CHAR", r"char\b"),
+    ("SHORT", r"short\b"),
     ("SIZEOF", r"sizeof\b"),
     ("STRUCT", r"struct\b"),
     ("UNION", r"union\b"),
-    # Identifiers and literals
+    # Identifiers and literals — INT128 must precede IDENTIFIER so __int128 is not classified as IDENTIFIER
+    ("INT128", r"__int128\b"),
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("FPDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)(?![\w.])"),
     ("ULONG", r"[0-9]+(?:[lL][uU]|[uU][lL])(?![\w.])"),

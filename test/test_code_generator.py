@@ -10,8 +10,27 @@ import pytest
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.code_generator import generate
-from compiler.syntax.ast.constants import ConstChar, ConstDouble, ConstInt, ConstLong, ConstUChar
-from compiler.syntax.ast.types import Char, DoubleType, IntType, LongType, SChar, UChar, UIntType, ULongType
+from compiler.syntax.ast.constants import (
+    ConstChar,
+    ConstDouble,
+    ConstInt,
+    ConstLong,
+    ConstShort,
+    ConstUChar,
+    ConstUShort,
+)
+from compiler.syntax.ast.types import (
+    Char,
+    DoubleType,
+    IntType,
+    LongType,
+    SChar,
+    ShortType,
+    UChar,
+    UIntType,
+    ULongType,
+    UShortType,
+)
 from compiler.types.symbols import LocalAttr, SymbolTable, SymbolTableEntry
 from compiler.utils.exceptions import CodeGenerationError
 
@@ -2035,3 +2054,97 @@ class TestUnionCodegen:
         assert any(m.assembly_type == asm.Quadword() for m in movs), (
             "Copy of 8-byte union must generate at least one QWORD move"
         )
+
+
+# ---------------------------------------------------------------------------
+# Word assembly type and short/int128 code generation
+# ---------------------------------------------------------------------------
+
+
+class TestAsmTypeShort:
+    """``_asm_type`` returns ``Word`` for short-typed TAC values."""
+
+    def test_const_short_returns_word(self) -> None:
+        """``ConstShort`` constant maps to ``Word`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        assert _asm_type(tac.Constant(value=ConstShort(42))) == asm.Word()
+
+    def test_const_ushort_returns_word(self) -> None:
+        """``ConstUShort`` constant maps to ``Word`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        assert _asm_type(tac.Constant(value=ConstUShort(65535))) == asm.Word()
+
+    def test_short_var_returns_word(self) -> None:
+        """``ShortType`` variable maps to ``Word`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(s=ShortType)
+        assert _asm_type(tac.Var("s"), st) == asm.Word()
+
+    def test_ushort_var_returns_word(self) -> None:
+        """``UShortType`` variable maps to ``Word`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(u=UShortType)
+        assert _asm_type(tac.Var("u"), st) == asm.Word()
+
+    def test_int_var_still_returns_longword(self) -> None:
+        """``IntType`` variable still maps to ``Longword`` (regression guard)."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(x=IntType)
+        assert _asm_type(tac.Var("x"), st) == asm.Longword()
+
+
+class TestRegWidthWord:
+    """``_reg_width`` returns ``Width.WORD`` for ``Word()``."""
+
+    def test_word_returns_width_word(self) -> None:
+        """``_reg_width(Word())`` returns ``Width.WORD``."""
+        from compiler.code_generator import _reg_width
+
+        assert _reg_width(asm.Word()) == asm.Width.WORD
+
+    def test_byte_still_returns_byte(self) -> None:
+        """``_reg_width(Byte())`` still returns ``Width.BYTE`` (regression guard)."""
+        from compiler.code_generator import _reg_width
+
+        assert _reg_width(asm.Byte()) == asm.Width.BYTE
+
+    def test_longword_still_returns_dword(self) -> None:
+        """``_reg_width(Longword())`` still returns ``Width.DWORD`` (regression guard)."""
+        from compiler.code_generator import _reg_width
+
+        assert _reg_width(asm.Longword()) == asm.Width.DWORD
+
+
+class TestTranslateStaticInitShortInt128:
+    """``_translate_static_init`` converts short and __int128 TAC inits to asm."""
+
+    def test_short_init_translates_to_asm_short_init(self) -> None:
+        """``tac.ShortInit(42)`` maps to ``asm.ShortInit(42)``."""
+        from compiler.code_generator import _translate_static_init
+
+        assert _translate_static_init(tac.ShortInit(42)) == asm.ShortInit(42)
+
+    def test_ushort_init_translates_to_asm_ushort_init(self) -> None:
+        """``tac.UShortInit(65535)`` maps to ``asm.UShortInit(65535)``."""
+        from compiler.code_generator import _translate_static_init
+
+        assert _translate_static_init(tac.UShortInit(65535)) == asm.UShortInit(65535)
+
+    def test_int128_init_translates_to_asm_int128_init(self) -> None:
+        """``tac.Int128Init(big)`` maps to ``asm.Int128Init(big)``."""
+        from compiler.code_generator import _translate_static_init
+
+        big = (1 << 100) + 7
+        assert _translate_static_init(tac.Int128Init(big)) == asm.Int128Init(big)
+
+    def test_uint128_init_translates_to_asm_uint128_init(self) -> None:
+        """``tac.UInt128Init(big)`` maps to ``asm.UInt128Init(big)``."""
+        from compiler.code_generator import _translate_static_init
+
+        big = (1 << 127) + 99
+        assert _translate_static_init(tac.UInt128Init(big)) == asm.UInt128Init(big)

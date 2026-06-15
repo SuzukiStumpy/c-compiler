@@ -161,10 +161,16 @@ from compiler.types.symbols import (
     DoubleInit as SymDoubleInit,
 )
 from compiler.types.symbols import (
+    Int128Init as SymInt128Init,
+)
+from compiler.types.symbols import (
     IntInit as SymIntInit,
 )
 from compiler.types.symbols import (
     LongInit as SymLongInit,
+)
+from compiler.types.symbols import (
+    ShortInit as SymShortInit,
 )
 from compiler.types.symbols import (
     StaticInit as SymStaticInit,
@@ -174,6 +180,12 @@ from compiler.types.symbols import (
 )
 from compiler.types.symbols import (
     UCharInit as SymUCharInit,
+)
+from compiler.types.symbols import (
+    UInt128Init as SymUInt128Init,
+)
+from compiler.types.symbols import (
+    UShortInit as SymUShortInit,
 )
 from compiler.types.symbols import (
     ZeroInit as SymZeroInit,
@@ -243,6 +255,14 @@ def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
             return tac.DoubleInit(v)
         case SymCharInit(value=v) | SymUCharInit(value=v):
             return tac.IntInit(v)
+        case SymShortInit(value=v):
+            return tac.ShortInit(v)
+        case SymUShortInit(value=v):
+            return tac.UShortInit(v)
+        case SymInt128Init(value=v):
+            return tac.Int128Init(v)
+        case SymUInt128Init(value=v):
+            return tac.UInt128Init(v)
         case SymZeroInit(bytes=n):
             return tac.ZeroInit(n)
         case SymStringInit(string=s, null_terminated=nt):
@@ -251,7 +271,7 @@ def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
             raise CodeGenerationError(f"Cannot lower symbol StaticInit {sym_init!r} to TAC.")
 
 
-def _convert_symbols_to_tacky(
+def _convert_symbols_to_tacky(  # noqa: C901 - function too complex
     symbol_table: SymbolTable,
     struct_type_table: StructTypeTable | None = None,
 ) -> list[tac.TopLevel]:
@@ -287,6 +307,14 @@ def _convert_symbols_to_tacky(
                             static_inits.append(tac.LongInit(v))
                         case SymCharInit(value=v) | SymUCharInit(value=v):
                             static_inits.append(tac.CharInit(v))
+                        case SymShortInit(value=v):
+                            static_inits.append(tac.ShortInit(v))
+                        case SymUShortInit(value=v):
+                            static_inits.append(tac.UShortInit(v))
+                        case SymInt128Init(value=v):
+                            static_inits.append(tac.Int128Init(v))
+                        case SymUInt128Init(value=v):
+                            static_inits.append(tac.UInt128Init(v))
                         case SymDoubleInit(value=v):
                             static_inits.append(tac.DoubleInit(v))
                         case SymZeroInit(bytes=n):
@@ -411,10 +439,14 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
     """
     if isinstance(t, (ast.Char, ast.SChar, ast.UChar)):
         return 1
+    if isinstance(t, (ast.ShortType, ast.UShortType)):
+        return 2
     if isinstance(t, (ast.IntType, ast.UIntType)):
         return 4
     if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer, ast.DoubleType)):
         return 8
+    if isinstance(t, (ast.Int128Type, ast.UInt128Type)):
+        return 16
     if isinstance(t, ast.Array):
         return t.size * _type_size(t.element, struct_type_table)
     if isinstance(t, (ast.Structure, ast.Union)):

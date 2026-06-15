@@ -18,6 +18,11 @@ class Byte(AssemblyType):
 
 
 @dataclass(frozen=True, slots=True)
+class Word(AssemblyType):
+    """16-bit integer assembly type (C ``short`` / ``unsigned short``)."""
+
+
+@dataclass(frozen=True, slots=True)
 class Longword(AssemblyType):
     """32-bit integer assembly type (C ``int`` / ``unsigned int``)."""
 
@@ -119,6 +124,59 @@ class DoubleInit(StaticInit):
         """
         (bits,) = struct.unpack("Q", struct.pack("d", self.value))
         return bits
+
+
+@dataclass(frozen=True, slots=True)
+class ShortInit(StaticInit):
+    """Initialiser for a static variable of C ``short`` / ``signed short`` type.
+
+    Emitted as ``.short v`` - a 2-byte value in the data segment.
+
+    Attributes:
+        value: The initial signed 16-bit value.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class UShortInit(StaticInit):
+    """Initialiser for a static variable of C ``unsigned short`` type.
+
+    Emitted as ``.short v`` - a 2-byte value in the data segment.
+
+    Attributes:
+        value: The initial unsigned 16-bit value.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class Int128Init(StaticInit):
+    """Initialiser for a static variable of GCC ``__int128`` type.
+
+    Emitted as two consecutive ``.quad`` directives: low 64 bits then high 64 bits,
+    matching the little-endian memory layout required by the SysV AMD64 ABI.
+
+    Attributes:
+        value: The initial signed 128-bit value stored as an arbitrary-precision Python int.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class UInt128Init(StaticInit):
+    """Initialiser for a static variable of GCC ``unsigned __int128`` type.
+
+    Emitted as two consecutive ``.quad`` directives: low 64 bits then high 64 bits.
+
+    Attributes:
+        value: The initial unsigned 128-bit value stored as an arbitrary-precision Python int.
+    """
+
+    value: int
 
 
 @dataclass(frozen=True, slots=True)

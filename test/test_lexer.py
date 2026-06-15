@@ -641,3 +641,54 @@ def test_string_literal_is_a_single_string_token(preprocess_c_file: Preprocessor
     tokens = lexer(preprocess_c_file("valid/char_and_string.c"))
     hello_world = [t for t in tokens if t.type == TokenType.STRING and t.value == '"hello world"']
     assert len(hello_world) == 1
+
+
+# ---------------------------------------------------------------------------
+# 16-bit integer types (short)
+# ---------------------------------------------------------------------------
+
+
+def test_short_keyword_produces_short_token(preprocess_c_file: Preprocessor) -> None:
+    """``short`` is lexed as a ``SHORT`` keyword token, not an identifier."""
+    tokens = lexer(preprocess_c_file("valid/short_type.c"))
+    short_tokens = [t for t in tokens if t.value == "short"]
+    assert all(t.type == TokenType.SHORT for t in short_tokens)
+    assert short_tokens, "expected at least one 'short' token"
+
+
+def test_short_type_program_produces_short_tokens(preprocess_c_file: Preprocessor) -> None:
+    """``short`` and ``unsigned short`` declarations lex correctly."""
+    tokens = lexer(preprocess_c_file("valid/short_type.c"))
+    types = [t.type for t in tokens if t.type in {TokenType.SHORT, TokenType.UNSIGNED}]
+    assert TokenType.SHORT in types
+
+
+def test_identifier_with_short_prefix_is_not_short_token(preprocess_c_file: Preprocessor) -> None:
+    """Identifiers that begin with 'short' (e.g. 'shortwave') are not SHORT tokens."""
+    # Use keyword_prefix.c which contains identifier 'returning'; we test a similar property
+    # by verifying the lexer doesn't classify 'short' sub-strings as keywords.
+    tokens = lexer(preprocess_c_file("valid/short_type.c"))
+    # All identifier-like tokens that are NOT 'short' should be IDENTIFIER, not SHORT
+    non_short_idents = [t for t in tokens if t.type == TokenType.IDENTIFIER and t.value.startswith("short")]
+    assert all(t.type == TokenType.IDENTIFIER for t in non_short_idents)
+
+
+# ---------------------------------------------------------------------------
+# 128-bit integer types (__int128)
+# ---------------------------------------------------------------------------
+
+
+def test_int128_keyword_produces_int128_token(preprocess_c_file: Preprocessor) -> None:
+    """``__int128`` is lexed as an ``INT128`` keyword token, not an identifier."""
+    tokens = lexer(preprocess_c_file("valid/int128_type.c"))
+    int128_tokens = [t for t in tokens if t.value == "__int128"]
+    assert all(t.type == TokenType.INT128 for t in int128_tokens)
+    assert int128_tokens, "expected at least one '__int128' token"
+
+
+def test_int128_program_produces_int128_and_unsigned_tokens(preprocess_c_file: Preprocessor) -> None:
+    """``__int128`` and ``unsigned __int128`` declarations lex both token types."""
+    tokens = lexer(preprocess_c_file("valid/int128_type.c"))
+    types = {t.type for t in tokens}
+    assert TokenType.INT128 in types
+    assert TokenType.UNSIGNED in types

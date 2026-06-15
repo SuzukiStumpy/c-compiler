@@ -71,17 +71,21 @@ from compiler.syntax.ast.types import (
     Char,
     DoubleType,
     FunType,
+    Int128Type,
     IntType,
     Linkage,
     LongType,
     Pointer,
     SChar,
+    ShortType,
     Structure,
     Type,
     UChar,
+    UInt128Type,
     UIntType,
     ULongType,
     Union,
+    UShortType,
     VoidType,
 )
 from compiler.types.symbols import (
@@ -91,12 +95,14 @@ from compiler.types.symbols import (
     FunAttr,
     Initial,
     InitialValue,
+    Int128Init,
     IntInit,
     LocalAttr,
     LongInit,
     MemberEntry,
     NoInitializer,
     PointerInit,
+    ShortInit,
     StaticAttr,
     StaticInit,
     StringInit,
@@ -106,7 +112,9 @@ from compiler.types.symbols import (
     SymbolTableEntry,
     Tentative,
     UCharInit,
+    UInt128Init,
     ULongInit,
+    UShortInit,
     ZeroInit,
 )
 from compiler.utils.exceptions import SemanticError
@@ -120,9 +128,15 @@ _TYPE_SIZE: dict[type, int] = {
     Char: 1,
     SChar: 1,
     UChar: 1,
+    ShortType: 2,
+    UShortType: 2,
+    Int128Type: 16,
+    UInt128Type: 16,
 }
-_SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType})
+_SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType, Int128Type})
 _CHAR_TYPES: tuple[type, ...] = (Char, SChar, UChar)
+# Types that undergo integer promotion to IntType before arithmetic (C11 §6.3.1.1).
+_PROMOTE_TO_INT: tuple[type, ...] = (Char, SChar, UChar, ShortType, UShortType)
 
 
 def _round_up(n: int, align: int) -> int:
@@ -164,6 +178,10 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
             return 8
         case Char() | SChar() | UChar():
             return 1
+        case ShortType() | UShortType():
+            return 2
+        case Int128Type() | UInt128Type():
+            return 16
         case Array(element=elem_t):
             return type_alignment(elem_t, struct_type_table)
         case Structure(tag=tag) | Union(tag=tag):
@@ -197,6 +215,10 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
             return 8
         case Char() | SChar() | UChar():
             return 1
+        case ShortType() | UShortType():
+            return 2
+        case Int128Type() | UInt128Type():
+            return 16
         case Array(element=elem_t, size=n):
             return type_size(elem_t, struct_type_table) * n
         case Structure(tag=tag) | Union(tag=tag):
@@ -225,9 +247,9 @@ def get_common_type(type1: Type, type2: Type) -> Type:
         The common ``Type`` to which both operands must be converted before the operation is
         performed.
     """
-    if isinstance(type1, (Char, SChar, UChar)):
+    if isinstance(type1, _PROMOTE_TO_INT):
         type1 = IntType()
-    if isinstance(type2, (Char, SChar, UChar)):
+    if isinstance(type2, _PROMOTE_TO_INT):
         type2 = IntType()
     if type1 == type2:
         return type1
@@ -373,6 +395,16 @@ def _truncate_case_value(val: int, switch_type: Type) -> int:
             return val & 0xFFFFFFFF
         case ULongType():
             return val & 0xFFFFFFFFFFFFFFFF
+        case ShortType():
+            v = val & 0xFFFF
+            return v - (1 << 16) if v >= (1 << 15) else v
+        case UShortType():
+            return val & 0xFFFF
+        case Int128Type():
+            v = val & ((1 << 128) - 1)
+            return v - (1 << 128) if v >= (1 << 127) else v
+        case UInt128Type():
+            return val & ((1 << 128) - 1)
         case _:
             return val
 
@@ -591,6 +623,14 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
             return ast.SingleInit(ast.Constant(ast.ConstChar(0), exp_type=t))
         case UChar():
             return ast.SingleInit(ast.Constant(ast.ConstUChar(0), exp_type=UChar()))
+        case ShortType():
+            return ast.SingleInit(ast.Constant(ast.ConstShort(0), exp_type=ShortType()))
+        case UShortType():
+            return ast.SingleInit(ast.Constant(ast.ConstUShort(0), exp_type=UShortType()))
+        case Int128Type():
+            return ast.SingleInit(ast.Constant(ast.ConstInt128(0), exp_type=Int128Type()))
+        case UInt128Type():
+            return ast.SingleInit(ast.Constant(ast.ConstUInt128(0), exp_type=UInt128Type()))
         case Pointer():
             null = ast.Constant(ast.ConstULong(0), exp_type=ULongType())
             return ast.SingleInit(ast.Cast(t, null, exp_type=t))
@@ -668,6 +708,14 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
             return ZeroInit(1) if int(v) == 0 else CharInit(int(v))
         case UChar():
             return ZeroInit(1) if int(v) == 0 else UCharInit(int(v))
+        case ShortType():
+            return ZeroInit(2) if int(v) == 0 else ShortInit(int(v))
+        case UShortType():
+            return ZeroInit(2) if int(v) == 0 else UShortInit(int(v))
+        case Int128Type():
+            return ZeroInit(16) if int(v) == 0 else Int128Init(int(v))
+        case UInt128Type():
+            return ZeroInit(16) if int(v) == 0 else UInt128Init(int(v))
         case _:
             return ZeroInit(4) if int(v) == 0 else IntInit(int(v))
 
