@@ -574,6 +574,12 @@ def test_ulong_followed_by_dot_raises_lexer_error(preprocess_c_file: Preprocesso
         lexer(preprocess_c_file("invalid/bad_ulong.c"))
 
 
+def test_mixed_case_longlong_suffix_raises_lexer_error(preprocess_c_file: Preprocessor) -> None:
+    """lL and Ll suffixes are invalid; only ll and LL are permitted."""
+    with pytest.raises(LexerError):
+        lexer(preprocess_c_file("invalid/bad_longlong_suffix.c"))
+
+
 # ---------------------------------------------------------------------------
 # char keyword (CHAR)
 # ---------------------------------------------------------------------------
