@@ -113,6 +113,7 @@ from compiler.syntax.ast import (
     ConstFloat,
     ConstInt,
     ConstLong,
+    ConstLongDouble,
     ConstLongLong,
     ConstUInt,
     ConstULong,
@@ -148,6 +149,7 @@ from compiler.syntax.ast import (
     LeftShift,
     LessOrEqual,
     LessThan,
+    LongDoubleType,
     LongLongType,
     LongType,
     MemberDeclaration,
@@ -664,6 +666,8 @@ class Parser:
                 raise self._token_error("'void' cannot be combined with other type specifiers", last_tok)
             return VoidType()
         if TokenType.DOUBLE in seen:
+            if seen == frozenset({TokenType.LONG, TokenType.DOUBLE}):
+                return LongDoubleType()
             if len(seen) > 1:
                 assert last_tok is not None
                 raise self._token_error("'double' cannot be combined with other type specifiers", last_tok)
@@ -1726,6 +1730,7 @@ class Parser:
                 | TokenType.ULONG
                 | TokenType.FPDOUBLE
                 | TokenType.FPFLOAT
+                | TokenType.FPLONGDOUBLE
                 | TokenType.CONSTCHAR
             ):
                 primary: Exp = self._parse_constant()
@@ -1817,6 +1822,31 @@ class Parser:
         "v": 11,
     }
 
+    def _parse_fp_constant(self, token: Token) -> Constant | None:
+        """Parse a floating-point constant token, or return ``None`` if it is not one.
+
+        Handles ``FPFLOAT`` (``f``/``F`` suffix), ``FPDOUBLE`` (no suffix),
+        and ``FPLONGDOUBLE`` (``L``/``l`` suffix) token kinds.
+
+        Args:
+            token: The lookahead token to inspect.
+
+        Returns:
+            A ``Constant`` node wrapping a ``ConstFloat``, ``ConstDouble``, or
+            ``ConstLongDouble`` when ``token`` is a floating-point literal, or
+            ``None`` otherwise.
+        """
+        if token.type == TokenType.FPFLOAT:
+            self._consume()
+            return Constant(value=ConstFloat(float(token.value.rstrip("fF"))), exp_type=FloatType())
+        if token.type == TokenType.FPDOUBLE:
+            self._consume()
+            return Constant(value=ConstDouble(float(token.value)), exp_type=DoubleType())
+        if token.type == TokenType.FPLONGDOUBLE:
+            self._consume()
+            return Constant(value=ConstLongDouble(float(token.value.rstrip("lL"))), exp_type=LongDoubleType())
+        return None
+
     def _parse_constant(self) -> Constant:
         """Parse an integer, long, double, or character constant expression.
 
@@ -1846,12 +1876,9 @@ class Parser:
         token = self._peek()
         if token is None:
             raise self._eof_error("expected a constant, got end of input")
-        if token.type == TokenType.FPFLOAT:
-            self._consume()
-            return Constant(value=ConstFloat(float(token.value.rstrip("fF"))), exp_type=FloatType())
-        if token.type == TokenType.FPDOUBLE:
-            self._consume()
-            return Constant(value=ConstDouble(float(token.value)), exp_type=DoubleType())
+        fp = self._parse_fp_constant(token)
+        if fp is not None:
+            return fp
         if token.type == TokenType.NUMBER:
             self._consume()
             val = int(token.value)

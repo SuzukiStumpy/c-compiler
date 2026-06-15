@@ -130,6 +130,44 @@ class ConstFloat(Const):
         return hash(struct.pack("f", self.val))
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class ConstLongDouble(Const):
+    """Represents a ``long double`` constant within the C code (80-bit x87 extended precision).
+
+    The value is stored as a Python ``float`` (64-bit IEEE 754 double), which is the closest
+    available representation.  Bit-exact equality is used so that ``+0.0L`` and ``-0.0L``
+    are treated as distinct, consistent with ``ConstDouble`` behaviour.
+
+    Attributes:
+        val: The long double value stored as a Python float.  Precision is limited to
+            53 significant bits (double precision) during compilation.
+    """
+
+    val: float
+
+    def __eq__(self, other: object) -> bool:
+        """Compare bit-exactly so that ``+0.0L`` and ``-0.0L`` are treated as distinct.
+
+        Args:
+            other: Object to compare against.
+
+        Returns:
+            ``True`` when *other* is a ``ConstLongDouble`` with the same IEEE 754 bit
+            pattern as ``self``.
+        """
+        if not isinstance(other, ConstLongDouble):
+            return NotImplemented
+        return struct.pack("d", self.val) == struct.pack("d", other.val)
+
+    def __hash__(self) -> int:
+        """Hash by IEEE 754 bit pattern so that ``+0.0L`` and ``-0.0L`` hash differently.
+
+        Returns:
+            An integer hash consistent with the bit-exact ``__eq__``.
+        """
+        return hash(struct.pack("d", self.val))
+
+
 @dataclass(frozen=True, slots=True)
 class ConstChar(Const):
     """Represents a signed character constant within the C code

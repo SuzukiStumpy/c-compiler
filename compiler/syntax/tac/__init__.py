@@ -22,6 +22,14 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | UIntToFloat(val src, val dst)
                         | FloatToDouble(val src, val dst)
                         | DoubleToFloat(val src, val dst)
+                        | IntToLongDouble(val src, val dst)
+                        | UIntToLongDouble(val src, val dst)
+                        | LongDoubleToInt(val src, val dst)
+                        | LongDoubleToUInt(val src, val dst)
+                        | FloatToLongDouble(val src, val dst)
+                        | LongDoubleToFloat(val src, val dst)
+                        | DoubleToLongDouble(val src, val dst)
+                        | LongDoubleToDouble(val src, val dst)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
                         | Copy(val src, val dst)
@@ -38,6 +46,7 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | CopyFromOffset(identifier src, int offset, val dst)
     val                 = Constant(const) | Var(identifier)
     static_init         = CharInit(int) | IntInit(int) | LongInit(int) | DoubleInit(float) | FloatInit(float)
+                        | LongDoubleInit(float)
                         | ZeroInit(int bytes)
                         | StringInit(bytes string, bool null_terminated) | PointerInit(str name)
     unary_operator      = Complement | Negate | Not
@@ -72,26 +81,34 @@ from compiler.syntax.tac.instructions import (
     CopyToOffset,
     DoubleToFloat,
     DoubleToInt,
+    DoubleToLongDouble,
     DoubleToUInt,
     FloatToDouble,
     FloatToInt,
+    FloatToLongDouble,
     FloatToUInt,
     FunCall,
     GetAddress,
     Instruction,
     IntToDouble,
     IntToFloat,
+    IntToLongDouble,
     Jump,
     JumpIfNotZero,
     JumpIfZero,
     Label,
     Load,
+    LongDoubleToDouble,
+    LongDoubleToFloat,
+    LongDoubleToInt,
+    LongDoubleToUInt,
     Return,
     SignExtend,
     Store,
     Truncate,
     UIntToDouble,
     UIntToFloat,
+    UIntToLongDouble,
     Unary,
     ZeroExtend,
 )
@@ -125,6 +142,7 @@ from compiler.syntax.tac.values import (
     FloatInit,
     Int128Init,
     IntInit,
+    LongDoubleInit,
     LongInit,
     PointerInit,
     ShortInit,
@@ -152,6 +170,14 @@ __all__ = [
     "UIntToFloat",
     "FloatToDouble",
     "DoubleToFloat",
+    "IntToLongDouble",
+    "UIntToLongDouble",
+    "LongDoubleToInt",
+    "LongDoubleToUInt",
+    "FloatToLongDouble",
+    "LongDoubleToFloat",
+    "DoubleToLongDouble",
+    "LongDoubleToDouble",
     "ZeroExtend",
     "StaticVariable",
     "TopLevel",
@@ -206,6 +232,7 @@ __all__ = [
     "UInt128Init",
     "DoubleInit",
     "FloatInit",
+    "LongDoubleInit",
     "ZeroInit",
     "StringInit",
     "PointerInit",

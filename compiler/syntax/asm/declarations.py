@@ -16,6 +16,7 @@ from compiler.syntax.asm.values import (
     FloatInit,
     Int128Init,
     IntInit,
+    LongDoubleInit,
     LongInit,
     PointerInit,
     ShortInit,
@@ -202,6 +203,7 @@ class StaticVariable(TopLevel):
                 and i.value == 0
             )
             or (isinstance(i, (DoubleInit, FloatInit)) and i.as_bits() == 0)
+            or (isinstance(i, LongDoubleInit) and i.value == 0.0 and i.as_bits() == (0, 0))
             for i in self.init
         )
         lines.append(_asm_line(".bss" if in_bss else ".data"))
@@ -244,6 +246,13 @@ class StaticVariable(TopLevel):
                     lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
                 case PointerInit(name=n):
                     lines.append(_asm_line(".quad", n))
+                case LongDoubleInit(value=v) if v == 0.0:
+                    lines.append(_asm_line(".zero", "16"))
+                case LongDoubleInit() as ld:
+                    mantissa, exp_sign = ld.as_bits()
+                    lines.append(_asm_line(".quad", str(mantissa)))
+                    lines.append(_asm_line(".short", str(exp_sign)))
+                    lines.append(_asm_line(".zero", "6"))
 
         return "\n".join(lines)
 
@@ -295,6 +304,13 @@ class StaticConstant(TopLevel):
                 data = list(s) + ([0] if nt else [])
                 lines.append(_string_comment(s, nt))
                 lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
+            case LongDoubleInit(value=v) if v == 0.0:
+                lines.append(_asm_line(".zero", "16"))
+            case LongDoubleInit() as ld:
+                mantissa, exp_sign = ld.as_bits()
+                lines.append(_asm_line(".quad", str(mantissa)))
+                lines.append(_asm_line(".short", str(exp_sign)))
+                lines.append(_asm_line(".zero", "6"))
         return "\n".join(lines)
 
 

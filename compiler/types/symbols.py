@@ -107,6 +107,21 @@ class FloatInit(StaticInit):
 
 
 @dataclass(frozen=True, slots=True)
+class LongDoubleInit(StaticInit):
+    """16-byte floating-point initialiser element (C ``long double``, 80-bit x87 extended precision).
+
+    On x86-64 Linux, ``long double`` occupies 16 bytes (10 bytes of value plus 6 bytes
+    padding).  The value is stored as a Python ``float`` (double precision).
+
+    Attributes:
+        value: The long double value stored as a Python float.  Never zero - use
+            ``ZeroInit(16)`` for a zero-valued 16-byte element.
+    """
+
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
 class CharInit(StaticInit):
     """1-byte signed character initialiser element (C ``char`` / ``signed char``).
 

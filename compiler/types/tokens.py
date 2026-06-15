@@ -56,6 +56,7 @@ class TokenType(Enum):
     ULONG = auto()
     FPDOUBLE = auto()
     FPFLOAT = auto()
+    FPLONGDOUBLE = auto()
     CONSTCHAR = auto()
     STRING = auto()
     # Punctuation

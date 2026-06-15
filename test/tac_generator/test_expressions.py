@@ -818,3 +818,64 @@ class TestFloatCasts:
 
         instrs = self._cast(ast.UIntType(), ast.FloatType(), ConstFloat(3.0))
         assert any(isinstance(i, tac.FloatToUInt) for i in instrs)
+
+    def test_int_to_long_double_produces_int_to_long_double(self) -> None:
+        """``(long double)int_val`` emits ``IntToLongDouble``."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(LongDoubleType(), ast.IntType(), ast.ConstInt(3))
+        assert any(isinstance(i, tac.IntToLongDouble) for i in instrs)
+
+    def test_uint_to_long_double_produces_uint_to_long_double(self) -> None:
+        """``(long double)uint_val`` emits ``UIntToLongDouble``."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(LongDoubleType(), ast.UIntType(), ast.ConstUInt(3))
+        assert any(isinstance(i, tac.UIntToLongDouble) for i in instrs)
+
+    def test_long_double_to_int_produces_long_double_to_int(self) -> None:
+        """``(int)long_double_val`` emits ``LongDoubleToInt``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(ast.IntType(), LongDoubleType(), ConstLongDouble(3.0))
+        assert any(isinstance(i, tac.LongDoubleToInt) for i in instrs)
+
+    def test_long_double_to_uint_produces_long_double_to_uint(self) -> None:
+        """``(unsigned)long_double_val`` emits ``LongDoubleToUInt``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(ast.UIntType(), LongDoubleType(), ConstLongDouble(3.0))
+        assert any(isinstance(i, tac.LongDoubleToUInt) for i in instrs)
+
+    def test_float_to_long_double_produces_float_to_long_double(self) -> None:
+        """``(long double)float_val`` emits ``FloatToLongDouble``."""
+        from compiler.syntax.ast.constants import ConstFloat
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(LongDoubleType(), ast.FloatType(), ConstFloat(3.0))
+        assert any(isinstance(i, tac.FloatToLongDouble) for i in instrs)
+
+    def test_long_double_to_float_produces_long_double_to_float(self) -> None:
+        """``(float)long_double_val`` emits ``LongDoubleToFloat``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(ast.FloatType(), LongDoubleType(), ConstLongDouble(3.0))
+        assert any(isinstance(i, tac.LongDoubleToFloat) for i in instrs)
+
+    def test_double_to_long_double_produces_double_to_long_double(self) -> None:
+        """``(long double)double_val`` emits ``DoubleToLongDouble``."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(LongDoubleType(), ast.DoubleType(), ast.ConstDouble(3.0))
+        assert any(isinstance(i, tac.DoubleToLongDouble) for i in instrs)
+
+    def test_long_double_to_double_produces_long_double_to_double(self) -> None:
+        """``(double)long_double_val`` emits ``LongDoubleToDouble``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = self._cast(ast.DoubleType(), LongDoubleType(), ConstLongDouble(3.0))
+        assert any(isinstance(i, tac.LongDoubleToDouble) for i in instrs)

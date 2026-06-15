@@ -17,6 +17,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `__int128` / `unsigned __int128` | GCC 128-bit extension; static variables and zero-initialisation supported; see note below |
 | `float` | 32-bit IEEE 754 floating-point; `f`/`F` suffix on literals |
 | `double` | 64-bit IEEE 754 floating-point |
+| `long double` | 80-bit x87 extended precision; `L`/`l` suffix on literals; passed/returned via stack (MEMORY class) |
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
 | Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; array decay |
@@ -24,7 +25,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `union` | Named/anonymous unions |
 | Function pointers | `int (*fp)(int, int)` style; call through a pointer |
 
-Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant.
+Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant.
 
 > **`__int128` note** — The type is fully recognised through the pipeline (lexer → parser → semantic analysis → TAC → assembly emission). Static variables with constant initialisers are emitted as two consecutive `.quad` directives (little-endian lo/hi). Local-variable arithmetic, multi-word instruction sequences (`adcq`/`sbbq`), and the SysV AMD64 two-register calling convention for 128-bit values are not yet implemented; any expression-level use of `__int128` beyond zero-initialisation will produce incorrect or incomplete code.
 
@@ -212,10 +213,9 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 | Missing type | Notes |
 |---|---|
-| `long double` | 80-bit extended precision on x86-64 |
 | `_Complex` / `_Imaginary` | Complex and imaginary arithmetic (sec. 6.2.5 p11) |
 
-Both `float` (32-bit) and `double` (64-bit) are supported. All arithmetic, relational, and conversion operations between `float`, `double`, and integer types are implemented, including the SysV AMD64 ABI calling convention (XMM registers for floating-point arguments and return values).
+`float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported. All arithmetic, relational, and conversion operations between `float`, `double`, `long double`, and integer types are implemented, including the SysV AMD64 ABI calling conventions (XMM registers for `float`/`double`; stack (MEMORY class) for `long double`).
 
 ### Other scalar types
 

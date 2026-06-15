@@ -718,3 +718,69 @@ class TestFloatType:
 
         result = get_common_type(ast.FloatType(), ast.IntType())
         assert result == ast.FloatType()
+
+
+class TestLongDoubleType:
+    """Semantic analysis handles ``long double`` as the widest floating-point type."""
+
+    def test_long_double_size_is_16(self) -> None:
+        """``sizeof(long double)`` returns 16 on x86-64 Linux."""
+        from compiler.semantic_analysis import type_size
+        from compiler.syntax.ast.types import LongDoubleType
+
+        assert type_size(LongDoubleType(), {}) == 16
+
+    def test_long_double_alignment_is_16(self) -> None:
+        """``long double`` has 16-byte alignment on x86-64 Linux."""
+        from compiler.semantic_analysis import type_alignment
+        from compiler.syntax.ast.types import LongDoubleType
+
+        assert type_alignment(LongDoubleType(), {}) == 16
+
+    def test_long_double_is_arithmetic(self) -> None:
+        """``LongDoubleType`` is an arithmetic type."""
+        from compiler.semantic_analysis import is_arithmetic
+        from compiler.syntax.ast.types import LongDoubleType
+
+        assert is_arithmetic(LongDoubleType())
+
+    def test_long_double_is_not_integer(self) -> None:
+        """``LongDoubleType`` is not an integer type."""
+        from compiler.semantic_analysis import is_integer
+        from compiler.syntax.ast.types import LongDoubleType
+
+        assert not is_integer(LongDoubleType())
+
+    def test_long_double_plus_double_gives_long_double(self) -> None:
+        """``long double + double`` common type is ``LongDoubleType``."""
+        from compiler.semantic_analysis import get_common_type
+        from compiler.syntax.ast.types import LongDoubleType
+
+        result = get_common_type(LongDoubleType(), ast.DoubleType())
+        assert result == LongDoubleType()
+
+    def test_long_double_plus_float_gives_long_double(self) -> None:
+        """``long double + float`` common type is ``LongDoubleType``."""
+        from compiler.semantic_analysis import get_common_type
+        from compiler.syntax.ast.types import LongDoubleType
+
+        result = get_common_type(LongDoubleType(), ast.FloatType())
+        assert result == LongDoubleType()
+
+    def test_long_double_plus_int_gives_long_double(self) -> None:
+        """``long double + int`` common type is ``LongDoubleType``."""
+        from compiler.semantic_analysis import get_common_type
+        from compiler.syntax.ast.types import LongDoubleType
+
+        result = get_common_type(LongDoubleType(), ast.IntType())
+        assert result == LongDoubleType()
+
+    def test_long_double_is_not_integer_so_bitwise_complement_raises(self) -> None:
+        """Applying ``~`` to ``long double`` raises ``SemanticError``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        ld_const = ast.Constant(value=ConstLongDouble(1.0), exp_type=LongDoubleType())
+        prog = _program(_return_exp(ast.Unary(ast.Complement(), ld_const)))
+        with pytest.raises(SemanticError, match="integer operand"):
+            resolve(prog)

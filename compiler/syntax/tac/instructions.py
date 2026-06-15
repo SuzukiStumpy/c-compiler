@@ -314,6 +314,110 @@ class DoubleToFloat(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class IntToLongDouble(Instruction):
+    """Convert a signed integer (int/long/char/short) to ``long double``.
+
+    Attributes:
+        src: The source signed integer value.
+        dst: The destination ``long double`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class UIntToLongDouble(Instruction):
+    """Convert an unsigned integer (unsigned int/long/char/short) to ``long double``.
+
+    Attributes:
+        src: The source unsigned integer value.
+        dst: The destination ``long double`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class LongDoubleToInt(Instruction):
+    """Convert a ``long double`` to a signed integer (truncates toward zero).
+
+    Attributes:
+        src: The source ``long double`` value.
+        dst: The destination signed integer value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class LongDoubleToUInt(Instruction):
+    """Convert a ``long double`` to an unsigned integer (truncates toward zero).
+
+    Attributes:
+        src: The source ``long double`` value.
+        dst: The destination unsigned integer value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class FloatToLongDouble(Instruction):
+    """Widen a ``float`` to ``long double``.
+
+    Attributes:
+        src: The source ``float`` value.
+        dst: The destination ``long double`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class LongDoubleToFloat(Instruction):
+    """Narrow a ``long double`` to ``float``.
+
+    Attributes:
+        src: The source ``long double`` value.
+        dst: The destination ``float`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleToLongDouble(Instruction):
+    """Widen a ``double`` to ``long double``.
+
+    Attributes:
+        src: The source ``double`` value.
+        dst: The destination ``long double`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class LongDoubleToDouble(Instruction):
+    """Narrow a ``long double`` to ``double``.
+
+    Attributes:
+        src: The source ``long double`` value.
+        dst: The destination ``double`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
 class GetAddress(Instruction):
     """Obtain the memory address of a variable.
 

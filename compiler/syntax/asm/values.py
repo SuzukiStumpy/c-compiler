@@ -43,6 +43,15 @@ class Float(AssemblyType):
 
 
 @dataclass(frozen=True, slots=True)
+class LongDouble(AssemblyType):
+    """80-bit x87 extended-precision assembly type (C ``long double``).
+
+    Occupies 16 bytes on the stack (10 bytes of value plus 6 bytes of padding)
+    and is accessed via x87 FPU instructions (``fldt``/``fstpt``).
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class ByteArray(AssemblyType):
     """Variable-length byte region in the data segment.
 
@@ -153,6 +162,54 @@ class FloatInit(StaticInit):
         """
         (bits,) = struct.unpack("I", struct.pack("f", self.value))
         return bits
+
+
+@dataclass(frozen=True, slots=True)
+class LongDoubleInit(StaticInit):
+    """Initialiser for a static variable of C ``long double`` type (80-bit x87 extended precision).
+
+    On x86-64 Linux ``long double`` occupies 16 bytes: the first 10 bytes hold the 80-bit
+    value (64-bit mantissa + 15-bit exponent + sign bit) and the remaining 6 bytes are
+    zero-padded.  The value is stored as a Python float (double precision) and converted
+    to the 80-bit format at emit time using ``struct.pack("e...")``.
+
+    When emitted, non-zero values produce two ``.quad`` directives (mantissa and
+    exponent/sign word) plus a ``.zero 6`` padding directive in ``.data``.  Zero
+    values go to ``.bss``.
+
+    Attributes:
+        value: The initial long double value, stored as a Python float.
+    """
+
+    value: float
+
+    def as_bits(self) -> tuple[int, int]:
+        """Return the 80-bit x87 representation as ``(mantissa_bits, exp_sign_bits)``.
+
+        The 80-bit extended precision format uses an explicit integer bit (unlike
+        IEEE 754 double/float).  The method converts the Python float to this format
+        by unpacking from the 80-bit struct format (if available) or approximating
+        from double precision.
+
+        Returns:
+            A pair ``(mantissa, exp_sign)`` where ``mantissa`` is the 64-bit
+            significand (integer bit explicit) and ``exp_sign`` is the combined
+            15-bit biased exponent and sign bit as a 16-bit unsigned integer
+            (packed in the low 16 bits of the second element).
+        """
+        import math
+
+        v = self.value
+        if v == 0.0:
+            return (0, 0)
+        sign = 1 if math.copysign(1.0, v) < 0 else 0
+        v_abs = abs(v)
+        exp_unbiased = math.frexp(v_abs)[1] - 1
+        exp_biased = exp_unbiased + 16383
+        mantissa_f = math.ldexp(v_abs, 63 - exp_unbiased)
+        mantissa = int(mantissa_f) & 0xFFFF_FFFF_FFFF_FFFF
+        exp_sign = (sign << 15) | (exp_biased & 0x7FFF)
+        return (mantissa, exp_sign)
 
 
 @dataclass(frozen=True, slots=True)

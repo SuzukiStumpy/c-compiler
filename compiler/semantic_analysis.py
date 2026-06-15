@@ -75,6 +75,7 @@ from compiler.syntax.ast.types import (
     Int128Type,
     IntType,
     Linkage,
+    LongDoubleType,
     LongLongType,
     LongType,
     Pointer,
@@ -102,6 +103,7 @@ from compiler.types.symbols import (
     Int128Init,
     IntInit,
     LocalAttr,
+    LongDoubleInit,
     LongInit,
     MemberEntry,
     NoInitializer,
@@ -132,6 +134,7 @@ _TYPE_SIZE: dict[type, int] = {
     ULongLongType: 8,
     DoubleType: 8,
     FloatType: 4,
+    LongDoubleType: 16,
     Char: 1,
     SChar: 1,
     UChar: 1,
@@ -185,6 +188,8 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
             return 8
         case FloatType():
             return 4
+        case LongDoubleType():
+            return 16
         case Char() | SChar() | UChar():
             return 1
         case ShortType() | UShortType():
@@ -224,6 +229,8 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
             return 8
         case FloatType():
             return 4
+        case LongDoubleType():
+            return 16
         case Char() | SChar() | UChar():
             return 1
         case ShortType() | UShortType():
@@ -264,6 +271,8 @@ def get_common_type(type1: Type, type2: Type) -> Type:
         type2 = IntType()
     if type1 == type2:
         return type1
+    if isinstance(type1, LongDoubleType) or isinstance(type2, LongDoubleType):
+        return LongDoubleType()
     if isinstance(type1, DoubleType) or isinstance(type2, DoubleType):
         return DoubleType()
     if isinstance(type1, FloatType) or isinstance(type2, FloatType):
@@ -493,7 +502,7 @@ def is_integer(t: Type | None) -> bool:
         ``True`` when ``t`` is in ``_TYPE_SIZE`` and is not ``DoubleType`` or ``FloatType``;
         ``False`` otherwise.
     """
-    return is_arithmetic(t) and not isinstance(t, (DoubleType, FloatType))
+    return is_arithmetic(t) and not isinstance(t, (DoubleType, FloatType, LongDoubleType))
 
 
 def is_lvalue(e: ast.Exp) -> bool:
@@ -638,6 +647,8 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
             return ast.SingleInit(ast.Constant(ast.ConstDouble(0.0), exp_type=DoubleType()))
         case FloatType():
             return ast.SingleInit(ast.Constant(ast.ConstFloat(0.0), exp_type=FloatType()))
+        case LongDoubleType():
+            return ast.SingleInit(ast.Constant(ast.ConstLongDouble(0.0), exp_type=LongDoubleType()))
         case Char() | SChar():
             return ast.SingleInit(ast.Constant(ast.ConstChar(0), exp_type=t))
         case UChar():
@@ -724,6 +735,9 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
         case FloatType():
             fv = float(v)
             return ZeroInit(4) if fv == 0.0 and math.copysign(1.0, fv) > 0 else FloatInit(fv)
+        case LongDoubleType():
+            fv = float(v)
+            return ZeroInit(16) if fv == 0.0 and math.copysign(1.0, fv) > 0 else LongDoubleInit(fv)
         case LongType() | ULongType() | LongLongType() | ULongLongType():
             return ZeroInit(8) if int(v) == 0 else LongInit(int(v))
         case Char() | SChar():
@@ -1965,6 +1979,8 @@ class SemanticAnalyser:
                 return ast.Constant(e.value, exp_type=DoubleType())
             case ast.Constant(value=ast.ConstFloat()):
                 return ast.Constant(e.value, exp_type=FloatType())
+            case ast.Constant(value=ast.ConstLongDouble()):
+                return ast.Constant(e.value, exp_type=LongDoubleType())
             case ast.Constant():
                 return ast.Constant(e.value, exp_type=IntType())
             case ast.Unary(operator=op, exp=exp):
@@ -2058,7 +2074,7 @@ class SemanticAnalyser:
                             if left_is_ptr and right_is_ptr:
                                 raise SemanticError("Cannot add two pointers.")
                             if left_is_ptr:
-                                if isinstance(typed_right.exp_type, (DoubleType, FloatType)):
+                                if isinstance(typed_right.exp_type, (DoubleType, FloatType, LongDoubleType)):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
@@ -2066,7 +2082,7 @@ class SemanticAnalyser:
                                     typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                                 bin_type = typed_left.exp_type
                             else:
-                                if isinstance(typed_left.exp_type, (DoubleType, FloatType)):
+                                if isinstance(typed_left.exp_type, (DoubleType, FloatType, LongDoubleType)):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
@@ -2079,7 +2095,7 @@ class SemanticAnalyser:
                                     raise SemanticError("Cannot subtract pointers of different types.")
                                 bin_type = LongType()
                             elif left_is_ptr:
-                                if isinstance(typed_right.exp_type, (DoubleType, FloatType)):
+                                if isinstance(typed_right.exp_type, (DoubleType, FloatType, LongDoubleType)):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
@@ -2131,7 +2147,7 @@ class SemanticAnalyser:
                 if isinstance(lv_type, Pointer) and isinstance(op, (ast.Add, ast.Subtract)):
                     if isinstance(typed_rv.exp_type, Pointer):
                         raise SemanticError("Cannot add or subtract two pointers via compound assignment.")
-                    if isinstance(typed_rv.exp_type, (DoubleType, FloatType)):
+                    if isinstance(typed_rv.exp_type, (DoubleType, FloatType, LongDoubleType)):
                         raise SemanticError("Cannot perform pointer arithmetic with a floating-point operand.")
                     if not isinstance(lv_type.referenced, (FunType, VoidType)):
                         tbl = self._struct_type_table
@@ -2234,9 +2250,13 @@ class SemanticAnalyser:
                     raise SemanticError("Can only cast to scalar type or void")
                 if not is_scalar(typed_inner.exp_type):
                     raise SemanticError("Cannot cast non-scalar expression to scalar type")
-                if isinstance(target_type, Pointer) and isinstance(typed_inner.exp_type, (DoubleType, FloatType)):
+                if isinstance(target_type, Pointer) and isinstance(
+                    typed_inner.exp_type, (DoubleType, FloatType, LongDoubleType)
+                ):
                     raise SemanticError("Cannot cast a double to a pointer type.")
-                if isinstance(target_type, (DoubleType, FloatType)) and isinstance(typed_inner.exp_type, Pointer):
+                if isinstance(target_type, (DoubleType, FloatType, LongDoubleType)) and isinstance(
+                    typed_inner.exp_type, Pointer
+                ):
                     raise SemanticError("Cannot cast a pointer to a double.")
                 return ast.Cast(target_type, typed_inner, exp_type=target_type)
             case ast.Dereference(exp=exp):

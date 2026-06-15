@@ -1452,3 +1452,96 @@ class TestFloatType:
         assert isinstance(exp, Constant)
         assert exp.value == ConstFloat(1e5)
         assert exp.exp_type == FloatType()
+
+
+# ---------------------------------------------------------------------------
+# long double type specifier
+# ---------------------------------------------------------------------------
+
+_DOUBLE_TOK = _tok(TokenType.DOUBLE, "double")
+
+
+class TestLongDoubleType:
+    """Parser recognises ``long double`` type specifier and L-suffix literals."""
+
+    def test_long_double_variable_declaration(self) -> None:
+        """``long double x;`` at file scope produces a ``LongDoubleType`` variable."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        tokens = [_LONG, _DOUBLE_TOK, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == LongDoubleType()
+
+    def test_long_double_return_type(self) -> None:
+        """``long double foo(void) { return 0; }`` parses with ``LongDoubleType`` return."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        tokens = [
+            _LONG,
+            _DOUBLE_TOK,
+            _ident("foo"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.ret == LongDoubleType()
+
+    def test_long_double_parameter(self) -> None:
+        """``int foo(long double x) { ... }`` has a ``LongDoubleType`` parameter."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _LONG,
+            _DOUBLE_TOK,
+            _ident("x"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params[0].param_type == LongDoubleType()
+
+    def test_long_double_literal_produces_const_long_double(self) -> None:
+        """``1.5L`` parses as ``ConstLongDouble(1.5)`` with ``LongDoubleType``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        fp_tok = _tok(TokenType.FPLONGDOUBLE, "1.5L")
+        exp = _parsed_exp(fp_tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstLongDouble(1.5)
+        assert exp.exp_type == LongDoubleType()
+
+    def test_long_double_exponent_literal_produces_const_long_double(self) -> None:
+        """``1e5l`` parses as ``ConstLongDouble(1e5)`` with ``LongDoubleType``."""
+        from compiler.syntax.ast.constants import ConstLongDouble
+        from compiler.syntax.ast.types import LongDoubleType
+
+        fp_tok = _tok(TokenType.FPLONGDOUBLE, "1e5l")
+        exp = _parsed_exp(fp_tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstLongDouble(1e5)
+        assert exp.exp_type == LongDoubleType()
+
+    def test_double_combined_with_other_specifiers_raises(self) -> None:
+        """``long double long`` is a parse error."""
+        with pytest.raises(Exception):
+            parse([_LONG, _DOUBLE_TOK, _LONG, _ident("x"), _SEMICOLON])

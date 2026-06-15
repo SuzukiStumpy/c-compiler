@@ -170,6 +170,9 @@ from compiler.types.symbols import (
     IntInit as SymIntInit,
 )
 from compiler.types.symbols import (
+    LongDoubleInit as SymLongDoubleInit,
+)
+from compiler.types.symbols import (
     LongInit as SymLongInit,
 )
 from compiler.types.symbols import (
@@ -258,6 +261,8 @@ def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
             return tac.DoubleInit(v)
         case SymFloatInit(value=v):
             return tac.FloatInit(v)
+        case SymLongDoubleInit(value=v):
+            return tac.LongDoubleInit(v)
         case SymCharInit(value=v) | SymUCharInit(value=v):
             return tac.IntInit(v)
         case SymShortInit(value=v):
@@ -301,6 +306,7 @@ def _convert_symbols_to_tacky(  # noqa: C901 - function too complex
     for name, entry in symbol_table.items():
         is_double = isinstance(entry.t, ast.DoubleType)
         is_float = isinstance(entry.t, ast.FloatType)
+        is_long_double = isinstance(entry.t, ast.LongDoubleType)
         match entry.attrs:
             case StaticAttr(init=Initial(initializers=inits), globl=globl):
                 static_inits: list[tac.StaticInit] = []
@@ -325,12 +331,16 @@ def _convert_symbols_to_tacky(  # noqa: C901 - function too complex
                             static_inits.append(tac.DoubleInit(v))
                         case SymFloatInit(value=v):
                             static_inits.append(tac.FloatInit(v))
+                        case SymLongDoubleInit(value=v):
+                            static_inits.append(tac.LongDoubleInit(v))
                         case SymZeroInit(bytes=n):
                             # Preserve typed init for floats so -0.0 vs +0.0 is not collapsed.
                             if is_double:
                                 static_inits.append(tac.DoubleInit(0.0))
                             elif is_float:
                                 static_inits.append(tac.FloatInit(0.0))
+                            elif is_long_double:
+                                static_inits.append(tac.LongDoubleInit(0.0))
                             else:
                                 static_inits.append(tac.ZeroInit(n))
                         case SymStringInit(string=s, null_terminated=nt):
@@ -458,7 +468,7 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
         return 4
     if isinstance(t, (ast.LongType, ast.ULongType, ast.LongLongType, ast.ULongLongType, ast.Pointer, ast.DoubleType)):
         return 8
-    if isinstance(t, (ast.Int128Type, ast.UInt128Type)):
+    if isinstance(t, (ast.Int128Type, ast.UInt128Type, ast.LongDoubleType)):
         return 16
     if isinstance(t, ast.Array):
         return t.size * _type_size(t.element, struct_type_table)
@@ -814,8 +824,28 @@ class _TacGenerator:
         if src_type == dst_type:
             return src, []
         dst = self._make_temp(dst_type)
-        if isinstance(dst_type, ast.DoubleType) and isinstance(src_type, ast.FloatType):
-            conv: tac.Instruction = tac.FloatToDouble(src=src, dst=dst)
+        if isinstance(dst_type, ast.LongDoubleType) and isinstance(src_type, ast.DoubleType):
+            conv: tac.Instruction = tac.DoubleToLongDouble(src=src, dst=dst)
+        elif isinstance(dst_type, ast.DoubleType) and isinstance(src_type, ast.LongDoubleType):
+            conv = tac.LongDoubleToDouble(src=src, dst=dst)
+        elif isinstance(dst_type, ast.LongDoubleType) and isinstance(src_type, ast.FloatType):
+            conv = tac.FloatToLongDouble(src=src, dst=dst)
+        elif isinstance(dst_type, ast.FloatType) and isinstance(src_type, ast.LongDoubleType):
+            conv = tac.LongDoubleToFloat(src=src, dst=dst)
+        elif isinstance(dst_type, ast.LongDoubleType):
+            conv = (
+                tac.IntToLongDouble(src=src, dst=dst)
+                if _is_signed(src_type)
+                else tac.UIntToLongDouble(src=src, dst=dst)
+            )
+        elif isinstance(src_type, ast.LongDoubleType):
+            conv = (
+                tac.LongDoubleToInt(src=src, dst=dst)
+                if _is_signed(dst_type)
+                else tac.LongDoubleToUInt(src=src, dst=dst)
+            )
+        elif isinstance(dst_type, ast.DoubleType) and isinstance(src_type, ast.FloatType):
+            conv = tac.FloatToDouble(src=src, dst=dst)
         elif isinstance(dst_type, ast.FloatType) and isinstance(src_type, ast.DoubleType):
             conv = tac.DoubleToFloat(src=src, dst=dst)
         elif isinstance(dst_type, ast.FloatType):
@@ -885,6 +915,10 @@ class _TacGenerator:
             compute_instrs = [tac.Binary(operator=op_tac, src1=cur_val, src2=one, dst=new_val)]
         elif isinstance(t, ast.FloatType):
             one = tac.Constant(ast.ConstFloat(1.0))
+            op_tac = tac.Add() if is_incr else tac.Subtract()
+            compute_instrs = [tac.Binary(operator=op_tac, src1=cur_val, src2=one, dst=new_val)]
+        elif isinstance(t, ast.LongDoubleType):
+            one = tac.Constant(ast.ConstLongDouble(1.0))
             op_tac = tac.Add() if is_incr else tac.Subtract()
             compute_instrs = [tac.Binary(operator=op_tac, src1=cur_val, src2=one, dst=new_val)]
         else:
@@ -1551,8 +1585,26 @@ class _TacGenerator:
                 if t == inner_type:
                     return result, inner_instrs
                 dst = self._make_temp(t)
-                if isinstance(t, ast.DoubleType) and isinstance(inner_type, ast.FloatType):
-                    conv: tac.Instruction = tac.FloatToDouble(src=result, dst=dst)
+                if isinstance(t, ast.LongDoubleType) and isinstance(inner_type, ast.DoubleType):
+                    conv: tac.Instruction = tac.DoubleToLongDouble(src=result, dst=dst)
+                elif isinstance(t, ast.DoubleType) and isinstance(inner_type, ast.LongDoubleType):
+                    conv = tac.LongDoubleToDouble(src=result, dst=dst)
+                elif isinstance(t, ast.LongDoubleType) and isinstance(inner_type, ast.FloatType):
+                    conv = tac.FloatToLongDouble(src=result, dst=dst)
+                elif isinstance(t, ast.FloatType) and isinstance(inner_type, ast.LongDoubleType):
+                    conv = tac.LongDoubleToFloat(src=result, dst=dst)
+                elif isinstance(t, ast.LongDoubleType):
+                    if _is_signed(inner_type):  # type: ignore[arg-type]
+                        conv = tac.IntToLongDouble(src=result, dst=dst)
+                    else:
+                        conv = tac.UIntToLongDouble(src=result, dst=dst)
+                elif isinstance(inner_type, ast.LongDoubleType):
+                    if _is_signed(t):  # type: ignore[arg-type]
+                        conv = tac.LongDoubleToInt(src=result, dst=dst)
+                    else:
+                        conv = tac.LongDoubleToUInt(src=result, dst=dst)
+                elif isinstance(t, ast.DoubleType) and isinstance(inner_type, ast.FloatType):
+                    conv = tac.FloatToDouble(src=result, dst=dst)
                 elif isinstance(t, ast.FloatType) and isinstance(inner_type, ast.DoubleType):
                     conv = tac.DoubleToFloat(src=result, dst=dst)
                 elif isinstance(t, ast.FloatType):

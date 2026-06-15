@@ -111,6 +111,20 @@ class FloatInit(StaticInit):
 
 
 @dataclass(frozen=True, slots=True)
+class LongDoubleInit(StaticInit):
+    """Initialiser for a static variable of C ``long double`` type (80-bit x87 extended precision).
+
+    On x86-64 Linux ``long double`` occupies 16 bytes (10 bytes of value plus 6 bytes
+    padding).  The value is stored as a Python float (double precision).
+
+    Attributes:
+        value: The initial long double value, as a plain Python float.
+    """
+
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
 class ShortInit(StaticInit):
     """Initialiser for a static variable of C ``short`` / ``signed short`` type.
 

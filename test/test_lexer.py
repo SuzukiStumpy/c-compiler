@@ -78,6 +78,18 @@ def test_float_literal_produces_fpfloat_token(preprocess_c_file: Preprocessor) -
     assert {t.value for t in fpfloat_tokens} == {"1.5f", "1.5e10f", "1e5F", "1.F"}
 
 
+def test_long_double_literal_produces_fplongdouble_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/long_double_type.c"))
+    ld_tokens = [t for t in tokens if t.type == TokenType.FPLONGDOUBLE]
+    assert len(ld_tokens) == 4
+    assert {t.value for t in ld_tokens} == {"1.5L", "1.5e10L", "1e5l", "1.L"}
+
+
+def test_long_double_literal_not_classified_as_long_int(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/long_double_type.c"))
+    assert not any(t.type == TokenType.LONGINT and t.value.endswith(("L", "l")) and "." in t.value for t in tokens)
+
+
 def test_identifier_sharing_keyword_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
     # "returning" starts with the keyword "return" - must not be classified as RETURN
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))

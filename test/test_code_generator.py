@@ -2754,3 +2754,467 @@ class TestIsUnsignedLongLong:
 
         st = _make_symbol_table(ll=LongLongType)
         assert _is_unsigned(tac.Var("ll"), st) is False
+
+
+# ---------------------------------------------------------------------------
+# Long double code generation
+# ---------------------------------------------------------------------------
+
+
+def _ld_binary_program(op: tac.BinaryOperator) -> tac.Program:
+    """Build a TAC program performing a long-double binary operation.
+
+    Args:
+        op: The binary operator to apply.
+
+    Returns:
+        A ``tac.Program`` computing ``r = a op b`` where ``a``, ``b``, and ``r``
+        are long-double variables.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.Binary(operator=op, src1=tac.Var("a"), src2=tac.Var("b"), dst=tac.Var("r")),
+                    tac.Return(val=tac.Var("r")),
+                ),
+            ),
+        )
+    )
+
+
+def _ld_negate_program() -> tac.Program:
+    """Build a TAC program that negates a long-double variable.
+
+    Returns:
+        A ``tac.Program`` computing ``r = -a`` where both are long-double.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.Unary(operator=tac.Negate(), src=tac.Var("a"), dst=tac.Var("r")),
+                    tac.Return(val=tac.Var("r")),
+                ),
+            ),
+        )
+    )
+
+
+def _ld_return_program() -> tac.Program:
+    """Build a TAC program that returns a long-double variable.
+
+    Returns:
+        A ``tac.Program`` whose sole function returns a long-double variable.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(tac.Return(val=tac.Var("x")),),
+            ),
+        )
+    )
+
+
+def _ld_symbol_table(**extra: type) -> SymbolTable:
+    """Build a symbol table with ``a``, ``b``, ``r``, ``x`` as ``LongDoubleType``.
+
+    Args:
+        **extra: Additional variable names mapped to their C type classes.
+
+    Returns:
+        A ``SymbolTable`` with long-double entries for standard LD test vars.
+    """
+    from compiler.syntax.ast.types import LongDoubleType
+
+    base = {n: SymbolTableEntry(t=LongDoubleType(), attrs=LocalAttr()) for n in ("a", "b", "r", "x")}
+    extra_entries = {name: SymbolTableEntry(t=t(), attrs=LocalAttr()) for name, t in extra.items()}
+    return {**base, **extra_entries}
+
+
+class TestLongDoubleAsmType:
+    """``_asm_type`` returns ``LongDouble()`` for long-double values."""
+
+    def test_const_long_double_returns_long_double(self) -> None:
+        """``ConstLongDouble`` constant maps to ``LongDouble()`` assembly type."""
+        from compiler.code_generator import _asm_type
+        from compiler.syntax.ast.constants import ConstLongDouble
+
+        assert _asm_type(tac.Constant(value=ConstLongDouble(1.5))) == asm.LongDouble()
+
+    def test_long_double_var_returns_long_double(self) -> None:
+        """A ``LongDoubleType`` variable maps to ``LongDouble()``."""
+        from compiler.code_generator import _asm_type
+
+        st = _ld_symbol_table()
+        assert _asm_type(tac.Var("x"), st) == asm.LongDouble()
+
+
+class TestLongDoubleTypeSizeAndAlign:
+    """``_type_size`` and ``_static_alignment`` return 16 for ``LongDoubleType``."""
+
+    def test_type_size_is_16(self) -> None:
+        """``_type_size(LongDoubleType())`` returns 16."""
+        from compiler.code_generator import _type_size
+        from compiler.syntax.ast.types import LongDoubleType
+
+        assert _type_size(LongDoubleType()) == 16
+
+    def test_static_alignment_is_16(self) -> None:
+        """``_static_alignment(LongDoubleType())`` returns 16."""
+        from compiler.code_generator import _static_alignment
+        from compiler.syntax.ast.types import LongDoubleType
+
+        assert _static_alignment(LongDoubleType()) == 16
+
+
+class TestLongDoubleStaticInit:
+    """``_translate_static_init`` maps ``tac.LongDoubleInit`` to ``asm.LongDoubleInit``."""
+
+    def test_long_double_static_init(self) -> None:
+        """``tac.LongDoubleInit(3.14)`` translates to ``asm.LongDoubleInit(3.14)``."""
+        from compiler.code_generator import _translate_static_init
+
+        result = _translate_static_init(tac.LongDoubleInit(3.14))
+        assert isinstance(result, asm.LongDoubleInit)
+        assert result.value == 3.14
+
+
+class TestLongDoubleBinaryCodeGen:
+    """Long-double binary operations use x87 FPU instructions."""
+
+    def test_long_double_add_emits_fldt_fldt_faddp_fstpt(self) -> None:
+        """Long-double addition emits ``Fldt``, ``Fldt``, ``Faddp``, ``Fstpt``."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.Add()), st)
+        assert any(isinstance(i, asm.Faddp) for i in instrs)
+        assert any(isinstance(i, asm.Fldt) for i in instrs)
+        assert any(isinstance(i, asm.Fstpt) for i in instrs)
+
+    def test_long_double_sub_emits_fsubp(self) -> None:
+        """Long-double subtraction emits ``Fsubp`` (which emits ``fsubrp``)."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.Subtract()), st)
+        assert any(isinstance(i, asm.Fsubp) for i in instrs)
+
+    def test_long_double_mul_emits_fmulp(self) -> None:
+        """Long-double multiplication emits ``Fmulp``."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.Multiply()), st)
+        assert any(isinstance(i, asm.Fmulp) for i in instrs)
+
+    def test_long_double_div_emits_fdivp(self) -> None:
+        """Long-double division emits ``Fdivp`` (which emits ``fdivrp``)."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.Divide()), st)
+        assert any(isinstance(i, asm.Fdivp) for i in instrs)
+
+    def test_long_double_binary_no_mov(self) -> None:
+        """Long-double binary operations do not emit a Mov for double/float accumulator copy."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.Add()), st)
+        assert not any(isinstance(i, asm.Binary) for i in instrs), "LD binary must not emit asm.Binary"
+
+
+class TestLongDoubleNegateCodeGen:
+    """Long-double negation uses the x87 ``fchs`` instruction."""
+
+    def test_long_double_negate_emits_fldt_fchs_fstpt(self) -> None:
+        """``Negate`` on a long-double emits ``Fldt``, ``Fchs``, ``Fstpt``."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_negate_program(), st)
+        assert any(isinstance(i, asm.Fldt) for i in instrs)
+        assert any(isinstance(i, asm.Fchs) for i in instrs)
+        assert any(isinstance(i, asm.Fstpt) for i in instrs)
+
+
+class TestLongDoubleReturnCodeGen:
+    """Returning a long-double value loads it into ST0 then ``ret``."""
+
+    def test_long_double_return_emits_fldt_then_ret(self) -> None:
+        """``Return(long_double_var)`` emits ``Fldt`` followed by ``Ret``."""
+        st = _ld_symbol_table()
+        instrs = _fn_instructions_with_table(_ld_return_program(), st)
+        idx_fldt = next((i for i, ins in enumerate(instrs) if isinstance(ins, asm.Fldt)), -1)
+        idx_ret = next((i for i, ins in enumerate(instrs) if isinstance(ins, asm.Ret)), -1)
+        assert idx_fldt >= 0, "Fldt not found"
+        assert idx_ret > idx_fldt, "Ret must follow Fldt"
+
+
+class TestLongDoubleComparisonCodeGen:
+    """Long-double comparisons use ``fucomip`` via ``Fucomip`` instruction."""
+
+    def test_long_double_equal_emits_fucomip_and_fstp0(self) -> None:
+        """Equal comparison emits ``Fucomip`` and ``Fstp0`` to clean up x87 stack."""
+        st = _ld_symbol_table(**{"res": IntType})
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.Equal()), st)
+        assert any(isinstance(i, asm.Fucomip) for i in instrs)
+        assert any(isinstance(i, asm.Fstp0) for i in instrs)
+
+    def test_long_double_lt_emits_setb(self) -> None:
+        """LessThan comparison sets CF via fucomip; result uses ``SetCC(B)``."""
+        st = _ld_symbol_table(**{"res": IntType})
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.LessThan()), st)
+        assert any(isinstance(i, asm.SetCC) and i.cond_code == asm.CondCodes.B for i in instrs)
+
+    def test_long_double_gt_emits_seta(self) -> None:
+        """GreaterThan comparison uses ``SetCC(A)``."""
+        st = _ld_symbol_table(**{"res": IntType})
+        instrs = _fn_instructions_with_table(_ld_binary_program(tac.GreaterThan()), st)
+        assert any(isinstance(i, asm.SetCC) and i.cond_code == asm.CondCodes.A for i in instrs)
+
+
+class TestLongDoublePseudoReplacement:
+    """Long-double ``Pseudo`` operands get a 16-byte, 16-byte-aligned stack slot."""
+
+    def test_long_double_stack_slot_is_16_bytes(self) -> None:
+        """A long-double local variable occupies exactly 16 bytes of frame space."""
+        st = _ld_symbol_table()
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.Copy(src=tac.Var("a"), dst=tac.Var("r")),
+                        tac.Return(val=tac.Constant(value=ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        mem_offsets = {
+            op.offset
+            for i in instrs
+            for op in ([getattr(i, "src", None), getattr(i, "dst", None)] + [getattr(i, "operand", None)])
+            if op is not None and isinstance(op, asm.Memory)
+        }
+        # Slots should be 16-byte aligned (multiples of 16 below rbp).
+        for off in mem_offsets:
+            if off < 0:
+                assert off % 16 == 0, f"Stack offset {off} is not 16-byte aligned"
+
+
+class TestLongDoubleConversions:
+    """Long-double conversion instructions map to x87 integer load/store instructions."""
+
+    def _conv_program(self, instr_class: type, src_name: str, dst_name: str) -> tac.Program:
+        """Build a single-conversion TAC program.
+
+        Args:
+            instr_class: The TAC conversion instruction class.
+            src_name: Source variable name.
+            dst_name: Destination variable name.
+
+        Returns:
+            A ``tac.Program`` wrapping the conversion.
+        """
+        return tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        instr_class(src=tac.Var(src_name), dst=tac.Var(dst_name)),
+                        tac.Return(val=tac.Constant(value=ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+
+    def test_int_to_long_double_emits_fildl_fstpt(self) -> None:
+        """``IntToLongDouble`` from int32 emits ``Fildl`` and ``Fstpt``."""
+        st = {
+            "i": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.IntToLongDouble, "i", "ld"), st)
+        assert any(isinstance(i, asm.Fildl) for i in instrs)
+        assert any(isinstance(i, asm.Fstpt) for i in instrs)
+
+    def test_long_to_long_double_emits_fildq_fstpt(self) -> None:
+        """``IntToLongDouble`` from int64 emits ``Fildq`` and ``Fstpt``."""
+        st = {
+            "i": SymbolTableEntry(t=LongType(), attrs=LocalAttr()),
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.IntToLongDouble, "i", "ld"), st)
+        assert any(isinstance(i, asm.Fildq) for i in instrs)
+        assert any(isinstance(i, asm.Fstpt) for i in instrs)
+
+    def test_long_double_to_int_emits_fldt_fisttpl(self) -> None:
+        """``LongDoubleToInt`` to int32 emits ``Fldt`` and ``Fisttpl``."""
+        st = {
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+            "i": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.LongDoubleToInt, "ld", "i"), st)
+        assert any(isinstance(i, asm.Fldt) for i in instrs)
+        assert any(isinstance(i, asm.Fisttpl) for i in instrs)
+
+    def test_long_double_to_long_emits_fldt_fisttpq(self) -> None:
+        """``LongDoubleToInt`` to int64 emits ``Fldt`` and ``Fisttpq``."""
+        st = {
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+            "i": SymbolTableEntry(t=LongType(), attrs=LocalAttr()),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.LongDoubleToInt, "ld", "i"), st)
+        assert any(isinstance(i, asm.Fldt) for i in instrs)
+        assert any(isinstance(i, asm.Fisttpq) for i in instrs)
+
+    def test_double_to_long_double_emits_fldl_fstpt(self) -> None:
+        """``DoubleToLongDouble`` emits ``Fldl`` and ``Fstpt``."""
+        st = {
+            "d": SymbolTableEntry(t=DoubleType(), attrs=LocalAttr()),
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.DoubleToLongDouble, "d", "ld"), st)
+        assert any(isinstance(i, asm.Fldl) for i in instrs)
+        assert any(isinstance(i, asm.Fstpt) for i in instrs)
+
+    def test_long_double_to_double_emits_fldt_fstpl(self) -> None:
+        """``LongDoubleToDouble`` emits ``Fldt`` and ``Fstpl``."""
+        st = {
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+            "d": SymbolTableEntry(t=DoubleType(), attrs=LocalAttr()),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.LongDoubleToDouble, "ld", "d"), st)
+        assert any(isinstance(i, asm.Fldt) for i in instrs)
+        assert any(isinstance(i, asm.Fstpl) for i in instrs)
+
+    def test_float_to_long_double_emits_flds_fstpt(self) -> None:
+        """``FloatToLongDouble`` emits ``Flds`` and ``Fstpt``."""
+        st = {
+            "f": SymbolTableEntry(t=FloatType(), attrs=LocalAttr()),
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.FloatToLongDouble, "f", "ld"), st)
+        assert any(isinstance(i, asm.Flds) for i in instrs)
+        assert any(isinstance(i, asm.Fstpt) for i in instrs)
+
+    def test_long_double_to_float_emits_fldt_fstps(self) -> None:
+        """``LongDoubleToFloat`` emits ``Fldt`` and ``Fstps``."""
+        st = {
+            "ld": SymbolTableEntry(
+                t=__import__("compiler.syntax.ast.types", fromlist=["LongDoubleType"]).LongDoubleType(),
+                attrs=LocalAttr(),
+            ),
+            "f": SymbolTableEntry(t=FloatType(), attrs=LocalAttr()),
+        }
+        instrs = _fn_instructions_with_table(self._conv_program(tac.LongDoubleToFloat, "ld", "f"), st)
+        assert any(isinstance(i, asm.Fldt) for i in instrs)
+        assert any(isinstance(i, asm.Fstps) for i in instrs)
+
+
+class TestLongDoubleParam:
+    """Long-double function parameters arrive via MEMORY class and are copied with x87."""
+
+    def _ld_param_program(self) -> tac.Program:
+        """A function ``foo(long double x)`` that returns ``x``."""
+        return tac.Program(
+            top_level=(
+                tac.Function(
+                    name="foo",
+                    params=("x",),
+                    body=(tac.Return(val=tac.Var("x")),),
+                ),
+            )
+        )
+
+    def _ld_param_st(self) -> SymbolTable:
+        """Symbol table: ``x`` is ``LongDoubleType`` local."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        return {"x": SymbolTableEntry(t=LongDoubleType(), attrs=LocalAttr())}
+
+    def test_ld_param_uses_fldt(self) -> None:
+        """A long-double parameter is loaded from the stack with ``Fldt``."""
+        instrs = _fn_instructions_with_table(self._ld_param_program(), self._ld_param_st())
+        assert any(isinstance(i, asm.Fldt) for i in instrs), "expected Fldt to load ld param from stack"
+
+    def test_ld_param_uses_fstpt(self) -> None:
+        """A long-double parameter is stored to its local slot with ``Fstpt``."""
+        instrs = _fn_instructions_with_table(self._ld_param_program(), self._ld_param_st())
+        assert any(isinstance(i, asm.Fstpt) for i in instrs), "expected Fstpt to store ld param to local"
+
+    def test_ld_param_no_mov(self) -> None:
+        """No ``Mov`` is emitted for the long-double parameter copy (x87 handles it)."""
+
+        instrs = _fn_instructions_with_table(self._ld_param_program(), self._ld_param_st())
+        param_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.assembly_type == asm.LongDouble()]
+        assert not param_movs, "Mov(LongDouble) should not be emitted for ld param"
+
+
+class TestLongDoubleFuncall:
+    """Long-double arguments are pushed as two 8-byte stack slots; returns via ST0."""
+
+    def _ld_arg_program(self) -> tac.Program:
+        """Call ``foo(x)`` where ``x`` is a long double, store result in ``r``."""
+        return tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var("foo"),
+                            args=(tac.Var("x"),),
+                            dst=tac.Var("r"),
+                        ),
+                        tac.Return(val=tac.Var("r")),
+                    ),
+                ),
+            )
+        )
+
+    def _ld_arg_st(self, ret_type: type | None = None) -> SymbolTable:
+        """Symbol table: ``x`` is LongDoubleType local; ``foo`` has the given return type."""
+        from compiler.syntax.ast.types import FunType, LongDoubleType
+        from compiler.types.symbols import FunAttr
+
+        ret = (ret_type or IntType)()
+        st: SymbolTable = {
+            "x": SymbolTableEntry(t=LongDoubleType(), attrs=LocalAttr()),
+            "r": SymbolTableEntry(t=ret, attrs=LocalAttr()),
+            "foo": SymbolTableEntry(
+                t=FunType(params=[LongDoubleType()], ret=ret),
+                attrs=FunAttr(defined=False, globl=True),
+            ),
+        }
+        return st
+
+    def test_ld_arg_pushes_two_qwords(self) -> None:
+        """A long-double argument emits two ``Push`` instructions (16 bytes on stack)."""
+        instrs = _fn_instructions_with_table(self._ld_arg_program(), self._ld_arg_st())
+        pushes = [i for i in instrs if isinstance(i, asm.Push)]
+        assert len(pushes) == 2, f"expected 2 Push for ld arg, got {len(pushes)}"
+
+    def test_ld_return_emits_fstpt(self) -> None:
+        """A call returning long double emits ``Fstpt`` to capture ST0 after the call."""
+        from compiler.syntax.ast.types import LongDoubleType
+
+        instrs = _fn_instructions_with_table(self._ld_arg_program(), self._ld_arg_st(LongDoubleType))
+        call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Call))
+        post_call = instrs[call_idx + 1 :]
+        assert any(isinstance(i, asm.Fstpt) for i in post_call), "expected Fstpt after Call for ld return"

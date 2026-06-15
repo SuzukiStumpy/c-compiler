@@ -78,6 +78,17 @@ class FloatType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class LongDoubleType(Type):
+    """Represents the C ``long double`` type (80-bit x87 extended precision on x86-64).
+
+    On x86-64 Linux the type occupies 16 bytes (10 bytes of mantissa/exponent plus
+    6 bytes of alignment padding).  Values live in x87 FPU registers (ST0-ST7) and
+    are passed/returned via the x87 stack (MEMORY class in the SysV AMD64 ABI).
+    The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class VoidType(Type):
     """Represents the C ``void`` type.
 

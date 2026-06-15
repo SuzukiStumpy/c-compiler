@@ -935,3 +935,242 @@ class Lea(Instruction):
             e.g. ``"  leaq -4(%rbp), %rax"``.
         """
         return _asm_line("leaq", self.src.emit(), self.dst.emit())
+
+
+# ---------------------------------------------------------------------------
+# x87 FPU instructions for ``long double`` (80-bit extended precision)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Fldt(Instruction):
+    """Load 80-bit extended-precision value from memory onto the x87 FPU stack (ST0).
+
+    Attributes:
+        src: Memory operand containing the 10-byte (80-bit) value to push.
+    """
+
+    src: Operand
+
+    def emit(self) -> str:
+        """Return a ``fldt`` instruction in AT&T syntax."""
+        return _asm_line("fldt", self.src.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fstpt(Instruction):
+    """Store ST0 as 80-bit extended-precision to memory and pop the x87 stack.
+
+    Attributes:
+        dst: Memory operand receiving the 10-byte (80-bit) value.
+    """
+
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``fstpt`` instruction in AT&T syntax."""
+        return _asm_line("fstpt", self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Faddp(Instruction):
+    """Add ST(0) and ST(1), store result in ST(1), and pop ST(0).
+
+    In AT&T syntax: ``faddp``.  Implements ``long double`` addition.
+    """
+
+    def emit(self) -> str:
+        """Return a ``faddp`` instruction."""
+        return _asm_line("faddp")
+
+
+@dataclass(frozen=True, slots=True)
+class Fsubp(Instruction):
+    """Subtract ST(0) from ST(1) (i.e. ST(1) -= ST(0)), store in ST(1), pop ST(0).
+
+    Implements ``long double`` subtraction when operands are loaded as: push left, push right.
+    AT&T: ``fsubrp`` (reversed operand convention in AT&T syntax means ST(1) = ST(1) - ST(0)).
+    """
+
+    def emit(self) -> str:
+        """Return a ``fsubrp`` instruction (AT&T convention: ST(1) = ST(1) - ST(0))."""
+        return _asm_line("fsubrp")
+
+
+@dataclass(frozen=True, slots=True)
+class Fmulp(Instruction):
+    """Multiply ST(0) and ST(1), store result in ST(1), and pop ST(0).
+
+    Implements ``long double`` multiplication.  AT&T: ``fmulp``.
+    """
+
+    def emit(self) -> str:
+        """Return a ``fmulp`` instruction."""
+        return _asm_line("fmulp")
+
+
+@dataclass(frozen=True, slots=True)
+class Fdivp(Instruction):
+    """Divide ST(1) by ST(0) (i.e. ST(1) /= ST(0)), store in ST(1), pop ST(0).
+
+    Implements ``long double`` division.  In AT&T syntax ``fdivrp`` means ST(1) = ST(1)/ST(0).
+    """
+
+    def emit(self) -> str:
+        """Return a ``fdivrp`` instruction (AT&T convention: ST(1) = ST(1) / ST(0))."""
+        return _asm_line("fdivrp")
+
+
+@dataclass(frozen=True, slots=True)
+class Fchs(Instruction):
+    """Change the sign of ST(0) (negate).  AT&T: ``fchs``."""
+
+    def emit(self) -> str:
+        """Return a ``fchs`` instruction."""
+        return _asm_line("fchs")
+
+
+@dataclass(frozen=True, slots=True)
+class Fucomip(Instruction):
+    """Unordered compare ST(0) with ST(1), set EFLAGS, and pop ST(0).
+
+    After this instruction: CF=1 → ST(0) < ST(1); ZF=1 → equal; CF=0,ZF=0 → ST(0) > ST(1).
+    Emits ``fucomip %st, %st(1)`` in AT&T syntax.
+    """
+
+    def emit(self) -> str:
+        """Return a ``fucomip %st, %st(1)`` instruction in AT&T syntax."""
+        return _asm_line("fucomip", "%st", "%st(1)")
+
+
+@dataclass(frozen=True, slots=True)
+class Fstp0(Instruction):
+    """Pop and discard ST(0) from the x87 stack.  Emits ``fstp %st(0)``."""
+
+    def emit(self) -> str:
+        """Return a ``fstp %st(0)`` instruction to pop the x87 stack top."""
+        return _asm_line("fstp", "%st(0)")
+
+
+@dataclass(frozen=True, slots=True)
+class Fildl(Instruction):
+    """Load a 32-bit signed integer from memory onto the x87 stack as extended precision.
+
+    Attributes:
+        src: Memory operand containing the 4-byte signed integer.
+    """
+
+    src: Operand
+
+    def emit(self) -> str:
+        """Return a ``fildl`` instruction in AT&T syntax."""
+        return _asm_line("fildl", self.src.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fildq(Instruction):
+    """Load a 64-bit signed integer from memory onto the x87 stack as extended precision.
+
+    Attributes:
+        src: Memory operand containing the 8-byte signed integer.
+    """
+
+    src: Operand
+
+    def emit(self) -> str:
+        """Return a ``fildq`` instruction in AT&T syntax."""
+        return _asm_line("fildq", self.src.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fisttpl(Instruction):
+    """Store ST(0) as a 32-bit signed integer (truncate toward zero) to memory, pop.
+
+    Uses SSE2 truncation semantics (matches C cast behaviour).
+
+    Attributes:
+        dst: Memory operand receiving the 4-byte integer result.
+    """
+
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``fisttpl`` instruction in AT&T syntax."""
+        return _asm_line("fisttpl", self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fisttpq(Instruction):
+    """Store ST(0) as a 64-bit signed integer (truncate toward zero) to memory, pop.
+
+    Uses SSE2 truncation semantics (matches C cast behaviour).
+
+    Attributes:
+        dst: Memory operand receiving the 8-byte integer result.
+    """
+
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``fisttpq`` instruction in AT&T syntax."""
+        return _asm_line("fisttpq", self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fldl(Instruction):
+    """Load a 64-bit double-precision float from memory onto the x87 stack (extends to 80-bit).
+
+    Attributes:
+        src: Memory operand containing the 8-byte double value.
+    """
+
+    src: Operand
+
+    def emit(self) -> str:
+        """Return a ``fldl`` instruction in AT&T syntax."""
+        return _asm_line("fldl", self.src.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fstpl(Instruction):
+    """Store ST(0) as a 64-bit double-precision float to memory, pop (narrows from 80-bit).
+
+    Attributes:
+        dst: Memory operand receiving the 8-byte double result.
+    """
+
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``fstpl`` instruction in AT&T syntax."""
+        return _asm_line("fstpl", self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Flds(Instruction):
+    """Load a 32-bit single-precision float from memory onto the x87 stack (extends to 80-bit).
+
+    Attributes:
+        src: Memory operand containing the 4-byte float value.
+    """
+
+    src: Operand
+
+    def emit(self) -> str:
+        """Return a ``flds`` instruction in AT&T syntax."""
+        return _asm_line("flds", self.src.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Fstps(Instruction):
+    """Store ST(0) as a 32-bit single-precision float to memory, pop (narrows from 80-bit).
+
+    Attributes:
+        dst: Memory operand receiving the 4-byte float result.
+    """
+
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``fstps`` instruction in AT&T syntax."""
+        return _asm_line("fstps", self.dst.emit())
