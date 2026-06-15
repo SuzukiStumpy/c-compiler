@@ -152,6 +152,24 @@ class TestConvertSymbolsToTacky:
         result = _convert_symbols_to_tacky(symbols)
         assert result[0].init == (tac.LongInit(42),)
 
+    def test_float_init_emits_tac_float_init(self) -> None:
+        """``Initial((FloatInit(1.5),))`` produces ``tac.FloatInit(1.5)``."""
+        from compiler.types.symbols import FloatInit
+
+        symbols = {
+            "x": SymbolTableEntry(t=ast.FloatType(), attrs=StaticAttr(init=Initial((FloatInit(1.5),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.FloatInit(1.5),)
+
+    def test_zero_init_float_emits_float_init_not_zero_init(self) -> None:
+        """``Initial((ZeroInit(4),))`` for a ``float`` produces ``tac.FloatInit(0.0)``, not ``ZeroInit``."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.FloatType(), attrs=StaticAttr(init=Initial((ZeroInit(4),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result[0].init == (tac.FloatInit(0.0),)
+
 
 # ---------------------------------------------------------------------------
 # Static local declarations produce no inline instructions

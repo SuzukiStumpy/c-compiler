@@ -670,3 +670,51 @@ class TestLongLongTypeSizes:
 
         body = (_vd("x", ast.Constant(ConstULongLong(0)), ast.ULongLongType()),) + _return_exp(_int_const())
         resolve(_program(body))  # must not raise
+
+
+class TestFloatType:
+    """Semantic analysis correctly handles the ``float`` type."""
+
+    def test_float_variable_is_accepted(self) -> None:
+        """A local ``float`` variable declaration resolves without error."""
+        from compiler.syntax.ast.constants import ConstFloat
+
+        body = (_vd("x", ast.Constant(ConstFloat(0.0)), ast.FloatType()),) + _return_exp(_int_const())
+        resolve(_program(body))
+
+    def test_float_plus_float_gives_float(self) -> None:
+        """``float + float`` common type is ``FloatType``."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.FloatType(), ast.FloatType())
+        assert result == ast.FloatType()
+
+    def test_float_plus_double_gives_double(self) -> None:
+        """``float + double`` common type is ``DoubleType`` (double is wider)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.FloatType(), ast.DoubleType())
+        assert result == ast.DoubleType()
+
+    def test_double_plus_float_gives_double(self) -> None:
+        """``double + float`` common type is ``DoubleType``."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.DoubleType(), ast.FloatType())
+        assert result == ast.DoubleType()
+
+    def test_float_is_not_integer_type(self) -> None:
+        """``FloatType`` is rejected by bitwise operators (not an integer type)."""
+        from compiler.syntax.ast.constants import ConstFloat
+
+        float_const = ast.Constant(value=ConstFloat(1.0))
+        prog = _program(_return_exp(ast.Unary(ast.Complement(), float_const)))
+        with pytest.raises(SemanticError, match="integer operand"):
+            resolve(prog)
+
+    def test_float_plus_int_gives_float(self) -> None:
+        """``float + int`` common type is ``FloatType`` (float is wider than int)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.FloatType(), ast.IntType())
+        assert result == ast.FloatType()

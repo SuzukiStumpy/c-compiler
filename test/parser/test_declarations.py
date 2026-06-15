@@ -1377,3 +1377,78 @@ class TestLongLongTypes:
         assert isinstance(exp, Constant)
         assert exp.value == ConstULongLong(42)
         assert exp.exp_type == ULongLongType()
+
+
+# ---------------------------------------------------------------------------
+# float type specifier
+# ---------------------------------------------------------------------------
+
+_FLOAT = _tok(TokenType.FLOAT, "float")
+
+
+class TestFloatType:
+    """Parser recognises ``float`` type specifier and float-suffix literals."""
+
+    def test_float_variable_declaration(self) -> None:
+        """``float x;`` at file scope produces a ``FloatType`` variable."""
+        from compiler.syntax.ast.types import FloatType
+
+        tokens = [_FLOAT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == FloatType()
+
+    def test_float_return_type(self) -> None:
+        """``float foo(void) { return 0; }`` parses with a ``FloatType`` return."""
+        from compiler.syntax.ast.types import FloatType
+
+        tokens = [_FLOAT, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.ret == FloatType()
+
+    def test_float_parameter(self) -> None:
+        """``int foo(float x) { ... }`` has a ``FloatType`` parameter."""
+        from compiler.syntax.ast.types import FloatType
+
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _FLOAT,
+            _ident("x"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params[0].param_type == FloatType()
+
+    def test_float_literal_produces_const_float(self) -> None:
+        """``1.5f`` parses as ``ConstFloat(1.5)`` with ``FloatType``."""
+        from compiler.syntax.ast.constants import ConstFloat
+        from compiler.syntax.ast.types import FloatType
+
+        fp_tok = _tok(TokenType.FPFLOAT, "1.5f")
+        exp = _parsed_exp(fp_tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstFloat(1.5)
+        assert exp.exp_type == FloatType()
+
+    def test_float_exponent_literal_produces_const_float(self) -> None:
+        """``1e5F`` parses as ``ConstFloat(1e5)`` with ``FloatType``."""
+        from compiler.syntax.ast.constants import ConstFloat
+        from compiler.syntax.ast.types import FloatType
+
+        fp_tok = _tok(TokenType.FPFLOAT, "1e5F")
+        exp = _parsed_exp(fp_tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstFloat(1e5)
+        assert exp.exp_type == FloatType()

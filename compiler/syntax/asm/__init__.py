@@ -6,7 +6,7 @@ and consumed by the assembly emitter. The hierarchy mirrors the ASDL grammar
 for the supported assembly subset:
 
     program             = Program(top_level*)
-    assembly_type       = Byte | Longword | Quadword | Double | ByteArray(int size, int alignment)
+    assembly_type       = Byte | Longword | Quadword | Double | Float | ByteArray(int size, int alignment)
     top_level           = Function(identifier name, bool globl, instruction* instructions)
                         | StaticVariable(identifier name, bool globl, int init, int alignment, static_init* init_list)
                         | StaticConstant(identifier name, int alignment, static_init init)
@@ -38,6 +38,7 @@ for the supported assembly subset:
     unary_operator      = Neg | Not
     binary_operator     = Add | Sub | Mult | And | Or | Xor
                         | AddDouble | SubDouble | MultDouble | DivDouble | XorDouble
+                        | AddFloat | SubFloat | MultFloat | DivFloat | XorFloat
     operand             = Imm(int)
                         | Register(reg)
                         | Pseudo(identifier)
@@ -79,8 +80,12 @@ from compiler.syntax.asm.instructions import (
     Cdq,
     Cmp,
     CondCodes,
+    Cvtsd2ss,
     Cvtsi2sd,
+    Cvtsi2ss,
+    Cvtss2sd,
     Cvttsd2si,
+    Cvttss2si,
     DeallocateStack,
     Div,
     Idiv,
@@ -121,19 +126,24 @@ from compiler.syntax.asm.operands import (
 from compiler.syntax.asm.operators import (
     Add,
     AddDouble,
+    AddFloat,
     And,
     BinaryOperator,
     DivDouble,
+    DivFloat,
     Mult,
     MultDouble,
+    MultFloat,
     Neg,
     Not,
     Or,
     Sub,
     SubDouble,
+    SubFloat,
     UnaryOperator,
     Xor,
     XorDouble,
+    XorFloat,
 )
 from compiler.syntax.asm.values import (
     AssemblyType,
@@ -142,6 +152,8 @@ from compiler.syntax.asm.values import (
     CharInit,
     Double,
     DoubleInit,
+    Float,
+    FloatInit,
     Int128Init,
     IntInit,
     LongInit,
@@ -164,8 +176,12 @@ __all__ = [
     "Call",
     "Cdq",
     "Cmp",
+    "Cvtsd2ss",
     "Cvtsi2sd",
+    "Cvtsi2ss",
+    "Cvtss2sd",
     "Cvttsd2si",
+    "Cvttss2si",
     "DeallocateStack",
     "Div",
     "Idiv",
@@ -192,17 +208,22 @@ __all__ = [
     "UnaryOperator",
     "Add",
     "AddDouble",
+    "AddFloat",
     "And",
     "DivDouble",
+    "DivFloat",
     "Mult",
     "MultDouble",
+    "MultFloat",
     "Neg",
     "Not",
     "Or",
     "Sub",
     "SubDouble",
+    "SubFloat",
     "Xor",
     "XorDouble",
+    "XorFloat",
     # operands
     "ALLOCATABLE_FP",
     "ALLOCATABLE_GP",
@@ -231,6 +252,8 @@ __all__ = [
     "ByteArray",
     "Double",
     "DoubleInit",
+    "Float",
+    "FloatInit",
     "CharInit",
     "ShortInit",
     "UShortInit",

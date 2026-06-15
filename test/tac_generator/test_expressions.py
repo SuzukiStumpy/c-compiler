@@ -748,7 +748,7 @@ class TestTacGeneratorStringLiteralExpression:
         assert isinstance(ret, tac.Return)
         assert ret.val == get_addr.dst
 
-    def test_two_distinct_string_literals_create_two_static_constants(self) -> None:
+    def test_two_distinct_string_literals_create_two_static_constants(self) -> None:  # noqa: E501
         """Two different string literal expressions each get their own ``StaticConstant``."""
         sym: dict = {}
         prog = generate(
@@ -766,3 +766,55 @@ class TestTacGeneratorStringLiteralExpression:
         inits = {c.init for c in static_consts}
         assert tac.StringInit(b"foo", True) in inits
         assert tac.StringInit(b"bar", True) in inits
+
+
+# ---------------------------------------------------------------------------
+# Float type casts
+# ---------------------------------------------------------------------------
+
+
+class TestFloatCasts:
+    """Float cast expressions produce the correct conversion TAC instructions."""
+
+    def _cast(self, target: ast.Type, src_type: ast.Type, const: ast.Const) -> tuple[tac.Instruction, ...]:
+        """Build a cast expression and return the generated TAC instructions."""
+        inner = ast.Constant(value=const, exp_type=src_type)
+        cast_exp = ast.Cast(target_type=target, exp=inner, exp_type=target)
+        return _body(cast_exp)
+
+    def test_int_to_float_produces_int_to_float(self) -> None:
+        """``(float)int_val`` emits ``IntToFloat`` instruction."""
+
+        instrs = self._cast(ast.FloatType(), ast.IntType(), ast.ConstInt(3))
+        assert any(isinstance(i, tac.IntToFloat) for i in instrs)
+
+    def test_float_to_int_produces_float_to_int(self) -> None:
+        """``(int)float_val`` emits ``FloatToInt`` instruction."""
+        from compiler.syntax.ast.constants import ConstFloat
+
+        instrs = self._cast(ast.IntType(), ast.FloatType(), ConstFloat(3.0))
+        assert any(isinstance(i, tac.FloatToInt) for i in instrs)
+
+    def test_float_to_double_produces_float_to_double(self) -> None:
+        """``(double)float_val`` emits ``FloatToDouble`` instruction."""
+        from compiler.syntax.ast.constants import ConstFloat
+
+        instrs = self._cast(ast.DoubleType(), ast.FloatType(), ConstFloat(3.0))
+        assert any(isinstance(i, tac.FloatToDouble) for i in instrs)
+
+    def test_double_to_float_produces_double_to_float(self) -> None:
+        """``(float)double_val`` emits ``DoubleToFloat`` instruction."""
+        instrs = self._cast(ast.FloatType(), ast.DoubleType(), ast.ConstDouble(3.0))
+        assert any(isinstance(i, tac.DoubleToFloat) for i in instrs)
+
+    def test_uint_to_float_produces_uint_to_float(self) -> None:
+        """``(float)uint_val`` emits ``UIntToFloat`` instruction."""
+        instrs = self._cast(ast.FloatType(), ast.UIntType(), ast.ConstUInt(3))
+        assert any(isinstance(i, tac.UIntToFloat) for i in instrs)
+
+    def test_float_to_uint_produces_float_to_uint(self) -> None:
+        """``(unsigned)float_val`` emits ``FloatToUInt`` instruction."""
+        from compiler.syntax.ast.constants import ConstFloat
+
+        instrs = self._cast(ast.UIntType(), ast.FloatType(), ConstFloat(3.0))
+        assert any(isinstance(i, tac.FloatToUInt) for i in instrs)

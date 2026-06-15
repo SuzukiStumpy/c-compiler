@@ -13,6 +13,7 @@ from compiler.syntax.asm.operands import GPRegisters, Operand, Width
 from compiler.syntax.asm.values import (
     CharInit,
     DoubleInit,
+    FloatInit,
     Int128Init,
     IntInit,
     LongInit,
@@ -200,6 +201,7 @@ class StaticVariable(TopLevel):
                 isinstance(i, (CharInit, ShortInit, UShortInit, IntInit, LongInit, Int128Init, UInt128Init))
                 and i.value == 0
             )
+            or (isinstance(i, (DoubleInit, FloatInit)) and i.as_bits() == 0)
             for i in self.init
         )
         lines.append(_asm_line(".bss" if in_bss else ".data"))
@@ -232,6 +234,10 @@ class StaticVariable(TopLevel):
                     lines.append(_asm_line(".zero", "8"))
                 case DoubleInit() as d:
                     lines.append(_asm_line(".quad", str(d.as_bits())))
+                case FloatInit() as f if f.as_bits() == 0:
+                    lines.append(_asm_line(".zero", "4"))
+                case FloatInit() as f:
+                    lines.append(_asm_line(".long", str(f.as_bits())))
                 case StringInit(string=s, null_terminated=nt):
                     data = list(s) + ([0] if nt else [])
                     lines.append(_string_comment(s, nt))
@@ -279,6 +285,8 @@ class StaticConstant(TopLevel):
         match self.init:
             case DoubleInit() as d:
                 lines.append(_asm_line(".quad", str(d.as_bits())))
+            case FloatInit() as f:
+                lines.append(_asm_line(".long", str(f.as_bits())))
             case IntInit(value=v):
                 lines.append(_asm_line(".long", str(v)))
             case LongInit(value=v):

@@ -13,6 +13,7 @@ from compiler.code_generator import generate
 from compiler.syntax.ast.constants import (
     ConstChar,
     ConstDouble,
+    ConstFloat,
     ConstInt,
     ConstLong,
     ConstLongLong,
@@ -24,6 +25,7 @@ from compiler.syntax.ast.constants import (
 from compiler.syntax.ast.types import (
     Char,
     DoubleType,
+    FloatType,
     IntType,
     LongLongType,
     LongType,
@@ -834,6 +836,179 @@ class TestDoubleRelationalCodeGen:
         """Double comparisons emit a ``Cmp`` (``ucomisd``) instruction."""
         instrs = _double_fn_instrs(tac.Equal())
         assert any(isinstance(i, asm.Cmp) and i.assembly_type == asm.Double() for i in instrs)
+
+
+# ---------------------------------------------------------------------------
+# Float (NaN-aware) comparison and binary code generation
+# ---------------------------------------------------------------------------
+
+
+def _float_relational_tac_program(op: tac.BinaryOperator) -> tac.Program:
+    """Build a ``tac.Program`` comparing two ``float`` constants with ``op``.
+
+    Args:
+        op: A relational binary operator (Equal, NotEqual, LessThan, etc.).
+
+    Returns:
+        A ``tac.Program`` whose sole function returns the comparison result.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.Binary(
+                        operator=op,
+                        src1=tac.Constant(value=ConstFloat(1.0)),
+                        src2=tac.Constant(value=ConstFloat(2.0)),
+                        dst=tac.Var(value="tmp.0"),
+                    ),
+                    tac.Return(val=tac.Var(value="tmp.0")),
+                ),
+            ),
+        )
+    )
+
+
+def _float_fn_instrs(tac_op: tac.BinaryOperator) -> tuple[asm.Instruction, ...]:
+    """Generate a float comparison program and return the main function's instructions.
+
+    Args:
+        tac_op: The relational operator to compare with.
+
+    Returns:
+        The instruction sequence from the generated main function.
+    """
+    result = generate(_float_relational_tac_program(tac_op))
+    fn = next(d for d in result.definitions if isinstance(d, asm.Function))
+    return fn.instructions
+
+
+class TestFloatRelationalCodeGen:
+    """Float-precision relational operators use NaN-aware code sequences with ``ucomiss``."""
+
+    @pytest.mark.parametrize(
+        ("tac_op", "expected_cc"),
+        [
+            (tac.Equal(), asm.CondCodes.E),
+            (tac.NotEqual(), asm.CondCodes.NE),
+            (tac.LessThan(), asm.CondCodes.B),
+            (tac.LessOrEqual(), asm.CondCodes.BE),
+            (tac.GreaterThan(), asm.CondCodes.A),
+            (tac.GreaterOrEqual(), asm.CondCodes.AE),
+        ],
+        ids=["eq", "ne", "lt", "le", "gt", "ge"],
+    )
+    def test_float_relational_uses_unsigned_cond_codes(
+        self, tac_op: tac.BinaryOperator, expected_cc: asm.CondCodes
+    ) -> None:
+        """Float comparisons use above/below (unsigned) condition codes."""
+        instrs = _float_fn_instrs(tac_op)
+        setcc = next(i for i in instrs if isinstance(i, asm.SetCC))
+        assert setcc.cond_code == expected_cc
+
+    @pytest.mark.parametrize(
+        "tac_op",
+        [tac.Equal(), tac.NotEqual(), tac.LessThan(), tac.LessOrEqual()],
+        ids=["eq", "ne", "lt", "le"],
+    )
+    def test_float_relational_emits_parity_jump(self, tac_op: tac.BinaryOperator) -> None:
+        """``==``, ``!=``, ``<``, ``<=`` emit a ``JmpCC(P, ...)`` to guard against NaN."""
+        instrs = _float_fn_instrs(tac_op)
+        assert any(isinstance(i, asm.JmpCC) and i.cond_code == asm.CondCodes.P for i in instrs)
+
+    def test_float_relational_emits_ucomiss(self) -> None:
+        """Float comparisons emit a ``Cmp`` with ``assembly_type=Float()`` (``ucomiss``)."""
+        instrs = _float_fn_instrs(tac.Equal())
+        assert any(isinstance(i, asm.Cmp) and i.assembly_type == asm.Float() for i in instrs)
+
+
+def _float_binary_tac_program(op: tac.BinaryOperator) -> tac.Program:
+    """Build a ``tac.Program`` applying a float arithmetic operation.
+
+    Args:
+        op: An arithmetic binary operator (Add, Subtract, Multiply, or Divide).
+
+    Returns:
+        A ``tac.Program`` whose sole function applies ``op`` to two float constants.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.Binary(
+                        operator=op,
+                        src1=tac.Constant(value=ConstFloat(1.0)),
+                        src2=tac.Constant(value=ConstFloat(2.0)),
+                        dst=tac.Var(value="tmp.0"),
+                    ),
+                    tac.Return(val=tac.Var(value="tmp.0")),
+                ),
+            ),
+        )
+    )
+
+
+class TestFloatBinaryCodeGen:
+    """Float arithmetic uses ``ss`` SSE instructions (``addss``, ``subss``, ``mulss``, ``divss``)."""
+
+    @pytest.mark.parametrize(
+        ("tac_op", "expected_op"),
+        [
+            (tac.Add(), asm.AddFloat()),
+            (tac.Subtract(), asm.SubFloat()),
+            (tac.Multiply(), asm.MultFloat()),
+        ],
+        ids=["add", "sub", "mul"],
+    )
+    def test_float_arithmetic_emits_ss_binary(
+        self, tac_op: tac.BinaryOperator, expected_op: asm.BinaryOperator
+    ) -> None:
+        """Float add/sub/mul lower to the corresponding ``ss`` SSE binary instruction."""
+        st = _make_symbol_table(**{"tmp.0": FloatType})
+        instrs = _fn_instructions_with_table(_float_binary_tac_program(tac_op), st)
+        assert any(
+            isinstance(i, asm.Binary) and i.operator == expected_op and i.assembly_type == asm.Float() for i in instrs
+        )
+
+    def test_float_divide_emits_divss(self) -> None:
+        """Float division lowers to ``divss``."""
+        st = _make_symbol_table(**{"tmp.0": FloatType})
+        instrs = _fn_instructions_with_table(_float_binary_tac_program(tac.Divide()), st)
+        assert any(
+            isinstance(i, asm.Binary) and i.operator == asm.DivFloat() and i.assembly_type == asm.Float()
+            for i in instrs
+        )
+
+
+def _float_negate_tac_program() -> tac.Program:
+    """Build a ``tac.Program`` that negates a float constant.
+
+    Returns:
+        A ``tac.Program`` whose sole function negates a float value.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.Unary(operator=tac.Negate(), src=tac.Constant(value=ConstFloat(1.0)), dst=tac.Var("f")),
+                    tac.Return(val=tac.Var("f")),
+                ),
+            ),
+        )
+    )
+
+
+class TestFloatNegateCodeGen:
+    """Float negation uses ``xorps`` with a ``-0.0f`` sign mask."""
+
+    def test_float_negate_emits_xorps(self) -> None:
+        """``Negate`` on a float value emits an ``xorps`` (``XorFloat``) instruction."""
+        st = _make_symbol_table(f=FloatType)
+        instrs = _fn_instructions_with_table(_float_negate_tac_program(), st)
+        assert any(isinstance(i, asm.Binary) and i.operator == asm.XorFloat() for i in instrs)
 
 
 # ---------------------------------------------------------------------------
@@ -1950,6 +2125,373 @@ class TestUCharToDoubleConversion:
         instrs = _fn_instructions_with_table(_uchar_to_double_program("x"), st)
         assert not any(isinstance(i, asm.MoveZeroExtend) for i in instrs), "uint src should not produce MoveZeroExtend"
         assert any(isinstance(i, asm.Cvtsi2sd) and i.assembly_type == asm.Quadword() for i in instrs)
+
+
+def _float_to_int_program(dst_name: str) -> tac.Program:
+    """Build a TAC program with a single ``FloatToInt`` instruction.
+
+    Args:
+        dst_name: The destination variable name.
+
+    Returns:
+        A ``tac.Program`` that converts a float variable to ``dst_name`` via ``FloatToInt``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.FloatToInt(src=tac.Var("f"), dst=tac.Var(dst_name)),
+                    tac.Return(val=tac.Var(dst_name)),
+                ),
+            ),
+        )
+    )
+
+
+def _float_to_uint_program(dst_name: str) -> tac.Program:
+    """Build a TAC program with a single ``FloatToUInt`` instruction.
+
+    Args:
+        dst_name: The destination variable name.
+
+    Returns:
+        A ``tac.Program`` that converts a float variable to ``dst_name`` via ``FloatToUInt``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.FloatToUInt(src=tac.Var("f"), dst=tac.Var(dst_name)),
+                    tac.Return(val=tac.Var(dst_name)),
+                ),
+            ),
+        )
+    )
+
+
+def _int_to_float_program(src_name: str) -> tac.Program:
+    """Build a TAC program with a single ``IntToFloat`` instruction.
+
+    Args:
+        src_name: The source variable name.
+
+    Returns:
+        A ``tac.Program`` that converts ``src_name`` to float via ``IntToFloat``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.IntToFloat(src=tac.Var(src_name), dst=tac.Var("f")),
+                    tac.Return(val=tac.Var("f")),
+                ),
+            ),
+        )
+    )
+
+
+def _uint_to_float_program(src_name: str) -> tac.Program:
+    """Build a TAC program with a single ``UIntToFloat`` instruction.
+
+    Args:
+        src_name: The source variable name.
+
+    Returns:
+        A ``tac.Program`` that converts ``src_name`` to float via ``UIntToFloat``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.UIntToFloat(src=tac.Var(src_name), dst=tac.Var("f")),
+                    tac.Return(val=tac.Var("f")),
+                ),
+            ),
+        )
+    )
+
+
+def _float_to_double_program() -> tac.Program:
+    """Build a TAC program with a single ``FloatToDouble`` instruction.
+
+    Returns:
+        A ``tac.Program`` that widens a float to double via ``FloatToDouble``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.FloatToDouble(src=tac.Var("f"), dst=tac.Var("d")),
+                    tac.Return(val=tac.Var("d")),
+                ),
+            ),
+        )
+    )
+
+
+def _double_to_float_program() -> tac.Program:
+    """Build a TAC program with a single ``DoubleToFloat`` instruction.
+
+    Returns:
+        A ``tac.Program`` that narrows a double to float via ``DoubleToFloat``.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(
+                    tac.DoubleToFloat(src=tac.Var("d"), dst=tac.Var("f")),
+                    tac.Return(val=tac.Var("f")),
+                ),
+            ),
+        )
+    )
+
+
+class TestFloatToIntConversion:
+    """``FloatToInt`` lowers to ``Cvttss2si``, with a byte-path workaround for char destinations."""
+
+    def test_float_to_int_emits_cvttss2si(self) -> None:
+        """``FloatToInt(dst=IntType)`` emits a single ``cvttss2sil``."""
+        st = _make_symbol_table(f=FloatType, x=IntType)
+        instrs = _fn_instructions_with_table(_float_to_int_program("x"), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvttss2si)]
+        assert len(cvts) == 1
+        assert cvts[0].assembly_type == asm.Longword()
+
+    def test_float_to_schar_emits_cvttss2si_then_movb(self) -> None:
+        """``FloatToInt(dst=SChar)`` converts via int32 scratch then truncates to byte."""
+        st = _make_symbol_table(f=FloatType, c=SChar)
+        instrs = _fn_instructions_with_table(_float_to_int_program("c"), st)
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvttss2si)), None)
+        assert cvt is not None, "expected Cvttss2si"
+        assert cvt.assembly_type == asm.Longword(), "should target int32 scratch"
+        assert any(isinstance(i, asm.Mov) and i.assembly_type == asm.Byte() for i in instrs)
+
+
+class TestIntToFloatConversion:
+    """``IntToFloat`` lowers to ``Cvtsi2ss``, with a byte-path workaround for char sources."""
+
+    def test_int_to_float_emits_cvtsi2ss(self) -> None:
+        """``IntToFloat(src=IntType)`` emits a single ``cvtsi2ssl``."""
+        st = _make_symbol_table(x=IntType, f=FloatType)
+        instrs = _fn_instructions_with_table(_int_to_float_program("x"), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvtsi2ss)]
+        assert len(cvts) == 1
+        assert cvts[0].assembly_type == asm.Longword()
+
+    def test_schar_to_float_emits_movsbl_then_cvtsi2ss(self) -> None:
+        """``IntToFloat(src=SChar)`` sign-extends to int32 then converts."""
+        st = _make_symbol_table(c=SChar, f=FloatType)
+        instrs = _fn_instructions_with_table(_int_to_float_program("c"), st)
+        movsx = next((i for i in instrs if isinstance(i, asm.Movsx)), None)
+        assert movsx is not None, "expected Movsx (movsbl) to sign-extend char"
+        assert movsx.src_type == asm.Byte()
+        assert movsx.dst_type == asm.Longword()
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvtsi2ss)), None)
+        assert cvt is not None, "expected Cvtsi2ss"
+        assert cvt.assembly_type == asm.Longword()
+
+
+class TestUIntToFloatConversion:
+    """``UIntToFloat`` lowers similarly to ``UIntToDouble`` but uses ``ss`` instructions."""
+
+    def test_uint_to_float_emits_cvtsi2ss(self) -> None:
+        """``UIntToFloat(src=UIntType)`` uses the 32-bit zero-extend path."""
+        st = _make_symbol_table(x=UIntType, f=FloatType)
+        instrs = _fn_instructions_with_table(_uint_to_float_program("x"), st)
+        assert any(isinstance(i, asm.Cvtsi2ss) for i in instrs)
+
+    def test_uchar_to_float_emits_movzbl_then_cvtsi2ss(self) -> None:
+        """``UIntToFloat(src=UChar)`` zero-extends to int32 then converts."""
+        st = _make_symbol_table(c=UChar, f=FloatType)
+        instrs = _fn_instructions_with_table(_uint_to_float_program("c"), st)
+        mze = next((i for i in instrs if isinstance(i, asm.MoveZeroExtend)), None)
+        assert mze is not None, "expected MoveZeroExtend (movzbl)"
+        assert mze.src_type == asm.Byte()
+        assert mze.dst_type == asm.Longword()
+        assert any(isinstance(i, asm.Cvtsi2ss) for i in instrs)
+
+
+class TestFloatToUIntConversion:
+    """``FloatToUInt`` lowers similarly to ``DoubleToUInt`` but uses ``ss`` instructions."""
+
+    def test_float_to_uint_emits_cvttss2si_then_movl(self) -> None:
+        """``FloatToUInt(dst=UIntType)`` converts via quadword scratch then truncates."""
+        st = _make_symbol_table(f=FloatType, x=UIntType)
+        instrs = _fn_instructions_with_table(_float_to_uint_program("x"), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvttss2si)]
+        assert len(cvts) == 1
+        assert cvts[0].assembly_type == asm.Quadword()
+
+    def test_float_to_uchar_emits_cvttss2si_then_movb(self) -> None:
+        """``FloatToUInt(dst=UChar)`` converts via int32 scratch then truncates to byte."""
+        st = _make_symbol_table(f=FloatType, c=UChar)
+        instrs = _fn_instructions_with_table(_float_to_uint_program("c"), st)
+        cvt = next((i for i in instrs if isinstance(i, asm.Cvttss2si)), None)
+        assert cvt is not None, "expected Cvttss2si"
+        assert cvt.assembly_type == asm.Longword(), "should target int32 scratch"
+        assert any(isinstance(i, asm.Mov) and i.assembly_type == asm.Byte() for i in instrs)
+
+
+class TestFloatToDoubleConversion:
+    """``FloatToDouble`` lowers to a single ``Cvtss2sd`` instruction."""
+
+    def test_float_to_double_emits_cvtss2sd(self) -> None:
+        """``FloatToDouble`` emits a single ``cvtss2sd``."""
+        st = _make_symbol_table(f=FloatType, d=DoubleType)
+        instrs = _fn_instructions_with_table(_float_to_double_program(), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvtss2sd)]
+        assert len(cvts) == 1
+
+
+class TestDoubleToFloatConversion:
+    """``DoubleToFloat`` lowers to a single ``Cvtsd2ss`` instruction."""
+
+    def test_double_to_float_emits_cvtsd2ss(self) -> None:
+        """``DoubleToFloat`` emits a single ``cvtsd2ss``."""
+        st = _make_symbol_table(d=DoubleType, f=FloatType)
+        instrs = _fn_instructions_with_table(_double_to_float_program(), st)
+        cvts = [i for i in instrs if isinstance(i, asm.Cvtsd2ss)]
+        assert len(cvts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Instruction fixup - float conversion instructions with memory destinations
+# ---------------------------------------------------------------------------
+
+
+def _float_static(name: str) -> tac.StaticVariable:
+    """Return a zero-valued float ``tac.StaticVariable`` with the given name.
+
+    Args:
+        name: The identifier used in the TAC program.
+
+    Returns:
+        A ``tac.StaticVariable`` of ``FloatType`` initialised to ``0.0``.
+    """
+    return tac.StaticVariable(name=name, globl=True, t=FloatType(), init=(tac.FloatInit(0.0),))
+
+
+def _double_static(name: str) -> tac.StaticVariable:
+    """Return a zero-valued double ``tac.StaticVariable`` with the given name.
+
+    Args:
+        name: The identifier used in the TAC program.
+
+    Returns:
+        A ``tac.StaticVariable`` of ``DoubleType`` initialised to ``0.0``.
+    """
+    return tac.StaticVariable(name=name, globl=True, t=DoubleType(), init=(tac.DoubleInit(0.0),))
+
+
+def _int_static(name: str) -> tac.StaticVariable:
+    """Return a zero-valued int ``tac.StaticVariable`` with the given name.
+
+    Args:
+        name: The identifier used in the TAC program.
+
+    Returns:
+        A ``tac.StaticVariable`` of ``IntType`` initialised to ``0``.
+    """
+    return tac.StaticVariable(name=name, globl=True, t=IntType(), init=(tac.IntInit(0),))
+
+
+class TestCvtss2sdFixup:
+    """``_fix_instructions`` routes ``Cvtss2sd`` through ``%xmm14`` when the destination is memory."""
+
+    def test_cvtss2sd_no_mem_dst_after_fixup(self) -> None:
+        """``FloatToDouble`` with static (memory) destination never emits ``cvtss2sd`` with a memory dst."""
+        program = tac.Program(
+            top_level=(
+                _float_static("f"),
+                _double_static("d"),
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FloatToDouble(src=tac.Var("f"), dst=tac.Var("d")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Cvtss2sd):
+                assert not isinstance(instr.dst, (asm.Memory, asm.Data)), "Cvtss2sd survived with memory dst"
+
+
+class TestCvtsd2ssFixup:
+    """``_fix_instructions`` routes ``Cvtsd2ss`` through ``%xmm14`` when the destination is memory."""
+
+    def test_cvtsd2ss_no_mem_dst_after_fixup(self) -> None:
+        """``DoubleToFloat`` with static (memory) destination never emits ``cvtsd2ss`` with a memory dst."""
+        program = tac.Program(
+            top_level=(
+                _double_static("d"),
+                _float_static("f"),
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.DoubleToFloat(src=tac.Var("d"), dst=tac.Var("f")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Cvtsd2ss):
+                assert not isinstance(instr.dst, (asm.Memory, asm.Data)), "Cvtsd2ss survived with memory dst"
+
+
+class TestCvttss2siFixup:
+    """``_fix_instructions`` routes ``Cvttss2si`` through ``%r11`` when the destination is memory."""
+
+    def test_cvttss2si_no_mem_dst_after_fixup(self) -> None:
+        """``FloatToInt`` with static (memory) destination never emits ``cvttss2si`` with a memory dst."""
+        program = tac.Program(
+            top_level=(
+                _float_static("f"),
+                _int_static("x"),
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FloatToInt(src=tac.Var("f"), dst=tac.Var("x")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Cvttss2si):
+                assert not isinstance(instr.dst, (asm.Memory, asm.Data)), "Cvttss2si survived with memory dst"
+
+
+class TestCvtsi2ssFixup:
+    """``_fix_instructions`` routes ``Cvtsi2ss`` through ``%xmm14`` when the destination is memory."""
+
+    def test_cvtsi2ss_no_mem_dst_after_fixup(self) -> None:
+        """``IntToFloat`` with static (memory) destination never emits ``cvtsi2ss`` with a memory dst."""
+        program = tac.Program(
+            top_level=(
+                _int_static("x"),
+                _float_static("f"),
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.IntToFloat(src=tac.Var("x"), dst=tac.Var("f")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                ),
+            )
+        )
+        for instr in _fn_instructions(program):
+            if isinstance(instr, asm.Cvtsi2ss):
+                assert not isinstance(instr.dst, (asm.Memory, asm.Data)), "Cvtsi2ss survived with memory dst"
 
 
 # ---------------------------------------------------------------------------

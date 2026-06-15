@@ -16,6 +16,12 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | DoubleToUInt(val src, val dst)
                         | IntToDouble(val src, val dst)
                         | UIntToDouble(val src, val dst)
+                        | FloatToInt(val src, val dst)
+                        | FloatToUInt(val src, val dst)
+                        | IntToFloat(val src, val dst)
+                        | UIntToFloat(val src, val dst)
+                        | FloatToDouble(val src, val dst)
+                        | DoubleToFloat(val src, val dst)
                         | Unary(unary_operator, val src, val dst)
                         | Binary(binary_operator, val src1, val src2, val dst)
                         | Copy(val src, val dst)
@@ -31,7 +37,8 @@ mirrors the ASDL grammar for the supported assembly subset:
                         | CopyToOffset(val src, identifier dst, int offset)
                         | CopyFromOffset(identifier src, int offset, val dst)
     val                 = Constant(const) | Var(identifier)
-    static_init         = CharInit(int) | IntInit(int) | LongInit(int) | DoubleInit(float) | ZeroInit(int bytes)
+    static_init         = CharInit(int) | IntInit(int) | LongInit(int) | DoubleInit(float) | FloatInit(float)
+                        | ZeroInit(int bytes)
                         | StringInit(bytes string, bool null_terminated) | PointerInit(str name)
     unary_operator      = Complement | Negate | Not
     binary_operator     = Add | Subtract | Multiply | Divide | Remainder
@@ -63,12 +70,17 @@ from compiler.syntax.tac.instructions import (
     Copy,
     CopyFromOffset,
     CopyToOffset,
+    DoubleToFloat,
     DoubleToInt,
     DoubleToUInt,
+    FloatToDouble,
+    FloatToInt,
+    FloatToUInt,
     FunCall,
     GetAddress,
     Instruction,
     IntToDouble,
+    IntToFloat,
     Jump,
     JumpIfNotZero,
     JumpIfZero,
@@ -79,6 +91,7 @@ from compiler.syntax.tac.instructions import (
     Store,
     Truncate,
     UIntToDouble,
+    UIntToFloat,
     Unary,
     ZeroExtend,
 )
@@ -109,6 +122,7 @@ from compiler.syntax.tac.values import (
     CharInit,
     Constant,
     DoubleInit,
+    FloatInit,
     Int128Init,
     IntInit,
     LongInit,
@@ -132,6 +146,12 @@ __all__ = [
     "DoubleToUInt",
     "IntToDouble",
     "UIntToDouble",
+    "FloatToInt",
+    "FloatToUInt",
+    "IntToFloat",
+    "UIntToFloat",
+    "FloatToDouble",
+    "DoubleToFloat",
     "ZeroExtend",
     "StaticVariable",
     "TopLevel",
@@ -185,6 +205,7 @@ __all__ = [
     "Int128Init",
     "UInt128Init",
     "DoubleInit",
+    "FloatInit",
     "ZeroInit",
     "StringInit",
     "PointerInit",

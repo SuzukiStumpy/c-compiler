@@ -69,6 +69,15 @@ class DoubleType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class FloatType(Type):
+    """Represents the C ``float`` type (32-bit IEEE 754 single precision).
+
+    Used wherever ``float`` appears as a return type, parameter type, or variable type
+    in the source.  The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class VoidType(Type):
     """Represents the C ``void`` type.
 

@@ -70,6 +70,7 @@ from compiler.syntax.ast.types import (
     Array,
     Char,
     DoubleType,
+    FloatType,
     FunType,
     Int128Type,
     IntType,
@@ -94,6 +95,7 @@ from compiler.types.symbols import (
     CharInit,
     ConstantAttr,
     DoubleInit,
+    FloatInit,
     FunAttr,
     Initial,
     InitialValue,
@@ -129,6 +131,7 @@ _TYPE_SIZE: dict[type, int] = {
     LongLongType: 8,
     ULongLongType: 8,
     DoubleType: 8,
+    FloatType: 4,
     Char: 1,
     SChar: 1,
     UChar: 1,
@@ -180,6 +183,8 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
             return 4
         case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
             return 8
+        case FloatType():
+            return 4
         case Char() | SChar() | UChar():
             return 1
         case ShortType() | UShortType():
@@ -217,6 +222,8 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
             return 4
         case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
             return 8
+        case FloatType():
+            return 4
         case Char() | SChar() | UChar():
             return 1
         case ShortType() | UShortType():
@@ -259,6 +266,8 @@ def get_common_type(type1: Type, type2: Type) -> Type:
         return type1
     if isinstance(type1, DoubleType) or isinstance(type2, DoubleType):
         return DoubleType()
+    if isinstance(type1, FloatType) or isinstance(type2, FloatType):
+        return FloatType()
     size1 = _TYPE_SIZE.get(type(type1), 0)
     size2 = _TYPE_SIZE.get(type(type2), 0)
     if size1 == size2:
@@ -457,7 +466,7 @@ def is_arithmetic(t: Type | None) -> bool:
 
     Arithmetic types are the numeric types recognised by this compiler: all
     integer types (``IntType``, ``UIntType``, ``LongType``, ``ULongType``,
-    ``Char``, ``SChar``, ``UChar``) and the floating-point type (``DoubleType``).
+    ``Char``, ``SChar``, ``UChar``) and the floating-point types (``DoubleType``, ``FloatType``).
     Pointer, array, function, and void types are not arithmetic.
 
     Args:
@@ -472,7 +481,7 @@ def is_arithmetic(t: Type | None) -> bool:
 def is_integer(t: Type | None) -> bool:
     """Return True when ``t`` is an integer type (arithmetic and not floating-point).
 
-    Integer types are the arithmetic types that are not ``DoubleType``:
+    Integer types are the arithmetic types that are not ``DoubleType`` or ``FloatType``:
     ``IntType``, ``UIntType``, ``LongType``, ``ULongType``, ``Char``, ``SChar``,
     and ``UChar``.  Only integer types are valid operands for bitwise operators,
     shift operators, and the modulus operator.
@@ -481,10 +490,10 @@ def is_integer(t: Type | None) -> bool:
         t: The C type to test, or ``None`` if the type is not yet known.
 
     Returns:
-        ``True`` when ``t`` is in ``_TYPE_SIZE`` and is not ``DoubleType``;
+        ``True`` when ``t`` is in ``_TYPE_SIZE`` and is not ``DoubleType`` or ``FloatType``;
         ``False`` otherwise.
     """
-    return is_arithmetic(t) and not isinstance(t, DoubleType)
+    return is_arithmetic(t) and not isinstance(t, (DoubleType, FloatType))
 
 
 def is_lvalue(e: ast.Exp) -> bool:
@@ -627,6 +636,8 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
             return ast.SingleInit(ast.Constant(ast.ConstULongLong(0), exp_type=ULongLongType()))
         case DoubleType():
             return ast.SingleInit(ast.Constant(ast.ConstDouble(0.0), exp_type=DoubleType()))
+        case FloatType():
+            return ast.SingleInit(ast.Constant(ast.ConstFloat(0.0), exp_type=FloatType()))
         case Char() | SChar():
             return ast.SingleInit(ast.Constant(ast.ConstChar(0), exp_type=t))
         case UChar():
@@ -710,6 +721,9 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
         case DoubleType():
             fv = float(v)
             return ZeroInit(8) if fv == 0.0 and math.copysign(1.0, fv) > 0 else DoubleInit(fv)
+        case FloatType():
+            fv = float(v)
+            return ZeroInit(4) if fv == 0.0 and math.copysign(1.0, fv) > 0 else FloatInit(fv)
         case LongType() | ULongType() | LongLongType() | ULongLongType():
             return ZeroInit(8) if int(v) == 0 else LongInit(int(v))
         case Char() | SChar():
@@ -1949,6 +1963,8 @@ class SemanticAnalyser:
                 return ast.Constant(e.value, exp_type=ULongLongType())
             case ast.Constant(value=ast.ConstDouble()):
                 return ast.Constant(e.value, exp_type=DoubleType())
+            case ast.Constant(value=ast.ConstFloat()):
+                return ast.Constant(e.value, exp_type=FloatType())
             case ast.Constant():
                 return ast.Constant(e.value, exp_type=IntType())
             case ast.Unary(operator=op, exp=exp):
@@ -2042,7 +2058,7 @@ class SemanticAnalyser:
                             if left_is_ptr and right_is_ptr:
                                 raise SemanticError("Cannot add two pointers.")
                             if left_is_ptr:
-                                if isinstance(typed_right.exp_type, DoubleType):
+                                if isinstance(typed_right.exp_type, (DoubleType, FloatType)):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
@@ -2050,7 +2066,7 @@ class SemanticAnalyser:
                                     typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                                 bin_type = typed_left.exp_type
                             else:
-                                if isinstance(typed_left.exp_type, DoubleType):
+                                if isinstance(typed_left.exp_type, (DoubleType, FloatType)):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
@@ -2063,7 +2079,7 @@ class SemanticAnalyser:
                                     raise SemanticError("Cannot subtract pointers of different types.")
                                 bin_type = LongType()
                             elif left_is_ptr:
-                                if isinstance(typed_right.exp_type, DoubleType):
+                                if isinstance(typed_right.exp_type, (DoubleType, FloatType)):
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
@@ -2115,7 +2131,7 @@ class SemanticAnalyser:
                 if isinstance(lv_type, Pointer) and isinstance(op, (ast.Add, ast.Subtract)):
                     if isinstance(typed_rv.exp_type, Pointer):
                         raise SemanticError("Cannot add or subtract two pointers via compound assignment.")
-                    if isinstance(typed_rv.exp_type, DoubleType):
+                    if isinstance(typed_rv.exp_type, (DoubleType, FloatType)):
                         raise SemanticError("Cannot perform pointer arithmetic with a floating-point operand.")
                     if not isinstance(lv_type.referenced, (FunType, VoidType)):
                         tbl = self._struct_type_table
@@ -2218,9 +2234,9 @@ class SemanticAnalyser:
                     raise SemanticError("Can only cast to scalar type or void")
                 if not is_scalar(typed_inner.exp_type):
                     raise SemanticError("Cannot cast non-scalar expression to scalar type")
-                if isinstance(target_type, Pointer) and isinstance(typed_inner.exp_type, DoubleType):
+                if isinstance(target_type, Pointer) and isinstance(typed_inner.exp_type, (DoubleType, FloatType)):
                     raise SemanticError("Cannot cast a double to a pointer type.")
-                if isinstance(target_type, DoubleType) and isinstance(typed_inner.exp_type, Pointer):
+                if isinstance(target_type, (DoubleType, FloatType)) and isinstance(typed_inner.exp_type, Pointer):
                     raise SemanticError("Cannot cast a pointer to a double.")
                 return ast.Cast(target_type, typed_inner, exp_type=target_type)
             case ast.Dereference(exp=exp):
@@ -2789,7 +2805,7 @@ class SemanticAnalyser:
                 if not self._switch_stack:
                     raise SemanticError("'case' label not within a switch statement.")
                 raw_const = value.value
-                if isinstance(raw_const, ast.ConstDouble):
+                if isinstance(raw_const, (ast.ConstDouble, ast.ConstFloat)):
                     raise SemanticError("Case expression must be an integer constant, not a floating-point value.")
                 raw_int = int(raw_const.val)
                 truncated = _truncate_case_value(raw_int, self._switch_type_stack[-1])

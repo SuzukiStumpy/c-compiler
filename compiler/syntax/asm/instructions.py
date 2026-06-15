@@ -18,19 +18,24 @@ from compiler.syntax.asm.operands import Operand, Register
 from compiler.syntax.asm.operators import (
     Add,
     AddDouble,
+    AddFloat,
     And,
     BinaryOperator,
     DivDouble,
+    DivFloat,
     Mult,
     MultDouble,
+    MultFloat,
     Or,
     Sub,
     SubDouble,
+    SubFloat,
     UnaryOperator,
     Xor,
     XorDouble,
+    XorFloat,
 )
-from compiler.syntax.asm.values import AssemblyType, Byte, Double, Longword
+from compiler.syntax.asm.values import AssemblyType, Byte, Double, Float, Longword
 from compiler.utils.exceptions import CodeGenerationError
 
 _MNEMONIC_COL = 6
@@ -117,6 +122,8 @@ class Mov(Instruction):
         """
         if self.assembly_type == Double():
             return _asm_line("movsd", self.src.emit(), self.dst.emit())
+        if self.assembly_type == Float():
+            return _asm_line("movss", self.src.emit(), self.dst.emit())
         if self.assembly_type == Byte():
             suffix = "b"
         elif self.assembly_type == Longword():
@@ -350,6 +357,12 @@ class Binary(Instruction):
                     lines.append(_asm_line("movsd", self.src1.emit(), self.dst.emit()))
                 lines.append(_asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()))
                 return "\n".join(lines)
+            case AddFloat() | SubFloat() | MultFloat() | DivFloat() | XorFloat():
+                lines = []
+                if self.src1 != self.dst:
+                    lines.append(_asm_line("movss", self.src1.emit(), self.dst.emit()))
+                lines.append(_asm_line(self.operator.emit(self.assembly_type), self.src2.emit(), self.dst.emit()))
+                return "\n".join(lines)
             case _:
                 raise CodeGenerationError(f"unsupported binary operator in emit: {type(self.operator).__name__}")
 
@@ -543,17 +556,18 @@ class Shr(Instruction):
 
 @dataclass(frozen=True, slots=True)
 class Cmp(Instruction):
-    """A ``cmpl``/``cmpq``/``ucomisd`` instruction that compares two operands and sets the flags register.
+    """A ``cmpl``/``cmpq``/``ucomisd``/``ucomiss`` instruction that compares two operands and sets the flags register.
 
     The operands are subtracted (``op2 - op1``) for flag-setting; neither is modified.
-    When ``assembly_type`` is ``Double`` the instruction emitted is ``ucomisd``, which
-    sets CF/ZF/PF (compatible with the A/AE/B/BE unsigned condition codes).
+    When ``assembly_type`` is ``Double`` the instruction emitted is ``ucomisd``; when
+    ``Float`` it is ``ucomiss``.  Both set CF/ZF/PF (compatible with the A/AE/B/BE unsigned
+    condition codes).
 
     Attributes:
         op1: The right-hand (subtracted) operand.
         op2: The left-hand (base) operand.
-        assembly_type: Selects ``cmpl`` (Longword), ``cmpq`` (Quadword), or
-            ``ucomisd`` (Double); defaults to ``Longword``.
+        assembly_type: Selects ``cmpl`` (Longword), ``cmpq`` (Quadword), ``ucomisd`` (Double),
+            or ``ucomiss`` (Float); defaults to ``Longword``.
     """
 
     op1: Operand
@@ -561,14 +575,16 @@ class Cmp(Instruction):
     assembly_type: AssemblyType = Longword()
 
     def emit(self) -> str:
-        """Return a ``cmpb``, ``cmpl``, ``cmpq``, or ``ucomisd`` instruction in AT&T syntax.
+        """Return a ``cmpb``, ``cmpl``, ``cmpq``, ``ucomisd``, or ``ucomiss`` instruction in AT&T syntax.
 
         Returns:
             A string of the form ``"  cmpb <op1>, <op2>"``, ``"  cmpl <op1>, <op2>"``,
-            ``"  cmpq <op1>, <op2>"``, or ``"  ucomisd <op1>, <op2>"``.
+            ``"  cmpq <op1>, <op2>"``, ``"  ucomisd <op1>, <op2>"``, or ``"  ucomiss <op1>, <op2>"``.
         """
         if self.assembly_type == Double():
             return _asm_line("ucomisd", self.op1.emit(), self.op2.emit())
+        if self.assembly_type == Float():
+            return _asm_line("ucomiss", self.op1.emit(), self.op2.emit())
         if self.assembly_type == Byte():
             suffix = "b"
         elif self.assembly_type == Longword():
@@ -795,6 +811,104 @@ class Cvtsi2sd(Instruction):
         """
         suffix = "l" if self.assembly_type == Longword() else "q"
         return _asm_line(f"cvtsi2sd{suffix}", self.src.emit(), self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Cvttss2si(Instruction):
+    """A ``cvttss2sil``/``cvttss2siq`` instruction: truncate scalar single-precision float to signed integer.
+
+    The source must be an XMM register or memory location; the destination is a general-purpose
+    register.  ``assembly_type`` selects the *destination* integer width.
+
+    Attributes:
+        src: The scalar float source (XMM register or memory).
+        dst: The signed-integer destination (general-purpose register).
+        assembly_type: Selects 32-bit (``Longword``) or 64-bit (``Quadword``) integer output;
+            defaults to ``Longword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = Longword()
+
+    def emit(self) -> str:
+        """Return a ``cvttss2sil`` or ``cvttss2siq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cvttss2sil <src>, <dst>"`` or ``"  cvttss2siq <src>, <dst>"``.
+        """
+        suffix = "l" if self.assembly_type == Longword() else "q"
+        return _asm_line(f"cvttss2si{suffix}", self.src.emit(), self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Cvtsi2ss(Instruction):
+    """A ``cvtsi2ssl``/``cvtsi2ssq`` instruction: convert signed integer to scalar single-precision float.
+
+    The source is a general-purpose register or memory location; the destination must be an XMM
+    register.  ``assembly_type`` selects the *source* integer width.
+
+    Attributes:
+        src: The signed-integer source (general-purpose register or memory).
+        dst: The scalar float destination (XMM register).
+        assembly_type: Selects 32-bit (``Longword``) or 64-bit (``Quadword``) integer input;
+            defaults to ``Longword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = Longword()
+
+    def emit(self) -> str:
+        """Return a ``cvtsi2ssl`` or ``cvtsi2ssq`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cvtsi2ssl <src>, <dst>"`` or ``"  cvtsi2ssq <src>, <dst>"``.
+        """
+        suffix = "l" if self.assembly_type == Longword() else "q"
+        return _asm_line(f"cvtsi2ss{suffix}", self.src.emit(), self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Cvtss2sd(Instruction):
+    """A ``cvtss2sd`` instruction: widen scalar single-precision float to double-precision.
+
+    Attributes:
+        src: The scalar float source (XMM register or memory).
+        dst: The scalar double destination (XMM register).
+    """
+
+    src: Operand
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``cvtss2sd`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cvtss2sd <src>, <dst>"``.
+        """
+        return _asm_line("cvtss2sd", self.src.emit(), self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Cvtsd2ss(Instruction):
+    """A ``cvtsd2ss`` instruction: narrow scalar double-precision float to single-precision.
+
+    Attributes:
+        src: The scalar double source (XMM register or memory).
+        dst: The scalar float destination (XMM register).
+    """
+
+    src: Operand
+    dst: Operand
+
+    def emit(self) -> str:
+        """Return a ``cvtsd2ss`` instruction in AT&T syntax.
+
+        Returns:
+            A string of the form ``"  cvtsd2ss <src>, <dst>"``.
+        """
+        return _asm_line("cvtsd2ss", self.src.emit(), self.dst.emit())
 
 
 @dataclass(frozen=True, slots=True)

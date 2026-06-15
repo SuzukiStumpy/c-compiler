@@ -19,6 +19,7 @@ Grammar::
     static_init        = IntInit(int)
                        | LongInit(int)
                        | DoubleInit(float)
+                       | FloatInit(float)
                        | CharInit(int)
                        | UCharInit(int)
                        | ZeroInit(int bytes)
@@ -88,6 +89,18 @@ class DoubleInit(StaticInit):
     Attributes:
         value: The double value to store.  Never zero - use ``ZeroInit(8)``
             for a zero-valued 8-byte element.
+    """
+
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
+class FloatInit(StaticInit):
+    """4-byte floating-point initialiser element (C ``float``).
+
+    Attributes:
+        value: The float value to store.  Never zero - use ``ZeroInit(4)``
+            for a zero-valued 4-byte element.
     """
 
     value: float

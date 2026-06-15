@@ -148,6 +148,26 @@ class TestAsmAdapterDefs:
     def test_label_defines_nothing(self) -> None:
         assert ASM_ADAPTER.defs(asm.Label("lbl")) == set()
 
+    def test_cvttss2si_defines_gp_dst(self) -> None:
+        """``Cvttss2si`` writes to its destination GP pseudo/register."""
+        instr = asm.Cvttss2si(src=_pseudo("f"), dst=_pseudo("n"), assembly_type=asm.Longword())
+        assert ASM_ADAPTER.defs(instr) == {"n"}
+
+    def test_cvtsi2ss_defines_fp_dst(self) -> None:
+        """``Cvtsi2ss`` writes to its destination FP pseudo/register."""
+        instr = asm.Cvtsi2ss(src=_pseudo("n"), dst=_pseudo("f"), assembly_type=asm.Longword())
+        assert ASM_ADAPTER.defs(instr) == {"f"}
+
+    def test_cvtss2sd_defines_fp_dst(self) -> None:
+        """``Cvtss2sd`` writes to its destination FP pseudo/register."""
+        instr = asm.Cvtss2sd(src=_pseudo("f"), dst=_pseudo("d"))
+        assert ASM_ADAPTER.defs(instr) == {"d"}
+
+    def test_cvtsd2ss_defines_fp_dst(self) -> None:
+        """``Cvtsd2ss`` writes to its destination FP pseudo/register."""
+        instr = asm.Cvtsd2ss(src=_pseudo("d"), dst=_pseudo("f"))
+        assert ASM_ADAPTER.defs(instr) == {"f"}
+
 
 class TestAsmAdapterUses:
     """Verify AsmAdapter.uses() returns the correct used nodes."""
@@ -174,6 +194,26 @@ class TestAsmAdapterUses:
 
     def test_label_uses_nothing(self) -> None:
         assert ASM_ADAPTER.uses(asm.Label("lbl")) == set()
+
+    def test_cvttss2si_uses_fp_src(self) -> None:
+        """``Cvttss2si`` reads from its FP source pseudo/register."""
+        instr = asm.Cvttss2si(src=_pseudo("f"), dst=_pseudo("n"), assembly_type=asm.Longword())
+        assert ASM_ADAPTER.uses(instr) == {"f"}
+
+    def test_cvtsi2ss_uses_gp_src(self) -> None:
+        """``Cvtsi2ss`` reads from its GP source pseudo/register."""
+        instr = asm.Cvtsi2ss(src=_pseudo("n"), dst=_pseudo("f"), assembly_type=asm.Longword())
+        assert ASM_ADAPTER.uses(instr) == {"n"}
+
+    def test_cvtss2sd_uses_fp_src(self) -> None:
+        """``Cvtss2sd`` reads from its FP source pseudo/register."""
+        instr = asm.Cvtss2sd(src=_pseudo("f"), dst=_pseudo("d"))
+        assert ASM_ADAPTER.uses(instr) == {"f"}
+
+    def test_cvtsd2ss_uses_fp_src(self) -> None:
+        """``Cvtsd2ss`` reads from its FP source pseudo/register."""
+        instr = asm.Cvtsd2ss(src=_pseudo("d"), dst=_pseudo("f"))
+        assert ASM_ADAPTER.uses(instr) == {"d"}
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +564,28 @@ class TestFindUsedAndUpdated:
         used, updated = find_used_and_updated(asm.Cvtsi2sd(src=_pseudo("s"), dst=_pseudo("d")))
         assert self._operand_pseudos(used) == {"s"}
         assert self._operand_pseudos(updated) == {"d"}
+
+    def test_cvttss2si_used_src_updated_dst(self) -> None:
+        instr = asm.Cvttss2si(src=_pseudo("f"), dst=_pseudo("n"), assembly_type=asm.Longword())
+        used, updated = find_used_and_updated(instr)
+        assert self._operand_pseudos(used) == {"f"}
+        assert self._operand_pseudos(updated) == {"n"}
+
+    def test_cvtsi2ss_used_src_updated_dst(self) -> None:
+        instr = asm.Cvtsi2ss(src=_pseudo("n"), dst=_pseudo("f"), assembly_type=asm.Longword())
+        used, updated = find_used_and_updated(instr)
+        assert self._operand_pseudos(used) == {"n"}
+        assert self._operand_pseudos(updated) == {"f"}
+
+    def test_cvtss2sd_used_src_updated_dst(self) -> None:
+        used, updated = find_used_and_updated(asm.Cvtss2sd(src=_pseudo("f"), dst=_pseudo("d")))
+        assert self._operand_pseudos(used) == {"f"}
+        assert self._operand_pseudos(updated) == {"d"}
+
+    def test_cvtsd2ss_used_src_updated_dst(self) -> None:
+        used, updated = find_used_and_updated(asm.Cvtsd2ss(src=_pseudo("d"), dst=_pseudo("f")))
+        assert self._operand_pseudos(used) == {"d"}
+        assert self._operand_pseudos(updated) == {"f"}
 
     # --- Call ---
 
@@ -1127,3 +1189,55 @@ class TestReplacePseudoregs:
         instrs = [_mov_gp(asm.Imm(42), _AX)]
         result = replace_pseudoregs(instrs, reg_map)
         assert result == instrs
+
+    def test_cvttss2si_pseudo_replaced(self) -> None:
+        """``Cvttss2si`` pseudo src and dst are replaced from the register map."""
+        reg_map: dict[str, GPRegisters | FPRegisters] = {
+            "f": FPRegisters.XMM1,
+            "n": GPRegisters.AX,
+        }
+        instr = asm.Cvttss2si(src=_pseudo("f"), dst=_pseudo("n"), assembly_type=asm.Longword())
+        result = replace_pseudoregs([instr], reg_map)
+        assert len(result) == 1
+        assert isinstance(result[0], asm.Cvttss2si)
+        assert result[0].src == asm.Register(FPRegisters.XMM1, Width.DWORD)
+        assert result[0].dst == asm.Register(GPRegisters.AX, Width.DWORD)
+
+    def test_cvtsi2ss_pseudo_replaced(self) -> None:
+        """``Cvtsi2ss`` pseudo src and dst are replaced from the register map."""
+        reg_map: dict[str, GPRegisters | FPRegisters] = {
+            "n": GPRegisters.CX,
+            "f": FPRegisters.XMM3,
+        }
+        instr = asm.Cvtsi2ss(src=_pseudo("n"), dst=_pseudo("f"), assembly_type=asm.Longword())
+        result = replace_pseudoregs([instr], reg_map)
+        assert len(result) == 1
+        assert isinstance(result[0], asm.Cvtsi2ss)
+        assert result[0].src == asm.Register(GPRegisters.CX, Width.DWORD)
+        assert result[0].dst == asm.Register(FPRegisters.XMM3, Width.DWORD)
+
+    def test_cvtss2sd_pseudo_replaced(self) -> None:
+        """``Cvtss2sd`` pseudo src and dst are replaced from the register map."""
+        reg_map: dict[str, GPRegisters | FPRegisters] = {
+            "f": FPRegisters.XMM1,
+            "d": FPRegisters.XMM2,
+        }
+        instr = asm.Cvtss2sd(src=_pseudo("f"), dst=_pseudo("d"))
+        result = replace_pseudoregs([instr], reg_map)
+        assert len(result) == 1
+        assert isinstance(result[0], asm.Cvtss2sd)
+        assert result[0].src == asm.Register(FPRegisters.XMM1, Width.DWORD)
+        assert result[0].dst == asm.Register(FPRegisters.XMM2, Width.QWORD)
+
+    def test_cvtsd2ss_pseudo_replaced(self) -> None:
+        """``Cvtsd2ss`` pseudo src and dst are replaced from the register map."""
+        reg_map: dict[str, GPRegisters | FPRegisters] = {
+            "d": FPRegisters.XMM0,
+            "f": FPRegisters.XMM1,
+        }
+        instr = asm.Cvtsd2ss(src=_pseudo("d"), dst=_pseudo("f"))
+        result = replace_pseudoregs([instr], reg_map)
+        assert len(result) == 1
+        assert isinstance(result[0], asm.Cvtsd2ss)
+        assert result[0].src == asm.Register(FPRegisters.XMM0, Width.QWORD)
+        assert result[0].dst == asm.Register(FPRegisters.XMM1, Width.DWORD)

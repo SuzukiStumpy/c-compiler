@@ -236,6 +236,84 @@ class UIntToDouble(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class FloatToInt(Instruction):
+    """Cast a ``float`` to a signed integer.
+
+    Attributes:
+        src: The source ``float`` value.
+        dst: The destination signed integer value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class FloatToUInt(Instruction):
+    """Cast a ``float`` to an unsigned integer.
+
+    Attributes:
+        src: The source ``float`` value.
+        dst: The destination unsigned integer value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class IntToFloat(Instruction):
+    """Cast a signed integer to ``float``.
+
+    Attributes:
+        src: The source signed integer value.
+        dst: The destination ``float`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class UIntToFloat(Instruction):
+    """Cast an unsigned integer to ``float``.
+
+    Attributes:
+        src: The source unsigned integer value.
+        dst: The destination ``float`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class FloatToDouble(Instruction):
+    """Widen a ``float`` to ``double``.
+
+    Attributes:
+        src: The source ``float`` value.
+        dst: The destination ``double`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class DoubleToFloat(Instruction):
+    """Narrow a ``double`` to ``float``.
+
+    Attributes:
+        src: The source ``double`` value.
+        dst: The destination ``float`` value.
+    """
+
+    src: Val
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
 class GetAddress(Instruction):
     """Obtain the memory address of a variable.
 

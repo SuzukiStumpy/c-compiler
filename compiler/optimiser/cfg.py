@@ -654,6 +654,8 @@ class AsmAdapter:
                 return gp_clobbers | fp_clobbers
             case asm.Cvttsd2si(dst=dst) | asm.Cvtsi2sd(dst=dst):
                 return _def_nodes(dst)
+            case asm.Cvttss2si(dst=dst) | asm.Cvtsi2ss(dst=dst) | asm.Cvtss2sd(dst=dst) | asm.Cvtsd2ss(dst=dst):
+                return _def_nodes(dst)
             case asm.Lea(dst=dst):
                 return _def_nodes(dst)
             case _:
@@ -704,6 +706,8 @@ class AsmAdapter:
             case asm.IndirectCall(target=tgt):
                 return _use_nodes(tgt) | set(_GP_ARG_REGS) | set(_FP_ARG_REGS)
             case asm.Cvttsd2si(src=src) | asm.Cvtsi2sd(src=src):
+                return _use_nodes(src)
+            case asm.Cvttss2si(src=src) | asm.Cvtsi2ss(src=src) | asm.Cvtss2sd(src=src) | asm.Cvtsd2ss(src=src):
                 return _use_nodes(src)
             case asm.Lea(src=src):
                 return _use_nodes(src)

@@ -72,6 +72,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | ConstUInt(int)
                          | ConstULong(int)
                          | ConstDouble(double)
+                         | ConstFloat(float)
                          | ConstChar(int)
                          | ConstUChar(int)
 
@@ -110,6 +111,7 @@ from compiler.syntax.ast.constants import (
     Const,
     ConstChar,
     ConstDouble,
+    ConstFloat,
     ConstInt,
     ConstInt128,
     ConstLong,
@@ -222,6 +224,7 @@ from compiler.syntax.ast.types import (
     Array,
     Char,
     DoubleType,
+    FloatType,
     FunType,
     Int128Type,
     IntType,
@@ -282,7 +285,9 @@ __all__ = [
     "AddrOf",
     "Pointer",
     "ConstDouble",
+    "ConstFloat",
     "DoubleType",
+    "FloatType",
     "ConstUInt",
     "ConstULong",
     "UIntType",

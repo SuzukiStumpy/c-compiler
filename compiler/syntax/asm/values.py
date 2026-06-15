@@ -38,6 +38,11 @@ class Double(AssemblyType):
 
 
 @dataclass(frozen=True, slots=True)
+class Float(AssemblyType):
+    """32-bit IEEE 754 floating-point assembly type (C ``float``)."""
+
+
+@dataclass(frozen=True, slots=True)
 class ByteArray(AssemblyType):
     """Variable-length byte region in the data segment.
 
@@ -123,6 +128,30 @@ class DoubleInit(StaticInit):
             double's IEEE 754 encoding, suitable for emission as ``.quad <bits>``.
         """
         (bits,) = struct.unpack("Q", struct.pack("d", self.value))
+        return bits
+
+
+@dataclass(frozen=True, slots=True)
+class FloatInit(StaticInit):
+    """Initialiser for a static variable or constant of C ``float`` type.
+
+    The value is emitted as a raw 32-bit little-endian word (``.long <bits>``) in
+    ``.rodata`` so that the bit pattern is preserved exactly (including ``-0.0f``).
+
+    Attributes:
+        value: The initial float value, as a plain Python float.
+    """
+
+    value: float
+
+    def as_bits(self) -> int:
+        """Return the IEEE 754 single-precision bit pattern as an unsigned 32-bit integer.
+
+        Returns:
+            An unsigned integer whose binary representation is the float's IEEE 754 encoding,
+            suitable for emission as ``.long <bits>``.
+        """
+        (bits,) = struct.unpack("I", struct.pack("f", self.value))
         return bits
 
 

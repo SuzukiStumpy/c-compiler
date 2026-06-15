@@ -15,6 +15,8 @@ from compiler.syntax.asm import (
     Cmp,
     CondCodes,
     DeallocateStack,
+    Float,
+    FloatInit,
     Function,
     GPRegisters,
     Imm,
@@ -749,3 +751,104 @@ class TestInt128StaticVariableEmit:
         mask64 = (1 << 64) - 1
         assert quads[0] == f".quad {mask64}"
         assert quads[1] == f".quad {mask64}"
+
+
+# ---------------------------------------------------------------------------
+# FloatInit static variable / constant emission
+# ---------------------------------------------------------------------------
+
+
+class TestFloatInitStaticVariableEmit:
+    """``StaticVariable.emit()`` handles ``FloatInit``."""
+
+    def test_float_init_nonzero_emits_long_directive(self) -> None:
+        """``FloatInit(1.5)`` emits a ``.long <bits>`` directive with the IEEE 754 bit pattern."""
+        import struct
+
+        (bits,) = struct.unpack("I", struct.pack("f", 1.5))
+        var = StaticVariable(identifier="f", globl=False, alignment=4, init=(FloatInit(1.5),))
+        assert f"      .long {bits}" in var.emit()
+
+    def test_float_init_zero_goes_to_bss(self) -> None:
+        """``FloatInit(0.0)`` triggers ``.bss`` section selection."""
+        var = StaticVariable(identifier="f", globl=False, alignment=4, init=(FloatInit(0.0),))
+        assert ".bss" in var.emit()
+
+    def test_float_init_negative_zero_goes_to_data(self) -> None:
+        """``FloatInit(-0.0)`` is non-zero in bits, so it goes to ``.data``."""
+        var = StaticVariable(identifier="f", globl=False, alignment=4, init=(FloatInit(-0.0),))
+        assert ".data" in var.emit()
+
+
+class TestFloatInitStaticConstantEmit:
+    """``StaticConstant.emit()`` handles ``FloatInit``."""
+
+    def test_float_constant_emits_long_directive(self) -> None:
+        """``FloatInit(1.5)`` in a ``StaticConstant`` emits ``.long <bits>``."""
+        import struct
+
+        (bits,) = struct.unpack("I", struct.pack("f", 1.5))
+        const = StaticConstant(identifier="float_const", alignment=4, init=FloatInit(1.5))
+        assert f"      .long {bits}" in const.emit()
+
+
+class TestMovFloatEmit:
+    """``Mov`` with ``assembly_type=Float()`` emits ``movss``."""
+
+    def test_movss_emitted_for_float(self) -> None:
+        """``Mov(..., assembly_type=Float())`` emits the ``movss`` mnemonic."""
+        from compiler.syntax.asm import FPRegisters
+
+        xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
+        xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
+        mov = Mov(src=xmm0, dst=xmm1, assembly_type=Float())
+        assert "movss" in mov.emit()
+
+    def test_movsd_still_emitted_for_double(self) -> None:
+        """``Mov(..., assembly_type=Double())`` still emits ``movsd`` (regression guard)."""
+        from compiler.syntax.asm import Double, FPRegisters
+
+        xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
+        xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
+        mov = Mov(src=xmm0, dst=xmm1, assembly_type=Double())
+        assert "movsd" in mov.emit()
+
+
+class TestBinaryFloatEmit:
+    """``Binary`` with float SSE operators emits ``ss`` instructions."""
+
+    def test_addss_emitted_for_add_float(self) -> None:
+        """``Binary(AddFloat(), ...)`` emits ``addss``."""
+        from compiler.syntax.asm import AddFloat, Binary, FPRegisters
+
+        xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
+        xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
+        instr = Binary(operator=AddFloat(), src1=xmm0, src2=xmm1, dst=xmm0, assembly_type=Float())
+        assert "addss" in instr.emit()
+
+    def test_movss_emitted_when_src1_ne_dst(self) -> None:
+        """When src1 != dst, ``Binary(AddFloat())`` prefixes a ``movss`` copy."""
+        from compiler.syntax.asm import AddFloat, Binary, FPRegisters
+
+        xmm0 = Register(FPRegisters.XMM0, Width.QWORD)
+        xmm1 = Register(FPRegisters.XMM1, Width.QWORD)
+        xmm2 = Register(FPRegisters.XMM2, Width.QWORD)
+        instr = Binary(operator=AddFloat(), src1=xmm0, src2=xmm1, dst=xmm2, assembly_type=Float())
+        assert "movss" in instr.emit()
+        assert "addss" in instr.emit()
+
+
+class TestCmpFloatEmitsUcomiss:
+    """``Cmp`` with ``assembly_type=Float()`` emits ``ucomiss``."""
+
+    def test_cmp_float_emits_ucomiss(self) -> None:
+        """``Cmp(op1, op2, Float())`` emits the ``ucomiss`` mnemonic."""
+        cmp = Cmp(op1=Imm(0), op2=Register(GPRegisters.R10, Width.DWORD), assembly_type=Float())
+        assert "ucomiss" in cmp.emit()
+
+    def test_cmp_double_still_emits_ucomisd(self) -> None:
+        """``Cmp`` with ``Double()`` still emits ``ucomisd`` (regression guard)."""
+        from compiler.syntax.asm import Double
+
+        cmp = Cmp(op1=Imm(0), op2=Register(GPRegisters.R10, Width.DWORD), assembly_type=Double())
+        assert "ucomisd" in cmp.emit()

@@ -65,6 +65,19 @@ def test_typedef_keyword_produces_typedef_token_not_identifier(preprocess_c_file
     assert typedef_token.type == TokenType.TYPEDEF
 
 
+def test_float_keyword_produces_float_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/float_type.c"))
+    float_token = next(t for t in tokens if t.value == "float")
+    assert float_token.type == TokenType.FLOAT
+
+
+def test_float_literal_produces_fpfloat_token(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/float_type.c"))
+    fpfloat_tokens = [t for t in tokens if t.type == TokenType.FPFLOAT]
+    assert len(fpfloat_tokens) == 4
+    assert {t.value for t in fpfloat_tokens} == {"1.5f", "1.5e10f", "1e5F", "1.F"}
+
+
 def test_identifier_sharing_keyword_prefix_is_not_a_keyword(preprocess_c_file: Preprocessor) -> None:
     # "returning" starts with the keyword "return" - must not be classified as RETURN
     tokens = lexer(preprocess_c_file("valid/keyword_prefix.c"))

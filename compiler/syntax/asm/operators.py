@@ -273,6 +273,89 @@ class DivDouble(BinaryOperator):
 
 
 @dataclass(frozen=True, slots=True)
+class AddFloat(BinaryOperator):
+    """The ``addss`` instruction: scalar single-precision floating-point addition."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``addss`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"addss"`` unconditionally.
+        """
+        return "addss"
+
+
+@dataclass(frozen=True, slots=True)
+class SubFloat(BinaryOperator):
+    """The ``subss`` instruction: scalar single-precision floating-point subtraction."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``subss`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"subss"`` unconditionally.
+        """
+        return "subss"
+
+
+@dataclass(frozen=True, slots=True)
+class MultFloat(BinaryOperator):
+    """The ``mulss`` instruction: scalar single-precision floating-point multiplication."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``mulss`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"mulss"`` unconditionally.
+        """
+        return "mulss"
+
+
+@dataclass(frozen=True, slots=True)
+class DivFloat(BinaryOperator):
+    """The ``divss`` instruction: scalar single-precision floating-point division."""
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``divss`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"divss"`` unconditionally.
+        """
+        return "divss"
+
+
+@dataclass(frozen=True, slots=True)
+class XorFloat(BinaryOperator):
+    """The ``xorps`` instruction: bitwise XOR of packed single-precision floating-point values.
+
+    Used to flip the sign bit of a float by XOR-ing with a constant whose sign bit is set.
+    """
+
+    def emit(self, assembly_type: AssemblyType) -> str:
+        """Return the ``xorps`` mnemonic.
+
+        Args:
+            assembly_type: Ignored for SSE operators; present to satisfy the abstract interface.
+
+        Returns:
+            ``"xorps"`` unconditionally.
+        """
+        return "xorps"
+
+
+@dataclass(frozen=True, slots=True)
 class XorDouble(BinaryOperator):
     """The ``xorpd`` instruction: bitwise XOR of packed double-precision floating-point values.
 

@@ -34,6 +34,7 @@ from compiler.syntax.asm.values import AssemblyType, Byte, Longword
 from compiler.syntax.ast.types import (
     Char,
     DoubleType,
+    FloatType,
     FunType,
     IntType,
     LongType,
@@ -163,7 +164,7 @@ def _classify_pseudos(
             if entry is None or not isinstance(entry.attrs, LocalAttr):
                 continue
             match entry.t:
-                case DoubleType():
+                case DoubleType() | FloatType():
                     fp.add(name)
                 case LongType() | ULongType() | Pointer() | IntType() | UIntType() | Char() | SChar() | UChar():
                     gp.add(name)
@@ -304,7 +305,7 @@ def _call_param_regs(
                         result.append(_hw(_GP_ARG_REGS[gp_idx]))
                         gp_idx += 1
                 # EightbyteClass.MEMORY / NO_CLASS: no register allocated
-        elif isinstance(param_t, DoubleType):
+        elif isinstance(param_t, (DoubleType, FloatType)):
             if fp_idx < len(_FP_ARG_REGS):
                 result.append(_hw(_FP_ARG_REGS[fp_idx]))
                 fp_idx += 1
@@ -380,6 +381,10 @@ def find_used_and_updated(
             return ([src], [dst])
         case asm.Cvttsd2si(src=src, dst=dst) | asm.Cvtsi2sd(src=src, dst=dst):
             return ([src], [dst])
+        case asm.Cvttss2si(src=src, dst=dst) | asm.Cvtsi2ss(src=src, dst=dst):
+            return ([src], [dst])
+        case asm.Cvtss2sd(src=src, dst=dst) | asm.Cvtsd2ss(src=src, dst=dst):
+            return ([src], [dst])
         case asm.Call(name=name):
             clobbers: list[asm.Operand] = [_hw(r) for r in (*_GP_CALL_CLOBBERS, *_FP_CALL_CLOBBERS)]
             return (_call_param_regs(name, symbol_table, struct_type_table), clobbers)
@@ -453,7 +458,7 @@ def _compute_exit_live(fn_name: str | None, symbol_table: SymbolTable | None) ->
     if entry is None or not isinstance(entry.t, FunType):
         return _EXIT_LIVE
     ret = entry.t.ret
-    if isinstance(ret, DoubleType):
+    if isinstance(ret, (DoubleType, FloatType)):
         return frozenset({FPRegisters.XMM0})
     if isinstance(ret, (IntType, UIntType, LongType, ULongType, Pointer, Char, SChar, UChar)):
         return frozenset({GPRegisters.AX})
@@ -1026,15 +1031,13 @@ def _replace_in_instr(
             )
         case asm.Unary(operand=op, assembly_type=at):
             return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
-        case asm.Idiv(operand=op, assembly_type=at):
+        case asm.Idiv(operand=op, assembly_type=at) | asm.Div(operand=op, assembly_type=at):
             return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
-        case asm.Div(operand=op, assembly_type=at):
-            return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
-        case asm.Shl(operand=op, assembly_type=at):
-            return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
-        case asm.Sar(operand=op, assembly_type=at):
-            return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
-        case asm.Shr(operand=op, assembly_type=at):
+        case (
+            asm.Shl(operand=op, assembly_type=at)
+            | asm.Sar(operand=op, assembly_type=at)
+            | asm.Shr(operand=op, assembly_type=at)
+        ):
             return dataclasses.replace(instr, operand=_resolve_op(op, reg_map, _asm_type_to_width(at)))
         case asm.Cmp(op1=o1, op2=o2, assembly_type=at):
             w = _asm_type_to_width(at)
@@ -1065,6 +1068,34 @@ def _replace_in_instr(
                 instr,
                 src=_resolve_op(src, reg_map, _asm_type_to_width(at)),
                 dst=_resolve_op(dst, reg_map, Width.QWORD),
+            )
+        case asm.Cvttss2si(src=src, dst=dst, assembly_type=at):
+            # src is a float XMM (DWORD); dst is a GP integer register
+            return dataclasses.replace(
+                instr,
+                src=_resolve_op(src, reg_map, Width.DWORD),
+                dst=_resolve_op(dst, reg_map, _asm_type_to_width(at)),
+            )
+        case asm.Cvtsi2ss(src=src, dst=dst, assembly_type=at):
+            # src is a GP integer; dst is a float XMM (DWORD)
+            return dataclasses.replace(
+                instr,
+                src=_resolve_op(src, reg_map, _asm_type_to_width(at)),
+                dst=_resolve_op(dst, reg_map, Width.DWORD),
+            )
+        case asm.Cvtss2sd(src=src, dst=dst):
+            # src is a float XMM (DWORD); dst is a double XMM (QWORD)
+            return dataclasses.replace(
+                instr,
+                src=_resolve_op(src, reg_map, Width.DWORD),
+                dst=_resolve_op(dst, reg_map, Width.QWORD),
+            )
+        case asm.Cvtsd2ss(src=src, dst=dst):
+            # src is a double XMM (QWORD); dst is a float XMM (DWORD)
+            return dataclasses.replace(
+                instr,
+                src=_resolve_op(src, reg_map, Width.QWORD),
+                dst=_resolve_op(dst, reg_map, Width.DWORD),
             )
         case _:
             return instr
@@ -1182,15 +1213,13 @@ def _replace_coalesced_in_instr(
             return dataclasses.replace(instr, src1=r(s1, w), src2=r(s2, w), dst=r(dst, w))
         case asm.Unary(operand=op, assembly_type=at):
             return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
-        case asm.Idiv(operand=op, assembly_type=at):
+        case asm.Idiv(operand=op, assembly_type=at) | asm.Div(operand=op, assembly_type=at):
             return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
-        case asm.Div(operand=op, assembly_type=at):
-            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
-        case asm.Shl(operand=op, assembly_type=at):
-            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
-        case asm.Sar(operand=op, assembly_type=at):
-            return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
-        case asm.Shr(operand=op, assembly_type=at):
+        case (
+            asm.Shl(operand=op, assembly_type=at)
+            | asm.Sar(operand=op, assembly_type=at)
+            | asm.Shr(operand=op, assembly_type=at)
+        ):
             return dataclasses.replace(instr, operand=r(op, _asm_type_to_width(at)))
         case asm.Cmp(op1=o1, op2=o2, assembly_type=at):
             w = _asm_type_to_width(at)
@@ -1207,6 +1236,14 @@ def _replace_coalesced_in_instr(
             return dataclasses.replace(instr, src=r(src, Width.QWORD), dst=r(dst, _asm_type_to_width(at)))
         case asm.Cvtsi2sd(src=src, dst=dst, assembly_type=at):
             return dataclasses.replace(instr, src=r(src, _asm_type_to_width(at)), dst=r(dst, Width.QWORD))
+        case asm.Cvttss2si(src=src, dst=dst, assembly_type=at):
+            return dataclasses.replace(instr, src=r(src, Width.DWORD), dst=r(dst, _asm_type_to_width(at)))
+        case asm.Cvtsi2ss(src=src, dst=dst, assembly_type=at):
+            return dataclasses.replace(instr, src=r(src, _asm_type_to_width(at)), dst=r(dst, Width.DWORD))
+        case asm.Cvtss2sd(src=src, dst=dst):
+            return dataclasses.replace(instr, src=r(src, Width.DWORD), dst=r(dst, Width.QWORD))
+        case asm.Cvtsd2ss(src=src, dst=dst):
+            return dataclasses.replace(instr, src=r(src, Width.QWORD), dst=r(dst, Width.DWORD))
         case _:
             return instr
 

@@ -100,6 +100,17 @@ class DoubleInit(StaticInit):
 
 
 @dataclass(frozen=True, slots=True)
+class FloatInit(StaticInit):
+    """Initialiser for a static variable of C ``float`` type.
+
+    Attributes:
+        value: The initial float value, as a plain Python float.
+    """
+
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
 class ShortInit(StaticInit):
     """Initialiser for a static variable of C ``short`` / ``signed short`` type.
 

@@ -110,6 +110,7 @@ from compiler.syntax.ast import (
     Conditional,
     Constant,
     ConstDouble,
+    ConstFloat,
     ConstInt,
     ConstLong,
     ConstLongLong,
@@ -128,6 +129,7 @@ from compiler.syntax.ast import (
     Equal,
     Exp,
     Expression,
+    FloatType,
     For,
     ForInit,
     Function,
@@ -248,6 +250,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.SIGNED,
         TokenType.UNSIGNED,
         TokenType.DOUBLE,
+        TokenType.FLOAT,
         TokenType.CHAR,
         TokenType.SHORT,
         TokenType.INT128,
@@ -665,6 +668,11 @@ class Parser:
                 assert last_tok is not None
                 raise self._token_error("'double' cannot be combined with other type specifiers", last_tok)
             return DoubleType()
+        if TokenType.FLOAT in seen:
+            if len(seen) > 1:
+                assert last_tok is not None
+                raise self._token_error("'float' cannot be combined with other type specifiers", last_tok)
+            return FloatType()
         assert last_tok is not None
         if TokenType.SIGNED in seen and TokenType.UNSIGNED in seen:
             raise self._token_error("invalid type specifier: can't have both 'signed' and 'unsigned'", last_tok)
@@ -1717,6 +1725,7 @@ class Parser:
                 | TokenType.UINT
                 | TokenType.ULONG
                 | TokenType.FPDOUBLE
+                | TokenType.FPFLOAT
                 | TokenType.CONSTCHAR
             ):
                 primary: Exp = self._parse_constant()
@@ -1837,6 +1846,9 @@ class Parser:
         token = self._peek()
         if token is None:
             raise self._eof_error("expected a constant, got end of input")
+        if token.type == TokenType.FPFLOAT:
+            self._consume()
+            return Constant(value=ConstFloat(float(token.value.rstrip("fF"))), exp_type=FloatType())
         if token.type == TokenType.FPDOUBLE:
             self._consume()
             return Constant(value=ConstDouble(float(token.value)), exp_type=DoubleType())
