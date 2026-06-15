@@ -9,9 +9,9 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | Type | Notes |
 |------|-------|
 | `int` | 32-bit signed integer |
-| `long` | 64-bit signed integer |
+| `long` / `long long` | 64-bit signed integer (both are 8 bytes on x86-64 Linux) |
 | `unsigned int` | 32-bit unsigned integer |
-| `unsigned long` | 64-bit unsigned integer |
+| `unsigned long` / `unsigned long long` | 64-bit unsigned integer (both are 8 bytes on x86-64 Linux) |
 | `short` / `signed short` / `unsigned short` | 16-bit integer; promotes to `int` for arithmetic (C11 §6.3.1.1) |
 | `char` / `signed char` / `unsigned char` | 8-bit character types |
 | `__int128` / `unsigned __int128` | GCC 128-bit extension; static variables and zero-initialisation supported; see note below |
@@ -23,7 +23,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `union` | Named/anonymous unions |
 | Function pointers | `int (*fp)(int, int)` style; call through a pointer |
 
-Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `short`, and `char` in all standard permutations.
+Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant.
 
 > **`__int128` note** — The type is fully recognised through the pipeline (lexer → parser → semantic analysis → TAC → assembly emission). Static variables with constant initialisers are emitted as two consecutive `.quad` directives (little-endian lo/hi). Local-variable arithmetic, multi-word instruction sequences (`adcq`/`sbbq`), and the SysV AMD64 two-register calling convention for 128-bit values are not yet implemented; any expression-level use of `__int128` beyond zero-initialisation will produce incorrect or incomplete code.
 
@@ -204,11 +204,7 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Integer types
 
-| Missing type | C11 reference |
-|---|---|
-| `long long` / `unsigned long long` (64-bit, minimum) | sec. 6.2.5 |
-
-`int`, `long`, `unsigned int`, `unsigned long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above. `long long` remains absent.
+`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above.
 
 ### Floating-point types
 

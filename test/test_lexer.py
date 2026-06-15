@@ -692,3 +692,39 @@ def test_int128_program_produces_int128_and_unsigned_tokens(preprocess_c_file: P
     types = {t.type for t in tokens}
     assert TokenType.INT128 in types
     assert TokenType.UNSIGNED in types
+
+
+# ---------------------------------------------------------------------------
+# 64-bit long long types (long long / unsigned long long)
+# ---------------------------------------------------------------------------
+
+
+def test_long_long_type_program_produces_long_tokens(preprocess_c_file: Preprocessor) -> None:
+    """``long long`` declarations produce two ``LONG`` tokens per type specifier."""
+    tokens = lexer(preprocess_c_file("valid/long_long_type.c"))
+    long_tokens = [t for t in tokens if t.type == TokenType.LONG]
+    assert len(long_tokens) >= 2, "expected at least two 'long' tokens for 'long long'"
+
+
+def test_ll_suffix_produces_longlong_token(preprocess_c_file: Preprocessor) -> None:
+    """``42LL`` is lexed as a ``LONGLONG`` literal token."""
+    tokens = lexer(preprocess_c_file("valid/long_long_type.c"))
+    ll_tokens = [t for t in tokens if t.type == TokenType.LONGLONG]
+    assert ll_tokens, "expected at least one LONGLONG token for '42LL'"
+    assert ll_tokens[0].value == "42LL"
+
+
+def test_ull_suffix_produces_ulonglong_token(preprocess_c_file: Preprocessor) -> None:
+    """``100ULL`` is lexed as a ``ULONGLONG`` literal token."""
+    tokens = lexer(preprocess_c_file("valid/long_long_type.c"))
+    ull_tokens = [t for t in tokens if t.type == TokenType.ULONGLONG]
+    assert ull_tokens, "expected at least one ULONGLONG token for '100ULL'"
+    assert ull_tokens[0].value == "100ULL"
+
+
+def test_llu_suffix_also_produces_ulonglong_token(preprocess_c_file: Preprocessor) -> None:
+    """``123LLU`` (LL before U) is also lexed as a ``ULONGLONG`` literal token."""
+    tokens = lexer(preprocess_c_file("valid/long_long_llu.c"))
+    ull_tokens = [t for t in tokens if t.type == TokenType.ULONGLONG]
+    assert ull_tokens, "expected ULONGLONG token for '123LLU'"
+    assert ull_tokens[0].value == "123LLU"

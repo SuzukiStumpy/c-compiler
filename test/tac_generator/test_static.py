@@ -382,6 +382,40 @@ class TestShortStaticInit:
         assert result == [tac.StaticVariable(name="u", globl=True, t=ast.UShortType(), init=(tac.ZeroInit(2),))]
 
 
+class TestLongLongStaticInit:
+    """``LongInit`` symbol-table inits are lowered to TAC for ``long long`` types."""
+
+    def test_long_long_init_nonzero_emits_long_init(self) -> None:
+        """``LongInit(value)`` lowers to ``tac.LongInit(value)`` for ``long long``."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.LongLongType(), attrs=StaticAttr(init=Initial((LongInit(42),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.LongLongType(), init=(tac.LongInit(42),))]
+
+    def test_long_long_init_zero_emits_zero_init(self) -> None:
+        """``ZeroInit(8)`` for ``long long`` lowers to ``tac.ZeroInit(8)``."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.LongLongType(), attrs=StaticAttr(init=Initial((ZeroInit(8),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.LongLongType(), init=(tac.ZeroInit(8),))]
+
+    def test_ulong_long_init_nonzero_emits_long_init(self) -> None:
+        """``LongInit(value)`` lowers to ``tac.LongInit(value)`` for ``unsigned long long``."""
+        symbols = {
+            "x": SymbolTableEntry(t=ast.ULongLongType(), attrs=StaticAttr(init=Initial((LongInit(100),)), globl=False))
+        }
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=False, t=ast.ULongLongType(), init=(tac.LongInit(100),))]
+
+    def test_long_long_tentative_emits_zero_init(self) -> None:
+        """Tentative ``long long`` emits ``ZeroInit(8)``."""
+        symbols = {"x": SymbolTableEntry(t=ast.LongLongType(), attrs=StaticAttr(init=Tentative(), globl=True))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="x", globl=True, t=ast.LongLongType(), init=(tac.ZeroInit(8),))]
+
+
 class TestInt128StaticInit:
     """``Int128Init`` and ``UInt128Init`` symbol-table inits are lowered to TAC."""
 

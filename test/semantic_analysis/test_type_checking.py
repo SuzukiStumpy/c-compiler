@@ -588,3 +588,85 @@ class TestInt128TypeSizes:
         """A local ``__int128`` variable declaration resolves without error."""
         body = (_vd("x", ast.Constant(ast.ConstInt(0)), ast.Int128Type()),) + _return_exp(_int_const())
         resolve(_program(body))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# 64-bit long long type size and behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestLongLongTypeSizes:
+    """Semantic analysis provides correct sizes and promotions for ``long long`` types."""
+
+    def test_sizeof_long_long_is_8(self) -> None:
+        """``sizeof(long long)`` evaluates to 8."""
+        from compiler.semantic_analysis import type_size
+
+        assert type_size(ast.LongLongType(), {}) == 8
+
+    def test_sizeof_unsigned_long_long_is_8(self) -> None:
+        """``sizeof(unsigned long long)`` evaluates to 8."""
+        from compiler.semantic_analysis import type_size
+
+        assert type_size(ast.ULongLongType(), {}) == 8
+
+    def test_long_long_is_arithmetic(self) -> None:
+        """``LongLongType`` is classified as arithmetic and integer."""
+        from compiler.semantic_analysis import is_arithmetic, is_integer
+
+        assert is_arithmetic(ast.LongLongType())
+        assert is_integer(ast.LongLongType())
+
+    def test_unsigned_long_long_is_arithmetic(self) -> None:
+        """``ULongLongType`` is classified as arithmetic and integer."""
+        from compiler.semantic_analysis import is_arithmetic, is_integer
+
+        assert is_arithmetic(ast.ULongLongType())
+        assert is_integer(ast.ULongLongType())
+
+    def test_long_long_alignment_is_8(self) -> None:
+        """Alignment of ``long long`` is 8 bytes."""
+        from compiler.semantic_analysis import type_alignment
+
+        assert type_alignment(ast.LongLongType(), {}) == 8
+
+    def test_unsigned_long_long_alignment_is_8(self) -> None:
+        """Alignment of ``unsigned long long`` is 8 bytes."""
+        from compiler.semantic_analysis import type_alignment
+
+        assert type_alignment(ast.ULongLongType(), {}) == 8
+
+    def test_long_long_plus_long_long_gives_long_long(self) -> None:
+        """``long long + long long`` resolves to ``LongLongType`` (same rank)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.LongLongType(), ast.LongLongType())
+        assert result == ast.LongLongType()
+
+    def test_unsigned_long_long_plus_long_long_gives_unsigned(self) -> None:
+        """``unsigned long long + long long`` gives ``ULongLongType`` (unsigned wins)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.ULongLongType(), ast.LongLongType())
+        assert result == ast.ULongLongType()
+
+    def test_long_long_plus_int_gives_long_long(self) -> None:
+        """``long long + int`` resolves to ``LongLongType`` (wider wins)."""
+        from compiler.semantic_analysis import get_common_type
+
+        result = get_common_type(ast.LongLongType(), ast.IntType())
+        assert result == ast.LongLongType()
+
+    def test_long_long_variable_is_accepted(self) -> None:
+        """A local ``long long`` variable declaration resolves without error."""
+        from compiler.syntax.ast.constants import ConstLongLong
+
+        body = (_vd("x", ast.Constant(ConstLongLong(0)), ast.LongLongType()),) + _return_exp(_int_const())
+        resolve(_program(body))  # must not raise
+
+    def test_unsigned_long_long_variable_is_accepted(self) -> None:
+        """A local ``unsigned long long`` variable declaration resolves without error."""
+        from compiler.syntax.ast.constants import ConstULongLong
+
+        body = (_vd("x", ast.Constant(ConstULongLong(0)), ast.ULongLongType()),) + _return_exp(_int_const())
+        resolve(_program(body))  # must not raise

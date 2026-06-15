@@ -74,6 +74,7 @@ from compiler.syntax.ast.types import (
     Int128Type,
     IntType,
     Linkage,
+    LongLongType,
     LongType,
     Pointer,
     SChar,
@@ -83,6 +84,7 @@ from compiler.syntax.ast.types import (
     UChar,
     UInt128Type,
     UIntType,
+    ULongLongType,
     ULongType,
     Union,
     UShortType,
@@ -124,6 +126,8 @@ _TYPE_SIZE: dict[type, int] = {
     UIntType: 4,
     LongType: 8,
     ULongType: 8,
+    LongLongType: 8,
+    ULongLongType: 8,
     DoubleType: 8,
     Char: 1,
     SChar: 1,
@@ -133,7 +137,7 @@ _TYPE_SIZE: dict[type, int] = {
     Int128Type: 16,
     UInt128Type: 16,
 }
-_SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType, Int128Type})
+_SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType, LongLongType, Int128Type})
 _CHAR_TYPES: tuple[type, ...] = (Char, SChar, UChar)
 # Types that undergo integer promotion to IntType before arithmetic (C11 §6.3.1.1).
 _PROMOTE_TO_INT: tuple[type, ...] = (Char, SChar, UChar, ShortType, UShortType)
@@ -174,7 +178,7 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
     match t:
         case IntType() | UIntType():
             return 4
-        case LongType() | ULongType() | DoubleType() | Pointer():
+        case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
             return 8
         case Char() | SChar() | UChar():
             return 1
@@ -211,7 +215,7 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
     match t:
         case IntType() | UIntType():
             return 4
-        case LongType() | ULongType() | DoubleType() | Pointer():
+        case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
             return 8
         case Char() | SChar() | UChar():
             return 1
@@ -388,12 +392,12 @@ def _truncate_case_value(val: int, switch_type: Type) -> int:
         case IntType():
             v = val & 0xFFFFFFFF
             return v - (1 << 32) if v >= (1 << 31) else v
-        case LongType():
+        case LongType() | LongLongType():
             v = val & 0xFFFFFFFFFFFFFFFF
             return v - (1 << 64) if v >= (1 << 63) else v
         case UIntType():
             return val & 0xFFFFFFFF
-        case ULongType():
+        case ULongType() | ULongLongType():
             return val & 0xFFFFFFFFFFFFFFFF
         case ShortType():
             v = val & 0xFFFF
@@ -613,10 +617,14 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
             return ast.SingleInit(ast.Constant(ast.ConstInt(0), exp_type=IntType()))
         case LongType():
             return ast.SingleInit(ast.Constant(ast.ConstLong(0), exp_type=LongType()))
+        case LongLongType():
+            return ast.SingleInit(ast.Constant(ast.ConstLongLong(0), exp_type=LongLongType()))
         case UIntType():
             return ast.SingleInit(ast.Constant(ast.ConstUInt(0), exp_type=UIntType()))
         case ULongType():
             return ast.SingleInit(ast.Constant(ast.ConstULong(0), exp_type=ULongType()))
+        case ULongLongType():
+            return ast.SingleInit(ast.Constant(ast.ConstULongLong(0), exp_type=ULongLongType()))
         case DoubleType():
             return ast.SingleInit(ast.Constant(ast.ConstDouble(0.0), exp_type=DoubleType()))
         case Char() | SChar():
@@ -702,7 +710,7 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
         case DoubleType():
             fv = float(v)
             return ZeroInit(8) if fv == 0.0 and math.copysign(1.0, fv) > 0 else DoubleInit(fv)
-        case LongType() | ULongType():
+        case LongType() | ULongType() | LongLongType() | ULongLongType():
             return ZeroInit(8) if int(v) == 0 else LongInit(int(v))
         case Char() | SChar():
             return ZeroInit(1) if int(v) == 0 else CharInit(int(v))
@@ -1931,10 +1939,14 @@ class SemanticAnalyser:
                 return ast.Var(name, exp_type=var_type)
             case ast.Constant(value=ast.ConstLong()):
                 return ast.Constant(e.value, exp_type=LongType())
+            case ast.Constant(value=ast.ConstLongLong()):
+                return ast.Constant(e.value, exp_type=LongLongType())
             case ast.Constant(value=ast.ConstUInt()):
                 return ast.Constant(e.value, exp_type=UIntType())
             case ast.Constant(value=ast.ConstULong()):
                 return ast.Constant(e.value, exp_type=ULongType())
+            case ast.Constant(value=ast.ConstULongLong()):
+                return ast.Constant(e.value, exp_type=ULongLongType())
             case ast.Constant(value=ast.ConstDouble()):
                 return ast.Constant(e.value, exp_type=DoubleType())
             case ast.Constant():
@@ -2034,7 +2046,7 @@ class SemanticAnalyser:
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
-                                if not isinstance(typed_right.exp_type, LongType):
+                                if not isinstance(typed_right.exp_type, (LongType, LongLongType)):
                                     typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                                 bin_type = typed_left.exp_type
                             else:
@@ -2042,7 +2054,7 @@ class SemanticAnalyser:
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
-                                if not isinstance(typed_left.exp_type, LongType):
+                                if not isinstance(typed_left.exp_type, (LongType, LongLongType)):
                                     typed_left = ast.Cast(LongType(), typed_left, exp_type=LongType())
                                 bin_type = typed_right.exp_type
                         elif isinstance(op, ast.Subtract):
@@ -2055,7 +2067,7 @@ class SemanticAnalyser:
                                     raise SemanticError(
                                         "Cannot perform pointer arithmetic with a floating-point operand."
                                     )
-                                if not isinstance(typed_right.exp_type, LongType):
+                                if not isinstance(typed_right.exp_type, (LongType, LongLongType)):
                                     typed_right = ast.Cast(LongType(), typed_right, exp_type=LongType())
                                 bin_type = typed_left.exp_type
                             else:
@@ -2109,7 +2121,7 @@ class SemanticAnalyser:
                         tbl = self._struct_type_table
                         if not is_pointer_to_complete(lv_type, tbl):
                             raise SemanticError("Cannot perform pointer arithmetic on a pointer to an incomplete type.")
-                    if not isinstance(typed_rv.exp_type, LongType):
+                    if not isinstance(typed_rv.exp_type, (LongType, LongLongType)):
                         typed_rv = ast.Cast(LongType(), typed_rv, exp_type=LongType())
                 elif isinstance(op, (LeftShift, RightShift)):
                     if not is_integer(lv_type) or not is_integer(typed_rv.exp_type):
@@ -2230,17 +2242,17 @@ class SemanticAnalyser:
                 typed_e2 = self._typecheck_and_convert(exp2)
                 t1 = typed_e1.exp_type
                 t2 = typed_e2.exp_type
-                _int_types = (IntType, LongType, UIntType, ULongType, Char, SChar, UChar)
+                _int_types = (IntType, LongType, LongLongType, UIntType, ULongType, ULongLongType, Char, SChar, UChar)
                 if isinstance(t1, Pointer) and isinstance(t2, _int_types):
                     if not is_pointer_to_complete(t1, self._struct_type_table):
                         raise SemanticError("Cannot subscript a pointer to an incomplete type.")
-                    if not isinstance(t2, LongType):
+                    if not isinstance(t2, (LongType, LongLongType)):
                         typed_e2 = ast.Cast(LongType(), typed_e2, exp_type=LongType())
                     subscript_type: Type = t1.referenced
                 elif isinstance(t1, _int_types) and isinstance(t2, Pointer):
                     if not is_pointer_to_complete(t2, self._struct_type_table):
                         raise SemanticError("Cannot subscript a pointer to an incomplete type.")
-                    if not isinstance(t1, LongType):
+                    if not isinstance(t1, (LongType, LongLongType)):
                         typed_e1 = ast.Cast(LongType(), typed_e1, exp_type=LongType())
                     subscript_type = t2.referenced
                 else:

@@ -117,6 +117,33 @@ class ConstUChar(Const):
 
 
 @dataclass(frozen=True, slots=True)
+class ConstLongLong(Const):
+    """Represents a signed 64-bit ``long long`` integer constant within the C code.
+
+    On x86-64 Linux the value range is identical to ``ConstLong`` (both 64-bit),
+    but the two constant types are kept distinct to preserve C type identity.
+
+    Attributes:
+        val: The signed integer value in the range [-2**63, 2**63 - 1].
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConstULongLong(Const):
+    """Represents an unsigned 64-bit ``unsigned long long`` integer constant.
+
+    On x86-64 Linux the value range is identical to ``ConstULong`` (both 64-bit).
+
+    Attributes:
+        val: The unsigned integer value in the range [0, 2**64 - 1].
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
 class ConstShort(Const):
     """Represents a signed 16-bit short integer constant within the C code.
 

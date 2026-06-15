@@ -42,6 +42,7 @@ from test.parser.helpers import (
     _INT,
     _LBRACE,
     _LBRACKET,
+    _LONG,
     _LPAREN,
     _PLUS,
     _RBRACE,
@@ -661,14 +662,6 @@ class TestLongTypeSpecifiers:
         assert isinstance(decl, FunDecl)
         assert decl.function_declaration.params[0].param_type == LongType()
 
-    def test_duplicate_long_raises_parse_error(self) -> None:
-        """``long long x;`` - repeated ``long`` specifier raises ``ParseError``."""
-        from test.parser.helpers import _LONG
-
-        tokens = [_LONG, _LONG, _ident("x"), _SEMICOLON]
-        with pytest.raises(ParseError, match="duplicate type specifier"):
-            parse(tokens)
-
     def test_duplicate_int_raises_parse_error(self) -> None:
         """``int int x;`` - repeated ``int`` specifier raises ``ParseError``."""
         tokens = [_INT, _INT, _ident("x"), _SEMICOLON]
@@ -1252,3 +1245,135 @@ class TestInt128Types:
         tokens = [_INT128, _tok(TokenType.LONG, "long"), _ident("x"), _SEMICOLON]
         with pytest.raises(ParseError):
             parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# 64-bit long long types (long long / unsigned long long)
+# ---------------------------------------------------------------------------
+
+
+class TestLongLongTypes:
+    """Parser recognises ``long long`` and ``unsigned long long`` type specifiers."""
+
+    def test_long_long_variable_declaration(self) -> None:
+        """``long long x;`` at file scope produces a ``LongLongType`` variable."""
+        from compiler.syntax.ast.types import LongLongType
+
+        tokens = [_LONG, _LONG, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == LongLongType()
+
+    def test_long_long_int_variable_declaration(self) -> None:
+        """``long long int x;`` is equivalent to ``long long x;``."""
+        from compiler.syntax.ast.types import LongLongType
+
+        tokens = [_LONG, _LONG, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == LongLongType()
+
+    def test_signed_long_long_variable_declaration(self) -> None:
+        """``signed long long x;`` produces a ``LongLongType`` variable."""
+        from compiler.syntax.ast.types import LongLongType
+
+        tokens = [_SIGNED, _LONG, _LONG, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == LongLongType()
+
+    def test_unsigned_long_long_variable_declaration(self) -> None:
+        """``unsigned long long x;`` produces a ``ULongLongType`` variable."""
+        from compiler.syntax.ast.types import ULongLongType
+
+        tokens = [_UNSIGNED, _LONG, _LONG, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == ULongLongType()
+
+    def test_unsigned_long_long_int_variable_declaration(self) -> None:
+        """``unsigned long long int x;`` produces a ``ULongLongType`` variable."""
+        from compiler.syntax.ast.types import ULongLongType
+
+        tokens = [_UNSIGNED, _LONG, _LONG, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == ULongLongType()
+
+    def test_long_long_return_type(self) -> None:
+        """``long long foo(void) { ... }`` parses with ``LongLongType`` return."""
+        from compiler.syntax.ast.types import LongLongType
+
+        tokens = [
+            _LONG,
+            _LONG,
+            _ident("foo"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.ret == LongLongType()
+
+    def test_long_long_param_type(self) -> None:
+        """``int foo(long long x) { ... }`` parses with ``LongLongType`` parameter."""
+        from compiler.syntax.ast.types import LongLongType
+
+        tokens = [
+            _INT,
+            _ident("foo"),
+            _LPAREN,
+            _LONG,
+            _LONG,
+            _ident("x"),
+            _RPAREN,
+            _LBRACE,
+            _RETURN,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.params[0].param_type == LongLongType()
+
+    def test_three_longs_is_rejected(self) -> None:
+        """``long long long x;`` is a parse error."""
+        tokens = [_LONG, _LONG, _LONG, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+    def test_ll_literal_produces_const_long_long(self) -> None:
+        """``42LL`` parses as ``ConstLongLong(42)`` with ``LongLongType``."""
+        from compiler.syntax.ast.constants import ConstLongLong
+        from compiler.syntax.ast.types import LongLongType
+
+        ll_tok = _tok(TokenType.LONGLONG, "42LL")
+        exp = _parsed_exp(ll_tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstLongLong(42)
+        assert exp.exp_type == LongLongType()
+
+    def test_ull_literal_produces_const_ulong_long(self) -> None:
+        """``42ULL`` parses as ``ConstULongLong(42)`` with ``ULongLongType``."""
+        from compiler.syntax.ast.constants import ConstULongLong
+        from compiler.syntax.ast.types import ULongLongType
+
+        ull_tok = _tok(TokenType.ULONGLONG, "42ULL")
+        exp = _parsed_exp(ull_tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstULongLong(42)
+        assert exp.exp_type == ULongLongType()

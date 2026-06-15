@@ -37,6 +37,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("INT128", r"__int128\b"),
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("FPDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)(?![\w.])"),
+    ("ULONGLONG", r"[0-9]+(?:[lL]{2}[uU]|[uU][lL]{2})(?![\w.])"),
+    ("LONGLONG", r"[0-9]+[lL]{2}(?![\w.])"),
     ("ULONG", r"[0-9]+(?:[lL][uU]|[uU][lL])(?![\w.])"),
     ("LONGINT", r"[0-9]+[lL](?![\w.])"),
     ("UINT", r"[0-9]+[uU](?![\w.])"),

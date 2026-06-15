@@ -112,8 +112,10 @@ from compiler.syntax.ast import (
     ConstDouble,
     ConstInt,
     ConstLong,
+    ConstLongLong,
     ConstUInt,
     ConstULong,
+    ConstULongLong,
     Continue,
     D,
     Declaration,
@@ -144,6 +146,7 @@ from compiler.syntax.ast import (
     LeftShift,
     LessOrEqual,
     LessThan,
+    LongLongType,
     LongType,
     MemberDeclaration,
     Multiply,
@@ -180,6 +183,7 @@ from compiler.syntax.ast import (
     UChar,
     UInt128Type,
     UIntType,
+    ULongLongType,
     ULongType,
     Unary,
     UnaryOperator,
@@ -543,9 +547,16 @@ class Parser:
                 last_tok = tag_token
                 break  # union tag exhausts the type-specifier sequence
             tok = self._consume()
-            if tok.type in seen:
+            if tok.type == TokenType.LONG and (TokenType.LONG in seen or TokenType.LONG_LONG in seen):
+                # Second 'long' → synthesise LONG_LONG sentinel; reject a third.
+                if TokenType.LONG_LONG in seen:
+                    raise self._token_error("too many 'long' type specifiers", tok)
+                seen.discard(TokenType.LONG)
+                seen.add(TokenType.LONG_LONG)
+            elif tok.type in seen:
                 raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
-            seen.add(tok.type)
+            else:
+                seen.add(tok.type)
             last_tok = tok
         return frozenset(seen), last_tok, struct_tag, union_tag
 
@@ -625,6 +636,10 @@ class Parser:
             if TokenType.UNSIGNED in seen:
                 return UInt128Type()
             return Int128Type()
+        if TokenType.LONG_LONG in seen and TokenType.UNSIGNED in seen:
+            return ULongLongType()
+        if TokenType.LONG_LONG in seen:
+            return LongLongType()
         if TokenType.LONG in seen and TokenType.UNSIGNED in seen:
             return ULongType()
         if TokenType.UNSIGNED in seen:
@@ -714,6 +729,13 @@ class Parser:
                 if storage is not None:
                     raise self._token_error("conflicting storage class specifiers", tok)
                 storage = StorageClass.Static if tok.type == TokenType.STATIC else StorageClass.Extern
+            elif tok.type == TokenType.LONG and (TokenType.LONG in type_seen or TokenType.LONG_LONG in type_seen):
+                # Second 'long' → synthesise LONG_LONG sentinel; reject a third.
+                if TokenType.LONG_LONG in type_seen:
+                    raise self._token_error("too many 'long' type specifiers", tok)
+                type_seen.discard(TokenType.LONG)
+                type_seen.add(TokenType.LONG_LONG)
+                last_type_tok = tok
             else:
                 if tok.type in type_seen:
                     raise self._token_error(f"duplicate type specifier '{tok.value}'", tok)
@@ -1607,6 +1629,8 @@ class Parser:
                 return SizeOf(exp=self._parse_cast_exp())
             case (
                 TokenType.NUMBER
+                | TokenType.LONGLONG
+                | TokenType.ULONGLONG
                 | TokenType.LONGINT
                 | TokenType.UINT
                 | TokenType.ULONG
@@ -1744,6 +1768,23 @@ class Parser:
             raise self._token_error(
                 f"integer constant {val} is too large for type 'long' (max 9223372036854775807)", token
             )
+        if token.type == TokenType.LONGLONG:
+            self._consume()
+            val = int(token.value.rstrip("lL"))
+            if val > 9_223_372_036_854_775_807:
+                raise self._token_error(
+                    f"integer constant {val} is too large for type 'long long' (max 9223372036854775807)", token
+                )
+            return Constant(value=ConstLongLong(val), exp_type=LongLongType())
+        if token.type == TokenType.ULONGLONG:
+            self._consume()
+            val = int(token.value.rstrip("uUlL"))
+            if val > 18_446_744_073_709_551_615:
+                raise self._token_error(
+                    f"integer constant {val} is too large for type 'unsigned long long' (max 18446744073709551615)",
+                    token,
+                )
+            return Constant(value=ConstULongLong(val), exp_type=ULongLongType())
         if token.type == TokenType.LONGINT:
             self._consume()
             val = int(token.value.rstrip("lL"))

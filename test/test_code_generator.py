@@ -15,19 +15,23 @@ from compiler.syntax.ast.constants import (
     ConstDouble,
     ConstInt,
     ConstLong,
+    ConstLongLong,
     ConstShort,
     ConstUChar,
+    ConstULongLong,
     ConstUShort,
 )
 from compiler.syntax.ast.types import (
     Char,
     DoubleType,
     IntType,
+    LongLongType,
     LongType,
     SChar,
     ShortType,
     UChar,
     UIntType,
+    ULongLongType,
     ULongType,
     UShortType,
 )
@@ -2148,3 +2152,63 @@ class TestTranslateStaticInitShortInt128:
 
         big = (1 << 127) + 99
         assert _translate_static_init(tac.UInt128Init(big)) == asm.UInt128Init(big)
+
+
+class TestAsmTypeLongLong:
+    """``_asm_type`` returns ``Quadword`` for ``long long``-typed TAC values."""
+
+    def test_const_longlong_returns_quadword(self) -> None:
+        """``ConstLongLong`` constant maps to ``Quadword`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        assert _asm_type(tac.Constant(value=ConstLongLong(42))) == asm.Quadword()
+
+    def test_const_ulonglong_returns_quadword(self) -> None:
+        """``ConstULongLong`` constant maps to ``Quadword`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        assert _asm_type(tac.Constant(value=ConstULongLong(100))) == asm.Quadword()
+
+    def test_longlong_var_returns_quadword(self) -> None:
+        """``LongLongType`` variable maps to ``Quadword`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(ll=LongLongType)
+        assert _asm_type(tac.Var("ll"), st) == asm.Quadword()
+
+    def test_ulonglong_var_returns_quadword(self) -> None:
+        """``ULongLongType`` variable maps to ``Quadword`` assembly type."""
+        from compiler.code_generator import _asm_type
+
+        st = _make_symbol_table(ull=ULongLongType)
+        assert _asm_type(tac.Var("ull"), st) == asm.Quadword()
+
+
+class TestIsUnsignedLongLong:
+    """``_is_unsigned`` correctly classifies ``long long`` and ``unsigned long long``."""
+
+    def test_const_ulonglong_is_unsigned(self) -> None:
+        """``ConstULongLong`` is classified as unsigned."""
+        from compiler.code_generator import _is_unsigned
+
+        assert _is_unsigned(tac.Constant(value=ConstULongLong(0))) is True
+
+    def test_const_longlong_is_not_unsigned(self) -> None:
+        """``ConstLongLong`` is classified as signed."""
+        from compiler.code_generator import _is_unsigned
+
+        assert _is_unsigned(tac.Constant(value=ConstLongLong(0))) is False
+
+    def test_ulonglong_var_is_unsigned(self) -> None:
+        """``ULongLongType`` variable is classified as unsigned."""
+        from compiler.code_generator import _is_unsigned
+
+        st = _make_symbol_table(ull=ULongLongType)
+        assert _is_unsigned(tac.Var("ull"), st) is True
+
+    def test_longlong_var_is_not_unsigned(self) -> None:
+        """``LongLongType`` variable is classified as signed."""
+        from compiler.code_generator import _is_unsigned
+
+        st = _make_symbol_table(ll=LongLongType)
+        assert _is_unsigned(tac.Var("ll"), st) is False

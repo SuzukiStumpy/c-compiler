@@ -443,7 +443,7 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
         return 2
     if isinstance(t, (ast.IntType, ast.UIntType)):
         return 4
-    if isinstance(t, (ast.LongType, ast.ULongType, ast.Pointer, ast.DoubleType)):
+    if isinstance(t, (ast.LongType, ast.ULongType, ast.LongLongType, ast.ULongLongType, ast.Pointer, ast.DoubleType)):
         return 8
     if isinstance(t, (ast.Int128Type, ast.UInt128Type)):
         return 16
@@ -474,9 +474,9 @@ def _is_signed(t: ast.Type) -> bool:
     Raises:
         CodeGenerationError: If the type is not a scalar integer or pointer type.
     """
-    if isinstance(t, (ast.IntType, ast.LongType, ast.Char, ast.SChar)):
+    if isinstance(t, (ast.IntType, ast.LongType, ast.LongLongType, ast.Char, ast.SChar)):
         return True
-    if isinstance(t, (ast.UIntType, ast.ULongType, ast.Pointer, ast.UChar)):
+    if isinstance(t, (ast.UIntType, ast.ULongType, ast.ULongLongType, ast.Pointer, ast.UChar)):
         return False
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 

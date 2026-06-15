@@ -66,11 +66,13 @@ from compiler.syntax.ast.constants import (
     ConstDouble,
     ConstInt,
     ConstLong,
+    ConstLongLong,
     ConstShort,
     ConstUChar,
     ConstUInt,
     ConstUInt128,
     ConstULong,
+    ConstULongLong,
     ConstUShort,
 )
 from compiler.syntax.ast.types import Array as ArrayType
@@ -79,6 +81,7 @@ from compiler.syntax.ast.types import (
     DoubleType,
     FunType,
     IntType,
+    LongLongType,
     LongType,
     Pointer,
     SChar,
@@ -88,6 +91,7 @@ from compiler.syntax.ast.types import (
     UChar,
     UInt128Type,
     UIntType,
+    ULongLongType,
     ULongType,
     Union,
     UShortType,
@@ -156,13 +160,13 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
             return asm.Word()
         case tac.Constant(value=ConstInt() | ConstUInt()):
             return asm.Longword()
-        case tac.Constant(value=ConstLong() | ConstULong()):
+        case tac.Constant(value=ConstLong() | ConstULong() | ConstLongLong() | ConstULongLong()):
             return asm.Quadword()
         case tac.Constant(value=ConstDouble()):
             return asm.Double()
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
             match symbol_table[name].t:
-                case LongType() | ULongType() | Pointer():
+                case LongType() | ULongType() | LongLongType() | ULongLongType() | Pointer():
                     return asm.Quadword()
                 case DoubleType():
                     return asm.Double()
@@ -206,10 +210,14 @@ def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
         ``True`` for ``unsigned int`` and ``unsigned long`` values; ``False`` otherwise.
     """
     match val:
-        case tac.Constant(value=ConstUChar() | ConstUShort() | ConstUInt() | ConstULong() | ConstUInt128()):
+        case tac.Constant(
+            value=ConstUChar() | ConstUShort() | ConstUInt() | ConstULong() | ConstULongLong() | ConstUInt128()
+        ):
             return True
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
-            return isinstance(symbol_table[name].t, (UChar, UShortType, UIntType, ULongType, Pointer, UInt128Type))
+            return isinstance(
+                symbol_table[name].t, (UChar, UShortType, UIntType, ULongType, ULongLongType, Pointer, UInt128Type)
+            )
         case _:
             return False
 
@@ -289,8 +297,10 @@ def _classify_type_at_offset(
         case (
             IntType()
             | LongType()
+            | LongLongType()
             | UIntType()
             | ULongType()
+            | ULongLongType()
             | Char()
             | SChar()
             | UChar()
@@ -439,7 +449,7 @@ def classify_return_value(
             return [], [], False
         case IntType() | UIntType():
             return [asm.Register(asm.GPRegisters.AX, asm.Width.DWORD)], [], False
-        case LongType() | ULongType() | Pointer():
+        case LongType() | ULongType() | LongLongType() | ULongLongType() | Pointer():
             return [asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)], [], False
         case Char() | SChar() | UChar():
             return [asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)], [], False
@@ -584,7 +594,7 @@ def _type_size(t: Type, struct_type_table: StructTypeTable | None = None) -> int
         return 1
     if isinstance(t, (IntType, UIntType)):
         return 4
-    if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
+    if isinstance(t, (LongType, ULongType, LongLongType, ULongLongType, DoubleType, Pointer)):
         return 8
     if isinstance(t, ArrayType):
         return t.size * _type_size(t.element, struct_type_table)
@@ -610,7 +620,7 @@ def _static_alignment(t: Type, struct_type_table: StructTypeTable | None = None)
         for smaller arrays; 8 for ``long``, ``unsigned long``, ``double``, or any
         pointer; the ``StructEntry.alignment`` for struct types; 4 otherwise.
     """
-    if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
+    if isinstance(t, (LongType, ULongType, LongLongType, ULongLongType, DoubleType, Pointer)):
         return 8
     if isinstance(t, ArrayType):
         if _type_size(t, struct_type_table) >= 16:
@@ -1445,7 +1455,12 @@ def _translate_instruction(
             # into a fixed displacement and emit a single leaq without any imul.
             match index:
                 case tac.Constant(
-                    value=ConstInt(val=idx_v) | ConstLong(val=idx_v) | ConstUInt(val=idx_v) | ConstULong(val=idx_v)
+                    value=ConstInt(val=idx_v)
+                    | ConstLong(val=idx_v)
+                    | ConstLongLong(val=idx_v)
+                    | ConstUInt(val=idx_v)
+                    | ConstULong(val=idx_v)
+                    | ConstULongLong(val=idx_v)
                 ):
                     return [
                         asm.Mov(src=ptr_asm, dst=r11, assembly_type=asm.Quadword()),
@@ -2239,8 +2254,10 @@ def _translate_val(
         case tac.Constant(
             value=ConstInt(val=v)
             | ConstLong(val=v)
+            | ConstLongLong(val=v)
             | ConstUInt(val=v)
             | ConstULong(val=v)
+            | ConstULongLong(val=v)
             | ConstChar(val=v)
             | ConstUChar(val=v)
         ):
@@ -2534,7 +2551,7 @@ def _replace_pseudos(
             size = 8 if operand.name == ".__ret_ptr" else 4
             if symbol_table is not None and operand.name in symbol_table:
                 t = symbol_table[operand.name].t
-                if isinstance(t, (LongType, ULongType, DoubleType, Pointer)):
+                if isinstance(t, (LongType, ULongType, LongLongType, ULongLongType, DoubleType, Pointer)):
                     size = 8
                 elif isinstance(t, (Char, UChar, SChar)):
                     size = 1

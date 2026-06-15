@@ -136,6 +136,26 @@ class UShortType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class LongLongType(Type):
+    """Represents the C ``long long`` type (64-bit signed integer).
+
+    On x86-64 Linux this is identical in size and representation to ``long``
+    (both 8 bytes), but ``long long`` and ``long`` are distinct types in C.
+    The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ULongLongType(Type):
+    """Represents the C ``unsigned long long`` type (64-bit unsigned integer).
+
+    On x86-64 Linux this is identical in size and representation to ``unsigned long``
+    (both 8 bytes), but the two types are distinct in C.
+    The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class Int128Type(Type):
     """Represents the GCC ``__int128`` extension type (128-bit signed integer).
 
