@@ -99,6 +99,10 @@ from compiler.syntax.ast.types import (
     Union,
     UShortType,
     VoidType,
+    is_const,
+    is_restrict,
+    is_volatile,
+    unqualify,
 )
 from compiler.types.symbols import (
     CharInit,
@@ -194,6 +198,7 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
         SemanticError: If ``t`` is a ``Structure`` type not yet present in
             ``struct_type_table`` (incomplete struct type).
     """
+    t = unqualify(t)
     match t:
         case BoolType():
             return 1
@@ -237,6 +242,7 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
         SemanticError: If ``t`` is a ``Structure`` type not yet present in
             ``struct_type_table`` (incomplete struct type).
     """
+    t = unqualify(t)
     match t:
         case BoolType():
             return 1
@@ -360,18 +366,31 @@ def _convert_by_assignment(e: ast.Exp, target_type: Type) -> ast.Exp:
     """
     e_type = e.exp_type
     assert e_type is not None
-    if e_type == target_type:
+    # Strip the outermost const/volatile/restrict qualifier from the target for compatibility
+    # checks (C11 §6.5.16.1). The const guard is enforced separately before this function.
+    unq_target = unqualify(target_type)
+    if e_type == unq_target:
         return e
-    if type(e_type) in _TYPE_SIZE and type(target_type) in _TYPE_SIZE:
-        return ast.Cast(target_type, e, exp_type=target_type)
-    if _is_null_pointer_constant(e) and isinstance(target_type, Pointer):
-        return ast.Cast(target_type, e, exp_type=target_type)
-    if isinstance(e_type, Pointer) and isinstance(target_type, Pointer):
-        if isinstance(e_type.referenced, VoidType) or isinstance(target_type.referenced, VoidType):
-            return ast.Cast(target_type, e, exp_type=target_type)
-    if isinstance(e_type, Pointer) or isinstance(target_type, Pointer):
+    if type(e_type) in _TYPE_SIZE and type(unq_target) in _TYPE_SIZE:
+        return ast.Cast(unq_target, e, exp_type=unq_target)
+    if _is_null_pointer_constant(e) and isinstance(unq_target, Pointer):
+        return ast.Cast(unq_target, e, exp_type=unq_target)
+    if isinstance(e_type, Pointer) and isinstance(unq_target, Pointer):
+        if isinstance(unqualify(e_type.referenced), VoidType) or isinstance(unqualify(unq_target.referenced), VoidType):
+            return ast.Cast(unq_target, e, exp_type=unq_target)
+        # Allow adding qualifiers to the referenced type (e.g. int * -> const int *).
+        src_ref = e_type.referenced
+        dst_ref = unq_target.referenced
+        if unqualify(src_ref) == unqualify(dst_ref):
+            src_const = is_const(src_ref)
+            dst_const = is_const(dst_ref)
+            src_vol = is_volatile(src_ref)
+            dst_vol = is_volatile(dst_ref)
+            if (not src_const or dst_const) and (not src_vol or dst_vol):
+                return ast.Cast(unq_target, e, exp_type=unq_target)
+    if isinstance(e_type, Pointer) or isinstance(unq_target, Pointer):
         raise SemanticError("Cannot implicitly convert between pointer and non-pointer types in assignment.")
-    raise SemanticError(f"Cannot convert expression of type '{e_type}' to '{target_type}' in assignment.")
+    raise SemanticError(f"Cannot convert expression of type '{e_type}' to '{unq_target}' in assignment.")
 
 
 def _static_pointer_init(raw_init: ast.Exp, variable_map: "dict[str, VariableBinding]") -> InitialValue:
@@ -1460,14 +1479,16 @@ class SemanticAnalyser:
             var_decl.name, var_decl.init, self._resolve_type(var_decl.var_type), var_decl.storage_class
         )
         validate_type_specifier(var_decl.var_type, self._struct_type_table)
-        if isinstance(var_decl.var_type, VoidType):
+        if isinstance(unqualify(var_decl.var_type), VoidType):
             raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete type 'void'.")
         if (
             var_decl.storage_class != StorageClass.Extern
-            and isinstance(var_decl.var_type, (Structure, Union))
-            and not is_complete(var_decl.var_type, self._struct_type_table)
+            and isinstance(unqualify(var_decl.var_type), (Structure, Union))
+            and not is_complete(unqualify(var_decl.var_type), self._struct_type_table)
         ):
             raise SemanticError(f"Variable '{var_decl.name}' declared with incomplete aggregate type.")
+        if is_restrict(var_decl.var_type) and not isinstance(unqualify(var_decl.var_type), Pointer):
+            raise SemanticError(f"Variable '{var_decl.name}': restrict qualifier may only be applied to pointer types.")
         binding = self._variable_map.get(var_decl.name)
         if var_decl.storage_class == StorageClass.Extern:
             if var_decl.init is not None:
@@ -1485,7 +1506,7 @@ class SemanticAnalyser:
             # Inherit whichever linkage was already established; default to EXTERNAL when unseen.
             effective_linkage = prior_linkage if prior_linkage is not None else Linkage.EXTERNAL
             existing_type = self._type_table.get(var_decl.name)
-            if existing_type is not None and existing_type != var_decl.var_type:
+            if existing_type is not None and unqualify(existing_type) != unqualify(var_decl.var_type):
                 raise SemanticError(f"'{var_decl.name}' redeclared with a conflicting type.")
             self._file_scope_linkage[var_decl.name] = effective_linkage
             self._variable_map[var_decl.name] = VariableBinding(
@@ -1685,7 +1706,7 @@ class SemanticAnalyser:
                 f"cannot redeclare with {'internal' if new_linkage == Linkage.INTERNAL else 'external'} linkage."
             )
         existing_type = self._type_table.get(var_decl.name)
-        if existing_type is not None and existing_type != var_decl.var_type:
+        if existing_type is not None and unqualify(existing_type) != unqualify(var_decl.var_type):
             raise SemanticError(f"'{var_decl.name}' redeclared with a conflicting type.")
         self._file_scope_linkage[var_decl.name] = new_linkage
         self._variable_map[var_decl.name] = VariableBinding(
@@ -1698,7 +1719,7 @@ class SemanticAnalyser:
         globl = new_linkage == Linkage.EXTERNAL
         existing_entry = self._symbol_table.get(var_decl.name)
         if var_decl.init is not None:
-            if isinstance(var_decl.var_type, Pointer):
+            if isinstance(unqualify(var_decl.var_type), Pointer):
                 assert file_raw_exp is not None
                 if isinstance(file_raw_exp, ast.String):
                     str_name = self._make_string_name()
@@ -1800,11 +1821,13 @@ class SemanticAnalyser:
         Raises:
             SemanticError: On any signature or linkage conflict, or on redefinition.
         """
-        if existing.param_types != new_param_types:
+        stripped_existing = tuple(unqualify(t) for t in existing.param_types)
+        stripped_new = tuple(unqualify(t) for t in new_param_types)
+        if stripped_existing != stripped_new:
             raise SemanticError(
                 f"Conflicting declarations of '{fun.name}': parameter types do not match prior declaration."
             )
-        if existing.ret_type != ret_type:
+        if unqualify(existing.ret_type) != unqualify(ret_type):
             raise SemanticError(
                 f"Conflicting declarations of '{fun.name}': return type does not match prior declaration."
             )
@@ -2005,6 +2028,34 @@ class SemanticAnalyser:
         self._enum_map = saved_enums
         return result
 
+    def _get_qualified_lvalue_type(self, lvalue: ast.Exp) -> Type | None:
+        """Return the qualified declared type of an lvalue, preserving any qualifiers.
+
+        Unlike ``exp_type`` (which is always unqualified), this helper digs into
+        the symbol table or pointer types to recover the full qualified type.
+        Used to enforce ``const`` assignments.
+
+        Args:
+            lvalue: A typed lvalue expression (``Var``, ``Dereference``,
+                or ``Subscript``).
+
+        Returns:
+            The qualified ``Type`` of the storage location, or ``None`` when it
+            cannot be determined.
+        """
+        match lvalue:
+            case ast.Var(name=name):
+                return self._type_table.get(name)
+            case ast.Dereference(exp=inner):
+                if isinstance(inner.exp_type, Pointer):
+                    return inner.exp_type.referenced
+                return None
+            case ast.Subscript(exp1=arr_exp, exp2=_):
+                if isinstance(arr_exp.exp_type, Pointer):
+                    return arr_exp.exp_type.referenced
+                return None
+        return None
+
     def _type_check_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
         """Annotate an already-name-resolved expression with its C type.
 
@@ -2077,7 +2128,8 @@ class SemanticAnalyser:
                 var_type = self._type_table.get(name)
                 if var_type is None:
                     raise SemanticError(f"Undeclared variable {name}!")
-                return ast.Var(name, exp_type=var_type)
+                # exp_type is always the unqualified type; qualifiers live in _type_table.
+                return ast.Var(name, exp_type=unqualify(var_type))
             case ast.Constant(value=ast.ConstLong()):
                 return ast.Constant(e.value, exp_type=LongType())
             case ast.Constant(value=ast.ConstLongLong()):
@@ -2111,6 +2163,9 @@ class SemanticAnalyser:
                 if isinstance(op, (ast.PreIncrement, ast.PreDecrement, ast.PostIncrement, ast.PostDecrement)):
                     if not is_lvalue(typed_exp):
                         raise SemanticError("Operand of increment/decrement must be a modifiable lvalue.")
+                    ql_type_inc = self._get_qualified_lvalue_type(typed_exp)
+                    if ql_type_inc is not None and is_const(ql_type_inc):
+                        raise SemanticError("Cannot increment/decrement a const-qualified variable.")
                     if isinstance(typed_exp.exp_type, (Structure, Union)):
                         raise SemanticError("Increment/decrement requires a scalar or pointer operand.")
                     if isinstance(typed_exp.exp_type, Pointer) and isinstance(typed_exp.exp_type.referenced, VoidType):
@@ -2243,6 +2298,9 @@ class SemanticAnalyser:
                     typed_lv.exp_type, self._struct_type_table
                 ):
                     raise SemanticError("Cannot assign to an expression of incomplete aggregate type.")
+                ql_type = self._get_qualified_lvalue_type(typed_lv)
+                if ql_type is not None and is_const(ql_type):
+                    raise SemanticError("Cannot assign to a const-qualified variable.")
                 typed_rv = self._typecheck_and_convert(rvalue)
                 lv_type = typed_lv.exp_type
                 if lv_type is not None:
@@ -2254,6 +2312,9 @@ class SemanticAnalyser:
                     raise SemanticError("Invalid lvalue in compound assignment expression.")
                 if isinstance(typed_lv.exp_type, (Array, Structure, Union, VoidType, FunType)):
                     raise SemanticError("Invalid type for compound assignment target.")
+                ql_type_ca = self._get_qualified_lvalue_type(typed_lv)
+                if ql_type_ca is not None and is_const(ql_type_ca):
+                    raise SemanticError("Cannot assign to a const-qualified variable.")
                 typed_rv = self._typecheck_and_convert(rvalue)
                 lv_type = typed_lv.exp_type
                 assert lv_type is not None
@@ -2391,9 +2452,11 @@ class SemanticAnalyser:
                 typed_exp = self._typecheck_and_convert(exp)
                 if not isinstance(typed_exp.exp_type, Pointer):
                     raise SemanticError("Cannot dereference a non-pointer type.")
-                if isinstance(typed_exp.exp_type.referenced, VoidType):
+                if isinstance(unqualify(typed_exp.exp_type.referenced), VoidType):
                     raise SemanticError("Cannot dereference a pointer to void.")
-                return ast.Dereference(typed_exp, exp_type=typed_exp.exp_type.referenced)
+                # exp_type strips the qualifier; qualifiers on the referenced type are
+                # checked separately during const-lvalue enforcement.
+                return ast.Dereference(typed_exp, exp_type=unqualify(typed_exp.exp_type.referenced))
             case ast.AddrOf(exp=exp):
                 typed_exp = self._type_check_exp(exp)
                 if not is_lvalue(typed_exp):
@@ -2412,13 +2475,13 @@ class SemanticAnalyser:
                         raise SemanticError("Cannot subscript a pointer to an incomplete type.")
                     if not isinstance(t2, (LongType, LongLongType)):
                         typed_e2 = ast.Cast(LongType(), typed_e2, exp_type=LongType())
-                    subscript_type: Type = t1.referenced
+                    subscript_type: Type = unqualify(t1.referenced)
                 elif isinstance(t1, _int_types) and isinstance(t2, Pointer):
                     if not is_pointer_to_complete(t2, self._struct_type_table):
                         raise SemanticError("Cannot subscript a pointer to an incomplete type.")
                     if not isinstance(t1, (LongType, LongLongType)):
                         typed_e1 = ast.Cast(LongType(), typed_e1, exp_type=LongType())
-                    subscript_type = t2.referenced
+                    subscript_type = unqualify(t2.referenced)
                 else:
                     raise SemanticError("Subscript must have integer and pointer operands.")
                 return ast.Subscript(typed_e1, typed_e2, exp_type=subscript_type)

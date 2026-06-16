@@ -467,6 +467,8 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
     Raises:
         CodeGenerationError: If the type is not recognised, or a struct tag is unknown.
     """
+    if isinstance(t, ast.QualifiedType):
+        t = t.base
     if isinstance(t, (ast.BoolType, ast.Char, ast.SChar, ast.UChar)):
         return 1
     if isinstance(t, (ast.ShortType, ast.UShortType)):

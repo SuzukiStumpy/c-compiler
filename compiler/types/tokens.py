@@ -44,6 +44,9 @@ class TokenType(Enum):
     TYPEDEF = auto()
     BOOL = auto()
     INT128 = auto()
+    CONST = auto()
+    VOLATILE = auto()
+    RESTRICT = auto()
     # Synthetic type-specifier sentinel – not produced by the lexer; used internally
     # by the parser to represent the two-token ``long long`` specifier as a single
     # entry in the type-specifier frozenset.

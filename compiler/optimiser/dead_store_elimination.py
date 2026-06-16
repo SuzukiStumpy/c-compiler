@@ -3,6 +3,7 @@
 from typing import TypeAlias
 
 import compiler.syntax.tac as tac
+from compiler.syntax.ast.types import is_volatile
 from compiler.types.symbols import StaticAttr, SymbolTable
 
 from .cfg import BasicBlock, BlockId, BoundaryNode, ControlFlowGraph
@@ -225,17 +226,23 @@ def meet(
     return frozenset(live)
 
 
-def is_dead_store(instr: tac.Instruction, annotation: LiveSet) -> bool:
+def is_dead_store(
+    instr: tac.Instruction,
+    annotation: LiveSet,
+    volatile_vars: frozenset[str] = frozenset(),
+) -> bool:
     """Return ``True`` when *instr* writes a result that is never subsequently read.
 
     A store is dead when the following conditions hold:
 
     1. The instruction is not a ``FunCall`` (calls may have arbitrary side effects
        regardless of whether their return value is used).
-    2. For ``CopyToOffset``: the aggregate name is absent from *annotation*.
+    2. The destination is not a ``volatile``-qualified variable (volatile writes
+       must never be elided, per C11 §6.7.3p7).
+    3. For ``CopyToOffset``: the aggregate name is absent from *annotation*.
        Liveness conservatively adds aggregate names via ``CopyFromOffset`` and
        ``Load`` (through aliased-var tracking), so this is safe to check directly.
-    3. For all other instructions: the instruction has a ``dst`` field that is a
+    4. For all other instructions: the instruction has a ``dst`` field that is a
        ``tac.Var``, and that variable is absent from *annotation*.  Instructions
        without a TAC variable destination - ``Store``, jumps, labels, ``Return``
        - are never dead stores.
@@ -248,6 +255,8 @@ def is_dead_store(instr: tac.Instruction, annotation: LiveSet) -> bool:
         instr: The TAC instruction to test.
         annotation: The ``LiveSet`` immediately *after* this instruction, as
             produced by the liveness transfer function.
+        volatile_vars: Names of variables with ``volatile``-qualified types.
+            Writes to these are never considered dead.
 
     Returns:
         ``True`` when the instruction's result is unused and the instruction
@@ -256,11 +265,30 @@ def is_dead_store(instr: tac.Instruction, annotation: LiveSet) -> bool:
     if isinstance(instr, tac.FunCall):
         return False
     if isinstance(instr, tac.CopyToOffset):
+        if instr.dst in volatile_vars:
+            return False
         return instr.dst not in annotation
     dst = getattr(instr, "dst", None)
     if isinstance(dst, tac.Var):
+        if dst.value in volatile_vars:
+            return False
         return dst.value not in annotation
     return False
+
+
+def _collect_volatile_variables(symbol_table: SymbolTable) -> frozenset[str]:
+    """Return the names of all ``volatile``-qualified variables in *symbol_table*.
+
+    Writes to volatile variables must never be eliminated by DSE.
+
+    Args:
+        symbol_table: The program symbol table to scan.
+
+    Returns:
+        A ``frozenset`` of variable name strings for every symbol with a
+        ``volatile``-qualified type.
+    """
+    return frozenset(name for name, entry in symbol_table.items() if is_volatile(entry.t))
 
 
 def _collect_all_static_variables(symbol_table: SymbolTable) -> frozenset[str]:
@@ -367,13 +395,15 @@ def dead_store_elimination(
     if not cfg.blocks:
         return cfg
 
-    _, instr_annotations = _find_liveness(cfg, symbol_table or {})
+    st = symbol_table or {}
+    volatile_vars = _collect_volatile_variables(st)
+    _, instr_annotations = _find_liveness(cfg, st)
 
     for block_idx, block in enumerate(cfg.blocks):
         block.instructions = [
             instr
             for instr, annotation in zip(block.instructions, instr_annotations.get(block_idx, []))
-            if not is_dead_store(instr, annotation)
+            if not is_dead_store(instr, annotation, volatile_vars)
         ]
 
     return cfg

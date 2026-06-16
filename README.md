@@ -84,6 +84,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - `enum` declarations and definitions; enumerator constants fold to `int` values at semantic analysis time; enumerator values may be integer literals, unary-negated literals, or references to previously-declared enumerators in the same definition
 - Storage classes: `static` and `extern`
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
+- Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
 
 ### Semantic analysis
 
@@ -94,6 +95,21 @@ The semantic analysis phase performs full name resolution and type checking:
 - Linkage resolution for `static` and `extern` identifiers
 - `switch` validation: integer-only controlling expressions; no duplicate `case` values; no floating-point case labels
 - Variadic call sites: extra arguments beyond the declared parameters are type-checked individually; `va_list`/`va_start`/`va_arg`/`va_end` are not yet supported (Tier 2)
+- Type qualifier enforcement: assignment to `const`-qualified lvalues raises `SemanticError`; `restrict` on non-pointer types raises `SemanticError`
+
+### Type qualifiers
+
+All three C11 type qualifiers (`const`, `volatile`, `restrict`) are fully supported.
+Qualifiers may appear in any position where C11 allows them: before or after a type specifier, and after a `*` in a pointer declarator.
+Qualified types are preserved in the AST as `QualifiedType` wrapper nodes and enforced throughout the pipeline.
+
+| Qualifier | C11 reference | Compiler behaviour |
+|---|---|---|
+| `const` | sec. 6.7.3 | Assignment to a `const`-qualified lvalue (variable, pointer-to-const dereference) is a `SemanticError`. `const` global variables are placed in `.rodata`. |
+| `volatile` | sec. 6.7.3 | Reads and writes to `volatile`-qualified variables are never eliminated or reordered by the copy-propagation or dead-store-elimination optimisation passes. |
+| `restrict` | sec. 6.7.3 | Applying `restrict` to a non-pointer type is a `SemanticError`. The aliasing hint is tracked in the type system; no alias-based optimisations are performed beyond what the standard aliasing rules already permit. |
+
+Standard library headers that use these qualifiers (e.g. `const char *` in `<string.h>`) parse and type-check without error.
 
 ## Prerequisites
 
@@ -233,18 +249,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 `float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported. All arithmetic, relational, and conversion operations between `float`, `double`, `long double`, and integer types are implemented, including the SysV AMD64 ABI calling conventions (XMM registers for `float`/`double`; stack (MEMORY class) for `long double`).
 
-### Type qualifiers
-
-None of the three C11 type qualifiers are recognised by the lexer or parser:
-
-| Qualifier | C11 reference | Notes |
-|---|---|---|
-| `const` | sec. 6.7.3 | Read-only objects; enables read-only data placement. |
-| `volatile` | sec. 6.7.3 | Prevents optimisation of accesses to hardware-mapped memory. |
-| `restrict` | sec. 6.7.3 | Pointer aliasing hint; required by many standard library signatures. |
-
-Any source file that uses these qualifiers will fail to parse.
-
 ### Atomic types and thread-local storage
 
 C11 introduced a concurrency model alongside `<stdatomic.h>`:
@@ -306,7 +310,7 @@ Separate compilation of individual files followed by linking with a system linke
 
 ### Standard library
 
-No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are now recognised, though other missing features (type qualifiers, `enum`, variadic functions) may still prevent some headers from parsing cleanly.
+No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are now recognised, though other missing features (variadic functions) may still prevent some headers from parsing cleanly.
 
 ---
 

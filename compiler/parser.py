@@ -206,7 +206,7 @@ from compiler.syntax.ast import (
     VoidType,
     While,
 )
-from compiler.syntax.ast.types import BoolType, Int128Type, ShortType
+from compiler.syntax.ast.types import BoolType, Int128Type, QualifiedType, ShortType
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -265,6 +265,17 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.STRUCT,
         TokenType.UNION,
         TokenType.ENUM,
+    }
+)
+
+# C11 type qualifiers (sec. 6.7.3): const, volatile, restrict.
+# Kept separate from _TYPE_SPECIFIER_TOKENS so they can be silently consumed
+# without contributing to type resolution.
+_TYPE_QUALIFIER_TOKENS: frozenset[TokenType] = frozenset(
+    {
+        TokenType.CONST,
+        TokenType.VOLATILE,
+        TokenType.RESTRICT,
     }
 )
 
@@ -598,7 +609,7 @@ class Parser:
 
     def _consume_type_specifiers(
         self,
-    ) -> tuple[frozenset[TokenType], Token | None, str | None, str | None, str | None]:
+    ) -> tuple[frozenset[TokenType], Token | None, str | None, str | None, str | None, frozenset[TokenType]]:
         """Consume a run of type-specifier tokens and return the set seen.
 
         Reads tokens from the stream as long as they belong to
@@ -608,13 +619,14 @@ class Parser:
         combined with any other type specifier.
 
         Returns:
-            A ``(seen, last_tok, struct_tag, union_tag, enum_tag)`` 5-tuple.  ``seen``
-            is the frozen set of non-aggregate token types consumed; ``last_tok`` is
-            the final token consumed, used to anchor error messages; ``struct_tag`` is
+            A ``(seen, last_tok, struct_tag, union_tag, enum_tag, qualifiers)`` 6-tuple.
+            ``seen`` is the frozen set of non-aggregate token types consumed; ``last_tok``
+            is the final token consumed, used to anchor error messages; ``struct_tag`` is
             the struct tag name when a ``struct identifier`` pair was consumed (otherwise
             ``None``); ``union_tag`` is the union tag name when a ``union identifier``
             pair was consumed (otherwise ``None``); ``enum_tag`` is the enum tag name
-            when an ``enum identifier`` pair was consumed (otherwise ``None``).
+            when an ``enum identifier`` pair was consumed (otherwise ``None``);
+            ``qualifiers`` is the frozen set of qualifier token types seen.
 
         Raises:
             ParseError: If the same specifier token appears more than once, if
@@ -622,11 +634,17 @@ class Parser:
                 specifiers, or if the identifier following the keyword is absent.
         """
         seen: set[TokenType] = set()
+        seen_qualifiers: set[TokenType] = set()
         last_tok: Token | None = None
         struct_tag: str | None = None
         union_tag: str | None = None
         enum_tag: str | None = None
-        while (peek := self._peek()) is not None and peek.type in _TYPE_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
+        while (peek := self._peek()) is not None and (
+            peek.type in _TYPE_SPECIFIER_TOKENS or peek.type in _TYPE_QUALIFIER_TOKENS  # type: ignore[missing-attribute]
+        ):
+            if peek.type in _TYPE_QUALIFIER_TOKENS:
+                seen_qualifiers.add(self._consume().type)
+                continue
             if peek.type == TokenType.STRUCT:
                 if seen:
                     raise self._token_error("'struct' cannot be combined with other type specifiers", peek)
@@ -663,7 +681,7 @@ class Parser:
             else:
                 seen.add(tok.type)
             last_tok = tok
-        return frozenset(seen), last_tok, struct_tag, union_tag, enum_tag
+        return frozenset(seen), last_tok, struct_tag, union_tag, enum_tag, frozenset(seen_qualifiers)
 
     def _resolve_type(  # noqa: C901 - function too complex
         self,
@@ -824,13 +842,19 @@ class Parser:
                 storage-class specifiers conflict.
         """
         type_seen: set[TokenType] = set()
+        seen_qualifiers: set[TokenType] = set()
         last_type_tok: Token | None = None
         storage: StorageClass | None = None
         struct_tag: str | None = None
         union_tag: str | None = None
         enum_tag: str | None = None
 
-        while (peek := self._peek()) is not None and peek.type in _DECLARATION_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
+        while (peek := self._peek()) is not None and (
+            peek.type in _DECLARATION_SPECIFIER_TOKENS or peek.type in _TYPE_QUALIFIER_TOKENS  # type: ignore[missing-attribute]
+        ):
+            if peek.type in _TYPE_QUALIFIER_TOKENS:
+                seen_qualifiers.add(self._consume().type)
+                continue
             if peek.type == TokenType.TYPEDEF:
                 # TYPEDEF is intercepted by _parse_declaration before _parse_specifiers is called;
                 # if it appears here something is wrong — stop and let _resolve_type raise.
@@ -884,9 +908,24 @@ class Parser:
                 resolved = self._lookup_typedef(peek.value)
                 if resolved is not None:
                     self._consume()
+                    if seen_qualifiers:
+                        resolved = QualifiedType(
+                            base=resolved,
+                            const=TokenType.CONST in seen_qualifiers,
+                            volatile=TokenType.VOLATILE in seen_qualifiers,
+                            restrict=TokenType.RESTRICT in seen_qualifiers,
+                        )
                     return resolved, storage
 
-        return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag, enum_tag), storage
+        base_type = self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag, enum_tag)
+        if seen_qualifiers:
+            base_type = QualifiedType(
+                base=base_type,
+                const=TokenType.CONST in seen_qualifiers,
+                volatile=TokenType.VOLATILE in seen_qualifiers,
+                restrict=TokenType.RESTRICT in seen_qualifiers,
+            )
+        return base_type, storage
 
     def _parse_params(self) -> tuple[tuple[Parameter, ...], bool]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -1064,10 +1103,22 @@ class Parser:
         """
         if self._match(TokenType.ASTERISK):
             self._consume()
+            ptr_qualifiers_p: set[TokenType] = set()
+            while (pk := self._peek()) is not None and pk.type in _TYPE_QUALIFIER_TOKENS:
+                ptr_qualifiers_p.add(self._consume().type)
             inner_name, inner_transform, params = self._parse_param_declarator()
+            q_p = frozenset(ptr_qualifiers_p)
 
-            def _ptr(t: Type, _inner: Callable[[Type], Type] = inner_transform) -> Type:
-                return _inner(Pointer(t))
+            def _ptr(t: Type, _inner: Callable[[Type], Type] = inner_transform, _q: frozenset[TokenType] = q_p) -> Type:
+                p: Type = Pointer(t)
+                if _q:
+                    p = QualifiedType(
+                        base=p,
+                        const=TokenType.CONST in _q,
+                        volatile=TokenType.VOLATILE in _q,
+                        restrict=TokenType.RESTRICT in _q,
+                    )
+                return _inner(p)
 
             return inner_name, _ptr, params
         return self._parse_param_direct_declarator()
@@ -1115,6 +1166,7 @@ class Parser:
         token = self._peek()
         if token is not None and (
             token.type in _DECLARATION_SPECIFIER_TOKENS
+            or token.type in _TYPE_QUALIFIER_TOKENS
             or (token.type == TokenType.IDENTIFIER and self._is_typedef_name(token.value))
         ):
             return D(declaration=self._parse_declaration())
@@ -1504,7 +1556,10 @@ class Parser:
             ParseError: If a function declaration is attempted, if the optional
                 expression is malformed, or if the trailing ``;`` is missing.
         """
-        if self._peek() is not None and self._peek().type in _DECLARATION_SPECIFIER_TOKENS:  # type:ignore[missing-attribute]
+        if self._peek() is not None and (  # type:ignore[missing-attribute]
+            self._peek().type in _DECLARATION_SPECIFIER_TOKENS  # type: ignore[union-attr]
+            or self._peek().type in _TYPE_QUALIFIER_TOKENS  # type: ignore[union-attr]
+        ):
             return InitDecl(self._parse_variable_declaration())
         return InitExp(self._parse_optional_exp(TokenType.SEMICOLON))
 
@@ -1796,7 +1851,9 @@ class Parser:
         """
         if self._match(TokenType.LPAREN):
             next_tok = self._peek(1)
-            if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
+            if next_tok is not None and (
+                next_tok.type in _TYPE_SPECIFIER_TOKENS or next_tok.type in _TYPE_QUALIFIER_TOKENS
+            ):
                 self._consume()  # consume "("
                 base_cast_type = self._parse_type()
                 if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
@@ -1856,7 +1913,9 @@ class Parser:
                 self._consume()
                 if self._match(TokenType.LPAREN):
                     next_tok = self._peek(1)
-                    if next_tok is not None and next_tok.type in _TYPE_SPECIFIER_TOKENS:
+                    if next_tok is not None and (
+                        next_tok.type in _TYPE_SPECIFIER_TOKENS or next_tok.type in _TYPE_QUALIFIER_TOKENS
+                    ):
                         self._consume()  # consume "("
                         base_type = self._parse_type()
                         if (
@@ -2182,8 +2241,16 @@ class Parser:
             if resolved is not None:
                 self._consume()
                 return resolved
-        seen, last_tok, struct_tag, union_tag, enum_tag = self._consume_type_specifiers()
-        return self._resolve_type(seen, last_tok, struct_tag, union_tag, enum_tag)
+        seen, last_tok, struct_tag, union_tag, enum_tag, qualifiers = self._consume_type_specifiers()
+        base = self._resolve_type(seen, last_tok, struct_tag, union_tag, enum_tag)
+        if qualifiers:
+            return QualifiedType(
+                base=base,
+                const=TokenType.CONST in qualifiers,
+                volatile=TokenType.VOLATILE in qualifiers,
+                restrict=TokenType.RESTRICT in qualifiers,
+            )
+        return base
 
     def _parse_abstract_declarator(self) -> Callable[[Type], Type]:
         """Parse an abstract declarator (no identifier) for use in cast expressions.
@@ -2205,13 +2272,36 @@ class Parser:
         """
         if self._match(TokenType.ASTERISK):
             self._consume()
+            ptr_qualifiers: set[TokenType] = set()
+            while (pk := self._peek()) is not None and pk.type in _TYPE_QUALIFIER_TOKENS:
+                ptr_qualifiers.add(self._consume().type)
+            q = frozenset(ptr_qualifiers)
             if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
                 inner = self._parse_abstract_declarator()
 
-                def _ptr_inner(t: Type, _i: Callable[[Type], Type] = inner) -> Type:
-                    return _i(Pointer(t))
+                def _ptr_inner(t: Type, _i: Callable[[Type], Type] = inner, _q: frozenset[TokenType] = q) -> Type:
+                    p: Type = Pointer(t)
+                    if _q:
+                        p = QualifiedType(
+                            base=p,
+                            const=TokenType.CONST in _q,
+                            volatile=TokenType.VOLATILE in _q,
+                            restrict=TokenType.RESTRICT in _q,
+                        )
+                    return _i(p)
 
                 return _ptr_inner
+            if q:
+
+                def _qualified_ptr(t: Type, _q: frozenset[TokenType] = q) -> Type:
+                    return QualifiedType(
+                        base=Pointer(t),
+                        const=TokenType.CONST in _q,
+                        volatile=TokenType.VOLATILE in _q,
+                        restrict=TokenType.RESTRICT in _q,
+                    )
+
+                return _qualified_ptr
             return lambda t: Pointer(t)
 
         if self._match(TokenType.LPAREN):
@@ -2410,10 +2500,22 @@ class Parser:
         """
         if self._match(TokenType.ASTERISK):
             self._consume()
+            ptr_qualifiers_d: set[TokenType] = set()
+            while (pk := self._peek()) is not None and pk.type in _TYPE_QUALIFIER_TOKENS:
+                ptr_qualifiers_d.add(self._consume().type)
             inner_name, inner_transform, params = self._parse_declarator()
+            q_d = frozenset(ptr_qualifiers_d)
 
-            def _ptr(t: Type, _inner: Callable[[Type], Type] = inner_transform) -> Type:
-                return _inner(Pointer(t))
+            def _ptr(t: Type, _inner: Callable[[Type], Type] = inner_transform, _q: frozenset[TokenType] = q_d) -> Type:
+                p: Type = Pointer(t)
+                if _q:
+                    p = QualifiedType(
+                        base=p,
+                        const=TokenType.CONST in _q,
+                        volatile=TokenType.VOLATILE in _q,
+                        restrict=TokenType.RESTRICT in _q,
+                    )
+                return _inner(p)
 
             return inner_name, _ptr, params
         return self._parse_direct_declarator()

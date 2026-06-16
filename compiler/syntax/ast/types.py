@@ -285,6 +285,75 @@ class EnumType(Type):
     tag: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class QualifiedType(Type):
+    """A C type wrapped with one or more type qualifiers (C11 §6.7.3).
+
+    Qualifiers modify the outermost type without changing its underlying
+    identity.  The ``base`` field holds the unqualified type.  Each flag
+    records whether the corresponding qualifier was present.
+
+    Attributes:
+        base: The underlying unqualified C type.
+        const: ``True`` when the ``const`` qualifier is present.
+        volatile: ``True`` when the ``volatile`` qualifier is present.
+        restrict: ``True`` when the ``restrict`` qualifier is present.
+    """
+
+    base: Type
+    const: bool = False
+    volatile: bool = False
+    restrict: bool = False
+
+
+def unqualify(t: Type) -> Type:
+    """Strip the outermost ``QualifiedType`` wrapper, if present.
+
+    Args:
+        t: A C type, potentially qualified.
+
+    Returns:
+        ``t.base`` when ``t`` is a ``QualifiedType``; ``t`` unchanged otherwise.
+    """
+    return t.base if isinstance(t, QualifiedType) else t
+
+
+def is_const(t: Type) -> bool:
+    """Return ``True`` when ``t`` carries the ``const`` qualifier at its outermost level.
+
+    Args:
+        t: A C type to inspect.
+
+    Returns:
+        ``True`` if and only if ``t`` is a ``QualifiedType`` with ``const=True``.
+    """
+    return isinstance(t, QualifiedType) and t.const
+
+
+def is_volatile(t: Type) -> bool:
+    """Return ``True`` when ``t`` carries the ``volatile`` qualifier at its outermost level.
+
+    Args:
+        t: A C type to inspect.
+
+    Returns:
+        ``True`` if and only if ``t`` is a ``QualifiedType`` with ``volatile=True``.
+    """
+    return isinstance(t, QualifiedType) and t.volatile
+
+
+def is_restrict(t: Type) -> bool:
+    """Return ``True`` when ``t`` carries the ``restrict`` qualifier at its outermost level.
+
+    Args:
+        t: A C type to inspect.
+
+    Returns:
+        ``True`` if and only if ``t`` is a ``QualifiedType`` with ``restrict=True``.
+    """
+    return isinstance(t, QualifiedType) and t.restrict
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 sec. 6.2.2).
 

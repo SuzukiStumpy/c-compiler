@@ -909,3 +909,24 @@ def test_ellipsis_not_lexed_as_three_period_tokens(preprocess_c_file: Preprocess
     """``...`` must produce one ``ELLIPSIS`` token, not three ``PERIOD`` tokens."""
     tokens = lexer(preprocess_c_file("valid/variadic_decl.c"))
     assert not any(t.type == TokenType.PERIOD for t in tokens)
+
+
+def test_const_keyword_produces_const_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """``const`` is a keyword and must produce a ``CONST`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/qualifiers.c"))
+    const_token = next(t for t in tokens if t.value == "const")
+    assert const_token.type == TokenType.CONST
+
+
+def test_volatile_keyword_produces_volatile_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """``volatile`` is a keyword and must produce a ``VOLATILE`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/qualifiers.c"))
+    volatile_token = next(t for t in tokens if t.value == "volatile")
+    assert volatile_token.type == TokenType.VOLATILE
+
+
+def test_restrict_keyword_produces_restrict_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """``restrict`` is a keyword and must produce a ``RESTRICT`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/qualifiers.c"))
+    restrict_token = next(t for t in tokens if t.value == "restrict")
+    assert restrict_token.type == TokenType.RESTRICT

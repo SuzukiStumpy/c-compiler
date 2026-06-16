@@ -173,12 +173,15 @@ class StaticVariable(TopLevel):
             exactly one entry; arrays have one entry per element (or a single
             ``ZeroInit`` spanning the whole region).  An empty tuple is treated as
             fully zero-initialised.
+        read_only: When ``True``, the variable is placed in ``.rodata`` instead of
+            ``.data``/``.bss``.  Use for ``const``-qualified global variables.
     """
 
     identifier: str
     globl: bool
     alignment: int
     init: tuple[StaticInit, ...]
+    read_only: bool = False
 
     def emit(self) -> str:
         """Return the assembly text for the variable definition.
@@ -196,17 +199,20 @@ class StaticVariable(TopLevel):
         if self.globl:
             lines.append(_asm_line(".globl", self.identifier))
 
-        in_bss = all(
-            isinstance(i, ZeroInit)
-            or (
-                isinstance(i, (CharInit, ShortInit, UShortInit, IntInit, LongInit, Int128Init, UInt128Init))
-                and i.value == 0
+        if self.read_only:
+            lines.append(_asm_line(".section", ".rodata"))
+        else:
+            in_bss = all(
+                isinstance(i, ZeroInit)
+                or (
+                    isinstance(i, (CharInit, ShortInit, UShortInit, IntInit, LongInit, Int128Init, UInt128Init))
+                    and i.value == 0
+                )
+                or (isinstance(i, (DoubleInit, FloatInit)) and i.as_bits() == 0)
+                or (isinstance(i, LongDoubleInit) and i.value == 0.0 and i.as_bits() == (0, 0))
+                for i in self.init
             )
-            or (isinstance(i, (DoubleInit, FloatInit)) and i.as_bits() == 0)
-            or (isinstance(i, LongDoubleInit) and i.value == 0.0 and i.as_bits() == (0, 0))
-            for i in self.init
-        )
-        lines.append(_asm_line(".bss" if in_bss else ".data"))
+            lines.append(_asm_line(".bss" if in_bss else ".data"))
         lines.append(_asm_line(".balign", str(self.alignment)))
         lines.append(f"{self.identifier}:")
 

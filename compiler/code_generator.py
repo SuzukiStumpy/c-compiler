@@ -102,6 +102,7 @@ from compiler.syntax.ast.types import (
     Union,
     UShortType,
     VoidType,
+    is_const,
 )
 from compiler.types.symbols import FunAttr, StaticAttr, StructTypeTable, SymbolTable
 from compiler.utils.exceptions import CodeGenerationError
@@ -594,6 +595,7 @@ def generate(
                         globl=globl,
                         alignment=_static_alignment(t),
                         init=tuple(_translate_static_init(i) for i in init),
+                        read_only=is_const(t),
                     )
                 )
             case tac.StaticConstant(name=name, t=t, init=init):

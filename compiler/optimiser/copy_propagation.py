@@ -16,6 +16,7 @@ from compiler.syntax.ast.types import (
     UChar,
     UIntType,
     ULongType,
+    is_volatile,
 )
 from compiler.types.symbols import StaticAttr, SymbolTable
 
@@ -23,6 +24,23 @@ from .cfg import ENTRY, BasicBlock, BlockId, BoundaryNode, ControlFlowGraph, Nod
 
 CopySet: TypeAlias = frozenset[tac.Copy]
 """The set of TAC Copy instructions whose values reach a specific program point."""
+
+
+def _is_volatile_val(val: tac.Val, symbol_table: SymbolTable) -> bool:
+    """Return ``True`` when *val* is a volatile-qualified variable.
+
+    Args:
+        val: The TAC value to check.
+        symbol_table: The program symbol table.
+
+    Returns:
+        ``True`` when *val* is a ``tac.Var`` whose symbol-table entry has a
+        ``volatile``-qualified type; ``False`` for constants or unknown names.
+    """
+    if not isinstance(val, tac.Var):
+        return False
+    entry = symbol_table.get(val.value)
+    return entry is not None and is_volatile(entry.t)
 
 
 def _val_type(val: tac.Val, symbol_table: SymbolTable) -> Type | None:
@@ -313,7 +331,11 @@ def transfer(
                     continue
                 # Kill all copies that mention dst (it is being overwritten).
                 current -= {c for c in current if c.src == dst or c.dst == dst}
-                if _types_compatible(src, dst, symbol_table):
+                # Never track copies involving volatile variables: reads/writes
+                # must not be elided or reordered (C11 §6.7.3p7).
+                if _is_volatile_val(src, symbol_table) or _is_volatile_val(dst, symbol_table):
+                    pass
+                elif _types_compatible(src, dst, symbol_table):
                     current.add(instr)
 
             case tac.FunCall(dst=dst):

@@ -240,6 +240,7 @@ from compiler.syntax.ast.types import (
     LongLongType,
     LongType,
     Pointer,
+    QualifiedType,
     SChar,
     ShortType,
     Structure,
@@ -252,6 +253,10 @@ from compiler.syntax.ast.types import (
     Union,
     UShortType,
     VoidType,
+    is_const,
+    is_restrict,
+    is_volatile,
+    unqualify,
 )
 
 __all__ = [
@@ -364,6 +369,11 @@ __all__ = [
     "Parameter",
     "Function",
     "Program",
+    "QualifiedType",
+    "is_const",
+    "is_restrict",
+    "is_volatile",
+    "unqualify",
     "pretty_print",
     "Complement",
     "Negate",
