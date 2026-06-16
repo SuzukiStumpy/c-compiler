@@ -40,6 +40,7 @@ class TokenType(Enum):
     SIZEOF = auto()
     STRUCT = auto()
     UNION = auto()
+    ENUM = auto()
     TYPEDEF = auto()
     BOOL = auto()
     INT128 = auto()

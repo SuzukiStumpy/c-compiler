@@ -52,7 +52,13 @@ from itertools import count
 from typing import NamedTuple
 
 import compiler.syntax.ast as ast
-from compiler.syntax.ast.declarations import MemberDeclaration, StorageClass, StructDeclaration, UnionDeclaration
+from compiler.syntax.ast.declarations import (
+    EnumDeclaration,
+    MemberDeclaration,
+    StorageClass,
+    StructDeclaration,
+    UnionDeclaration,
+)
 from compiler.syntax.ast.operators import (
     And,
     Equal,
@@ -71,6 +77,7 @@ from compiler.syntax.ast.types import (
     BoolType,
     Char,
     DoubleType,
+    EnumType,
     FloatType,
     FunType,
     Int128Type,
@@ -94,10 +101,12 @@ from compiler.syntax.ast.types import (
     VoidType,
 )
 from compiler.types.symbols import (
-    BoolInit,
     CharInit,
     ConstantAttr,
     DoubleInit,
+    EnumConstAttr,
+    EnumEntry,
+    EnumTypeTable,
     FloatInit,
     FunAttr,
     Initial,
@@ -131,6 +140,7 @@ _TYPE_SIZE: dict[type, int] = {
     BoolType: 1,
     IntType: 4,
     UIntType: 4,
+    EnumType: 4,
     LongType: 8,
     ULongType: 8,
     LongLongType: 8,
@@ -187,7 +197,7 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
     match t:
         case BoolType():
             return 1
-        case IntType() | UIntType():
+        case IntType() | UIntType() | EnumType():
             return 4
         case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
             return 8
@@ -230,7 +240,7 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
     match t:
         case BoolType():
             return 1
-        case IntType() | UIntType():
+        case IntType() | UIntType() | EnumType():
             return 4
         case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
             return 8
@@ -617,7 +627,7 @@ def validate_type_specifier(t: Type, struct_type_table: StructTypeTable) -> None
             return
 
 
-def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initializer:  # noqa: C901
+def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initializer:
     """Create a zero-valued, fully type-annotated ``Initializer`` for the given type.
 
     Used to pad aggregate initialisers that are shorter than their declared size
@@ -638,8 +648,6 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
         SemanticError: If ``t`` is a ``FunType`` or otherwise uninitializable type.
     """
     match t:
-        case BoolType():
-            return ast.SingleInit(ast.Constant(ast.ConstBool(0), exp_type=BoolType()))
         case IntType():
             return ast.SingleInit(ast.Constant(ast.ConstInt(0), exp_type=IntType()))
         case LongType():
@@ -738,8 +746,6 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
         ``CharInit``, or ``UCharInit`` node.
     """
     match t:
-        case BoolType():
-            return ZeroInit(1) if int(v) == 0 else BoolInit(1)
         case DoubleType():
             fv = float(v)
             return ZeroInit(8) if fv == 0.0 and math.copysign(1.0, fv) > 0 else DoubleInit(fv)
@@ -1006,11 +1012,14 @@ class SemanticAnalyser:
         self._function_map: dict[str, FunctionBinding] = {}
         self._structure_map: dict[str, StructureBinding] = {}
         self._union_map: dict[str, StructureBinding] = {}
+        self._enum_map: dict[str, StructureBinding] = {}
         self._symbol_table: SymbolTable = {}
         self._type_table: dict[str, Type] = {}
         self._struct_type_table: StructTypeTable = {}
+        self._enum_type_table: EnumTypeTable = {}
         self._all_unique_struct_tags: set[str] = set()
         self._all_unique_union_tags: set[str] = set()
+        self._all_unique_enum_tags: set[str] = set()
         self._file_scope_linkage: dict[str, Linkage] = {}
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
@@ -1106,6 +1115,24 @@ class SemanticAnalyser:
         self._all_unique_union_tags.add(new_tag)
         return new_tag
 
+    def _make_enum_tag(self, tag: str) -> str:
+        """Generate a unique internal tag name for a source-level enum tag.
+
+        Produces identifiers of the form ``.Efoo.0``, ``.Efoo.1``, etc.  The
+        leading ``.E`` prefix ensures the name cannot collide with any valid C
+        identifier.
+
+        Args:
+            tag: The source-level enum tag to uniquify.
+
+        Returns:
+            A string of the form ``".E<tag>.<n>"`` where ``<n>`` is the next
+            value drawn from ``_counter``.
+        """
+        new_tag = f".E{tag}.{next(self._counter)}"
+        self._all_unique_enum_tags.add(new_tag)
+        return new_tag
+
     def _resolve_type(self, t: Type) -> Type:
         """Recursively resolve a type specifier, replacing struct tags with their unique internal tags.
 
@@ -1149,6 +1176,20 @@ class SemanticAnalyser:
                 if tag in self._all_unique_union_tags:
                     return t  # already resolved - idempotent
                 raise SemanticError(f"Use of undeclared union tag '{tag}'")
+            case EnumType(tag=tag):
+                if tag is None:
+                    return t
+                # Check for conflict with struct/union tags in current scope
+                if self._structure_map.get(tag, StructureBinding("", False)).from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a struct in this scope.")
+                if self._union_map.get(tag, StructureBinding("", False)).from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a union in this scope.")
+                binding = self._enum_map.get(tag)
+                if binding is not None:
+                    return EnumType(tag=binding.new_tag)
+                if tag in self._all_unique_enum_tags:
+                    return t  # already resolved - idempotent
+                raise SemanticError(f"Use of undeclared enum tag '{tag}'")
             case Pointer(referenced=ref_t):
                 return Pointer(self._resolve_type(ref_t))
             case Array(element=elem_t, size=size):
@@ -1905,27 +1946,37 @@ class SemanticAnalyser:
 
     def _enter_scope(
         self,
-    ) -> tuple[dict[str, VariableBinding], set[str], dict[str, StructureBinding], dict[str, StructureBinding]]:
+    ) -> tuple[
+        dict[str, VariableBinding],
+        set[str],
+        dict[str, StructureBinding],
+        dict[str, StructureBinding],
+        dict[str, StructureBinding],
+    ]:
         """Open a new nested scope and return snapshots of the current block state.
 
-        Saves a copy of ``_variable_map``, ``_current_block_funs``, ``_structure_map``, and
-        ``_union_map``, then marks every existing binding as not-from-the-current-scope and
-        clears ``_current_block_funs`` so that the new scope starts fresh.
+        Saves a copy of ``_variable_map``, ``_current_block_funs``, ``_structure_map``,
+        ``_union_map``, and ``_enum_map``, then marks every existing binding as
+        not-from-the-current-scope and clears ``_current_block_funs`` so that the new
+        scope starts fresh.
 
         Returns:
-            A 4-tuple ``(saved_variable_map, saved_block_funs, saved_structure_map,
-            saved_union_map)``.  Assign all four back to the corresponding attributes
-            once the nested scope has been fully processed to restore the enclosing bindings.
+            A 5-tuple ``(saved_variable_map, saved_block_funs, saved_structure_map,
+            saved_union_map, saved_enum_map)``.  Assign all five back to the corresponding
+            attributes once the nested scope has been fully processed to restore the
+            enclosing bindings.
         """
         saved_vars = dict(self._variable_map)
         saved_funs = self._current_block_funs
         saved_structs = dict(self._structure_map)
         saved_unions = dict(self._union_map)
+        saved_enums = dict(self._enum_map)
         self._variable_map = {k: v._replace(from_current_block=False) for k, v in self._variable_map.items()}
         self._current_block_funs = set()
         self._structure_map = {k: v._replace(from_current_scope=False) for k, v in self._structure_map.items()}
         self._union_map = {k: v._replace(from_current_scope=False) for k, v in self._union_map.items()}
-        return saved_vars, saved_funs, saved_structs, saved_unions
+        self._enum_map = {k: v._replace(from_current_scope=False) for k, v in self._enum_map.items()}
+        return saved_vars, saved_funs, saved_structs, saved_unions, saved_enums
 
     def _resolve_block(self, body: ast.Block) -> ast.Block:
         """Resolve a sequence of block items in a new nested scope.
@@ -1945,12 +1996,13 @@ class SemanticAnalyser:
             SemanticError: If any block item within ``body`` contains a
                 semantic violation.
         """
-        saved_vars, saved_funs, saved_structs, saved_unions = self._enter_scope()
+        saved_vars, saved_funs, saved_structs, saved_unions, saved_enums = self._enter_scope()
         result = tuple(self._resolve_block_item(item) for item in body)
         self._variable_map = saved_vars
         self._current_block_funs = saved_funs
         self._structure_map = saved_structs
         self._union_map = saved_unions
+        self._enum_map = saved_enums
         return result
 
     def _type_check_exp(self, e: ast.Exp) -> ast.Exp:  # noqa: C901 - ignore complexity warning
@@ -2017,6 +2069,9 @@ class SemanticAnalyser:
         match e:
             case ast.Var(name=name):
                 sym_entry = self._symbol_table.get(name)
+                if sym_entry is not None and isinstance(sym_entry.attrs, EnumConstAttr):
+                    # Enumerator constants fold to integer constant expressions.
+                    return ast.Constant(ast.ConstInt(sym_entry.attrs.value), exp_type=IntType())
                 if sym_entry is not None and isinstance(sym_entry.attrs, FunAttr):
                     return ast.Var(name, exp_type=Pointer(sym_entry.t))
                 var_type = self._type_table.get(name)
@@ -2710,6 +2765,10 @@ class SemanticAnalyser:
             case ast.Var(name=name):
                 if name in self._current_block_funs:
                     raise SemanticError(f"Function name '{name}' used as a variable.")
+                # Enumerator constants are not in _variable_map; fold them early.
+                sym_entry = self._symbol_table.get(name)
+                if sym_entry is not None and isinstance(sym_entry.attrs, EnumConstAttr):
+                    return ast.Constant(ast.ConstInt(sym_entry.attrs.value), exp_type=IntType())
                 if name in self._variable_map:
                     unique_name = self._variable_map[name].unique_name
                 elif name in self._function_map:
@@ -2861,7 +2920,7 @@ class SemanticAnalyser:
                 self._break_stack.pop()
                 return result
             case ast.For(init=init, condition=condition, post=post, body=body):
-                saved_vars, saved_funs, saved_structs, saved_unions = self._enter_scope()
+                saved_vars, saved_funs, saved_structs, saved_unions, saved_enums = self._enter_scope()
                 label = self._make_loop_label("for")
                 self._loop_stack.append(label)
                 self._break_stack.append(label)
@@ -2877,6 +2936,7 @@ class SemanticAnalyser:
                 self._current_block_funs = saved_funs
                 self._structure_map = saved_structs
                 self._union_map = saved_unions
+                self._enum_map = saved_enums
                 return ast.For(init, condition, post, body, label)
             case ast.Switch(control=control, body=body):
                 label = self._make_loop_label("switch")
@@ -3002,6 +3062,68 @@ class SemanticAnalyser:
             return self._typecheck_and_convert(self.resolve_exp(exp))
         return None
 
+    def _resolve_enum_decl(self, enum_decl: EnumDeclaration, *, file_scope: bool = False) -> ast.EnumDecl:
+        """Register an enum definition and return a resolved ``EnumDecl`` node.
+
+        Assigns a unique internal tag to the enum, validates that the tag does not
+        conflict with an existing struct or union tag in the current scope, checks
+        that no two enumerator names are duplicated, and registers each enumerator
+        in the symbol table with an ``EnumConstAttr`` carrying its integer value.
+        The resolved enum tag is stored in ``_enum_type_table``.
+
+        Args:
+            enum_decl: The ``EnumDeclaration`` AST node produced by the parser.
+                ``enum_decl.tag`` is the source-level tag; ``enum_decl.members``
+                is the ordered tuple of ``EnumeratorDeclaration`` nodes.
+            file_scope: When ``True``, the enum is being declared at file scope
+                and conflict detection does not use ``from_current_scope`` (all
+                file-scope tags coexist in the same global namespace).
+
+        Returns:
+            An ``ast.EnumDecl`` wrapping an ``EnumDeclaration`` whose tag has been
+            replaced by the unique internal tag.
+
+        Raises:
+            SemanticError: If the tag conflicts with an existing struct or union
+                tag in the same scope; if any two enumerators share the same name.
+        """
+        tag = enum_decl.tag
+        if tag is not None:
+            if file_scope:
+                if tag in self._structure_map:
+                    raise SemanticError(f"Tag '{tag}' already declared as a struct in this scope.")
+                if tag in self._union_map:
+                    raise SemanticError(f"Tag '{tag}' already declared as a union in this scope.")
+            else:
+                if self._structure_map.get(tag, StructureBinding("", False)).from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a struct in this scope.")
+                if self._union_map.get(tag, StructureBinding("", False)).from_current_scope:
+                    raise SemanticError(f"Tag '{tag}' already declared as a union in this scope.")
+            existing = self._enum_map.get(tag)
+            if file_scope:
+                if existing is not None and not existing.from_current_scope:
+                    unique_tag = existing.new_tag
+                else:
+                    unique_tag = self._make_enum_tag(tag)
+                    self._enum_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
+            else:
+                if existing is not None and existing.from_current_scope:
+                    unique_tag = existing.new_tag
+                else:
+                    unique_tag = self._make_enum_tag(tag)
+                    self._enum_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
+        else:
+            unique_tag = self._make_enum_tag("")
+        seen_names: set[str] = set()
+        for member in enum_decl.members:
+            if member.name in seen_names:
+                raise SemanticError(f"Duplicate enumerator '{member.name}' in enum '{tag}'.")
+            seen_names.add(member.name)
+            self._symbol_table[member.name] = SymbolTableEntry(t=IntType(), attrs=EnumConstAttr(value=member.value))
+        self._enum_type_table[unique_tag] = EnumEntry(members=tuple(m.name for m in enum_decl.members))
+        resolved_decl = EnumDeclaration(tag=unique_tag, members=enum_decl.members)
+        return ast.EnumDecl(resolved_decl)
+
     def _resolve_block_item(self, item: ast.BlockItem) -> ast.BlockItem:
         """Resolve a single block item (statement, variable declaration, or function declaration).
 
@@ -3057,6 +3179,8 @@ class SemanticAnalyser:
                 resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
                 self._typecheck_union_declaration(resolved_union_decl)
                 return ast.D(ast.UnionDecl(resolved_union_decl))
+            case ast.D(declaration=ast.EnumDecl(enum_declaration=enum_decl)):
+                return ast.D(self._resolve_enum_decl(enum_decl))
             case ast.D(declaration=ast.FunDecl(function_declaration=fun)):
                 if fun.body is not None:
                     raise SemanticError(f"Nested function definition of '{fun.name}' is not permitted.")
@@ -3215,6 +3339,8 @@ class SemanticAnalyser:
                     resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
                     self._typecheck_union_declaration(resolved_union_decl)
                     resolved.append(ast.UnionDecl(resolved_union_decl))
+                case ast.EnumDecl(enum_declaration=enum_decl):
+                    resolved.append(self._resolve_enum_decl(enum_decl, file_scope=True))
                 case _:
                     raise SemanticError("Unhandled top-level declaration type in semantic analyser")
         return ast.Program(declarations=tuple(resolved))
@@ -3244,27 +3370,31 @@ def resolve(program: ast.Program) -> ast.Program:
     return SemanticAnalyser()._resolve_program(program)
 
 
-def resolve_with_symbols(program: ast.Program) -> tuple[ast.Program, SymbolTable, StructTypeTable]:
+def resolve_with_symbols(
+    program: ast.Program,
+) -> tuple[ast.Program, SymbolTable, StructTypeTable, EnumTypeTable]:
     """Semantic analysis stage entry point that also returns the populated symbol and type tables.
 
-    Identical to ``resolve`` but additionally exposes the ``SymbolTable`` and
-    ``StructTypeTable`` built during analysis.  Downstream stages (TAC generation,
-    code generation) require the symbol table to emit ``StaticVariable`` constructs
-    and the struct type table to determine member offsets and struct sizes.
+    Identical to ``resolve`` but additionally exposes the ``SymbolTable``,
+    ``StructTypeTable``, and ``EnumTypeTable`` built during analysis.  Downstream
+    stages (TAC generation, code generation) require the symbol table to emit
+    ``StaticVariable`` constructs and the struct type table to determine member
+    offsets and struct sizes.
 
     Args:
         program: The ``Program`` AST node produced by the parser.
 
     Returns:
-        A tuple ``(resolved_program, symbol_table, struct_type_table)`` where
-        ``resolved_program`` is the semantically validated AST, ``symbol_table``
-        maps every resolved identifier to its ``SymbolTableEntry``, and
-        ``struct_type_table`` maps every resolved struct tag to its
-        ``StructEntry`` layout record.
+        A 4-tuple ``(resolved_program, symbol_table, struct_type_table, enum_type_table)``
+        where ``resolved_program`` is the semantically validated AST, ``symbol_table``
+        maps every resolved identifier to its ``SymbolTableEntry``,
+        ``struct_type_table`` maps every resolved struct tag to its ``StructEntry``
+        layout record, and ``enum_type_table`` maps every resolved enum tag to its
+        ``EnumEntry``.
 
     Raises:
         SemanticError: If the program contains any semantic violation.
     """
     analyser = SemanticAnalyser()
     resolved = analyser._resolve_program(program)
-    return resolved, analyser._symbol_table, analyser._struct_type_table
+    return resolved, analyser._symbol_table, analyser._struct_type_table, analyser._enum_type_table

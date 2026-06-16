@@ -56,7 +56,7 @@ class TestStructTagResolution:
     def test_struct_tag_appears_in_struct_type_table(self) -> None:
         """The resolved struct tag is present in the ``StructTypeTable``."""
         prog = _prog_with_decls(_struct_decl("Foo", _member("x", ast.IntType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         assert len(struct_table) == 1
         tag = next(iter(struct_table))
         assert tag.startswith(".S")
@@ -64,7 +64,7 @@ class TestStructTagResolution:
     def test_struct_layout_single_int_member(self) -> None:
         """A single ``int`` member produces a 4-byte struct with 4-byte alignment."""
         prog = _prog_with_decls(_struct_decl("S", _member("x", ast.IntType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
         assert entry.size == 4
         assert entry.alignment == 4
@@ -75,7 +75,7 @@ class TestStructTagResolution:
     def test_struct_layout_int_then_long_has_padding(self) -> None:
         """``struct { int x; long y; }`` pads ``x`` to align ``y`` at offset 8."""
         prog = _prog_with_decls(_struct_decl("S", _member("x", ast.IntType()), _member("y", ast.LongType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
         x_entry = next(m for m in entry.members if m.name == "x")
         y_entry = next(m for m in entry.members if m.name == "y")

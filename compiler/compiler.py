@@ -122,7 +122,7 @@ def compile(
             click.echo(pretty_print(program))
 
     if Stage.VALIDATE in stages:
-        program, symbol_table, struct_type_table = resolve_with_symbols(program)  # type: ignore[bad-argument-type]
+        program, symbol_table, struct_type_table, _ = resolve_with_symbols(program)  # type: ignore[bad-argument-type]
         if Stage.TACKY not in stages:
             click.echo(pretty_print(program))
 

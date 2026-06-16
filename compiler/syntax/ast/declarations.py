@@ -254,6 +254,51 @@ class UnionDecl(Declaration):
 
 
 @dataclass(frozen=True, slots=True)
+class EnumeratorDeclaration:
+    """A single enumerator within an enum body, with its computed integer value.
+
+    The parser computes enumerator values at parse time using a running counter
+    that starts at 0 and increments by 1 for each enumerator without an explicit
+    value.  An explicit ``= constant`` resets the running counter.
+
+    Attributes:
+        name: The enumerator identifier as it appears in the source.
+        value: The integer value assigned to this enumerator, computed by the
+            parser at parse time.
+    """
+
+    name: str
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class EnumDeclaration:
+    """An ``enum`` type definition, binding an optional tag to an ordered enumerator list.
+
+    Attributes:
+        tag: The enum tag name as it appears after the ``enum`` keyword, or
+            ``None`` for an anonymous enum.
+        members: The ordered sequence of enumerator declarations.  Each member
+            carries its computed integer value as resolved by the parser.
+    """
+
+    tag: str | None
+    members: tuple[EnumeratorDeclaration, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EnumDecl(Declaration):
+    """An enum definition wrapped as a top-level declaration node.
+
+    Attributes:
+        enum_declaration: The underlying ``EnumDeclaration`` node carrying the
+            optional tag name and enumerator list.
+    """
+
+    enum_declaration: EnumDeclaration
+
+
+@dataclass(frozen=True, slots=True)
 class TypedefDecl(Declaration):
     """A typedef declaration, binding an alias name to an aliased type.
 

@@ -471,7 +471,7 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
         return 1
     if isinstance(t, (ast.ShortType, ast.UShortType)):
         return 2
-    if isinstance(t, (ast.IntType, ast.UIntType, ast.FloatType)):
+    if isinstance(t, (ast.IntType, ast.UIntType, ast.FloatType, ast.EnumType)):
         return 4
     if isinstance(t, (ast.LongType, ast.ULongType, ast.LongLongType, ast.ULongLongType, ast.Pointer, ast.DoubleType)):
         return 8

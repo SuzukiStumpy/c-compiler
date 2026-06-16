@@ -268,6 +268,23 @@ class Union(Type):
     tag: str
 
 
+@dataclass(frozen=True, slots=True)
+class EnumType(Type):
+    """Represents a ``enum`` type referred to by its optional tag name.
+
+    This node appears wherever an ``enum Tag`` type is used as a variable
+    type, parameter type, or return type.  The underlying integer type is
+    always ``int`` (C11 §6.7.2.2p4); the tag allows the semantic analyser
+    to look up the enumeration's member names and values.
+
+    Attributes:
+        tag: The enum tag name as it appears after the ``enum`` keyword in
+            the source, or ``None`` for an anonymous enum.
+    """
+
+    tag: str | None
+
+
 class Linkage(Enum):
     """Linkage classification for a declared C identifier (C11 sec. 6.2.2).
 

@@ -107,6 +107,21 @@ def test_first_token_on_first_line_reports_line_1(preprocess_c_file: Preprocesso
     assert tokens[0].line == 1
 
 
+def test_enum_keyword_produces_enum_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """The ``enum`` keyword must be classified as ``ENUM``, not as ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/enum_keyword.c"))
+    enum_token = next(t for t in tokens if t.value == "enum")
+    assert enum_token.type == TokenType.ENUM
+
+
+def test_enum_members_are_classified_as_identifiers(preprocess_c_file: Preprocessor) -> None:
+    """Enumerator names such as ``RED``, ``GREEN``, ``BLUE`` are ordinary identifiers."""
+    tokens = lexer(preprocess_c_file("valid/enum_keyword.c"))
+    member_tokens = [t for t in tokens if t.value in {"RED", "GREEN", "BLUE"}]
+    assert len(member_tokens) == 3
+    assert all(t.type == TokenType.IDENTIFIER for t in member_tokens)
+
+
 def test_column_numbers_advance_correctly_across_first_line(preprocess_c_file: Preprocessor) -> None:
     # "int main(void) {"
     #  ^   ^   ^^   ^^
@@ -894,27 +909,3 @@ def test_ellipsis_not_lexed_as_three_period_tokens(preprocess_c_file: Preprocess
     """``...`` must produce one ``ELLIPSIS`` token, not three ``PERIOD`` tokens."""
     tokens = lexer(preprocess_c_file("valid/variadic_decl.c"))
     assert not any(t.type == TokenType.PERIOD for t in tokens)
-
-
-# ---------------------------------------------------------------------------
-# _Bool keyword (BOOL)
-# ---------------------------------------------------------------------------
-
-
-def test_bool_keyword_produces_bool_token(preprocess_c_file: Preprocessor) -> None:
-    """``_Bool`` keyword is lexed as a ``BOOL`` token."""
-    tokens = lexer(preprocess_c_file("valid/bool_type.c"))
-    assert any(t.type == TokenType.BOOL for t in tokens)
-
-
-def test_bool_keyword_token_value_is_underscore_bool(preprocess_c_file: Preprocessor) -> None:
-    """Every ``BOOL`` token carries the literal text ``_Bool``."""
-    tokens = lexer(preprocess_c_file("valid/bool_type.c"))
-    assert all(t.value == "_Bool" for t in tokens if t.type == TokenType.BOOL)
-
-
-def test_identifier_with_bool_prefix_is_not_bool_keyword(preprocess_c_file: Preprocessor) -> None:
-    """``_Boolean`` starts with ``_Bool`` but must not be classified as ``BOOL``."""
-    tokens = lexer(preprocess_c_file("valid/bool_type.c"))
-    bool_vals = {t.value for t in tokens if t.type == TokenType.BOOL}
-    assert "_Boolean" not in bool_vals

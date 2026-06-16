@@ -416,3 +416,38 @@ class StructEntry:
 
 StructTypeTable = dict[str, StructEntry]
 """Mapping from resolved struct tag to its layout entry."""
+
+
+@dataclass(frozen=True, slots=True)
+class EnumConstAttr(SymbolAttrs):
+    """Attributes for an enumerator constant introduced by an ``enum`` definition.
+
+    Enumerator constants have type ``int`` and a fixed integer value computed by
+    the parser.  They are not variables: they cannot be assigned to or addressed.
+    References to an enumerator name are folded to ``Constant(ConstInt(value))``
+    by the semantic analyser.
+
+    Attributes:
+        value: The integer value of this enumerator, as computed at parse time.
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class EnumEntry:
+    """The set of enumerator names belonging to a single ``enum`` definition.
+
+    Stored in ``EnumTypeTable`` keyed by the resolved (unique internal) enum tag.
+    The values of the individual enumerators are carried by the symbol table via
+    ``EnumConstAttr`` entries, not repeated here.
+
+    Attributes:
+        members: Ordered tuple of enumerator names as they appear in the source.
+    """
+
+    members: tuple[str, ...]
+
+
+EnumTypeTable = dict[str, EnumEntry]
+"""Mapping from resolved enum tag to its ``EnumEntry``."""

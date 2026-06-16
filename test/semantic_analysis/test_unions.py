@@ -56,7 +56,7 @@ class TestUnionTagResolution:
     def test_union_tag_appears_in_struct_type_table(self) -> None:
         """The resolved union tag is present in the type table returned by ``resolve_with_symbols``."""
         prog = _prog_with_decls(_union_decl("Foo", _member("x", ast.IntType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         assert len(struct_table) == 1
         tag = next(iter(struct_table))
         assert tag.startswith(".U")
@@ -68,7 +68,7 @@ class TestUnionLayout:
     def test_single_int_member(self) -> None:
         """A single ``int`` member produces a 4-byte union with 4-byte alignment."""
         prog = _prog_with_decls(_union_decl("U", _member("x", ast.IntType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
         assert entry.size == 4
         assert entry.alignment == 4
@@ -79,7 +79,7 @@ class TestUnionLayout:
     def test_two_int_members_both_at_offset_zero(self) -> None:
         """``union { int x; int y; }`` - both members at offset 0, size 4."""
         prog = _prog_with_decls(_union_decl("U", _member("x", ast.IntType()), _member("y", ast.IntType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
         assert entry.size == 4
         assert entry.alignment == 4
@@ -89,7 +89,7 @@ class TestUnionLayout:
     def test_int_and_long_size_is_long(self) -> None:
         """``union { int x; long y; }`` - size=8, align=8, both at offset 0."""
         prog = _prog_with_decls(_union_decl("U", _member("x", ast.IntType()), _member("y", ast.LongType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
         assert entry.size == 8
         assert entry.alignment == 8
@@ -99,7 +99,7 @@ class TestUnionLayout:
     def test_trailing_padding_rounds_to_alignment(self) -> None:
         """``union { char c; int x; }`` - size=4 (rounded to int align), align=4."""
         prog = _prog_with_decls(_union_decl("U", _member("c", ast.Char()), _member("x", ast.IntType())))
-        _, _, struct_table = resolve_with_symbols(prog)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
         entry = next(iter(struct_table.values()))
         assert entry.size == 4
         assert entry.alignment == 4

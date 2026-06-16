@@ -127,6 +127,10 @@ from compiler.syntax.ast import (
     Dot,
     DoubleType,
     DoWhile,
+    EnumDecl,
+    EnumDeclaration,
+    EnumeratorDeclaration,
+    EnumType,
     Equal,
     Exp,
     Expression,
@@ -260,6 +264,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.VOID,
         TokenType.STRUCT,
         TokenType.UNION,
+        TokenType.ENUM,
     }
 )
 
@@ -591,32 +596,36 @@ class Parser:
     # Type-specifier helpers
     # ------------------------------------------------------------------
 
-    def _consume_type_specifiers(self) -> tuple[frozenset[TokenType], Token | None, str | None, str | None]:
+    def _consume_type_specifiers(
+        self,
+    ) -> tuple[frozenset[TokenType], Token | None, str | None, str | None, str | None]:
         """Consume a run of type-specifier tokens and return the set seen.
 
         Reads tokens from the stream as long as they belong to
         ``_TYPE_SPECIFIER_TOKENS``.  Raises immediately on a duplicate specifier.
-        When a ``struct`` or ``union`` keyword is encountered the following
-        identifier token is consumed immediately as the tag; neither can be
+        When a ``struct``, ``union``, or ``enum`` keyword is encountered the following
+        identifier token is consumed immediately as the tag; none of these can be
         combined with any other type specifier.
 
         Returns:
-            A ``(seen, last_tok, struct_tag, union_tag)`` 4-tuple.  ``seen`` is
-            the frozen set of non-aggregate token types consumed; ``last_tok`` is
-            the final token consumed, used to anchor error messages; ``struct_tag``
-            is the struct tag name when a ``struct identifier`` pair was consumed
-            (otherwise ``None``); ``union_tag`` is the union tag name when a
-            ``union identifier`` pair was consumed (otherwise ``None``).
+            A ``(seen, last_tok, struct_tag, union_tag, enum_tag)`` 5-tuple.  ``seen``
+            is the frozen set of non-aggregate token types consumed; ``last_tok`` is
+            the final token consumed, used to anchor error messages; ``struct_tag`` is
+            the struct tag name when a ``struct identifier`` pair was consumed (otherwise
+            ``None``); ``union_tag`` is the union tag name when a ``union identifier``
+            pair was consumed (otherwise ``None``); ``enum_tag`` is the enum tag name
+            when an ``enum identifier`` pair was consumed (otherwise ``None``).
 
         Raises:
             ParseError: If the same specifier token appears more than once, if
-                ``struct`` is combined with other type specifiers, or if the
-                identifier following ``struct`` is absent.
+                ``struct``, ``union``, or ``enum`` is combined with other type
+                specifiers, or if the identifier following the keyword is absent.
         """
         seen: set[TokenType] = set()
         last_tok: Token | None = None
         struct_tag: str | None = None
         union_tag: str | None = None
+        enum_tag: str | None = None
         while (peek := self._peek()) is not None and peek.type in _TYPE_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
             if peek.type == TokenType.STRUCT:
                 if seen:
@@ -634,6 +643,14 @@ class Parser:
                 union_tag = tag_token.value
                 last_tok = tag_token
                 break  # union tag exhausts the type-specifier sequence
+            if peek.type == TokenType.ENUM:
+                if seen:
+                    raise self._token_error("'enum' cannot be combined with other type specifiers", peek)
+                self._consume()  # consume 'enum'
+                tag_token = self._expect(TokenType.IDENTIFIER)
+                enum_tag = tag_token.value
+                last_tok = tag_token
+                break  # enum tag exhausts the type-specifier sequence
             tok = self._consume()
             if tok.type == TokenType.LONG and (TokenType.LONG in seen or TokenType.LONG_LONG in seen):
                 # Second 'long' → synthesise LONG_LONG sentinel; reject a third.
@@ -646,7 +663,7 @@ class Parser:
             else:
                 seen.add(tok.type)
             last_tok = tok
-        return frozenset(seen), last_tok, struct_tag, union_tag
+        return frozenset(seen), last_tok, struct_tag, union_tag, enum_tag
 
     def _resolve_type(  # noqa: C901 - function too complex
         self,
@@ -654,6 +671,7 @@ class Parser:
         last_tok: Token | None,
         struct_tag: str | None = None,
         union_tag: str | None = None,
+        enum_tag: str | None = None,
     ) -> Type:
         """Map a set of consumed type-specifier token types to a ``Type`` node.
 
@@ -663,26 +681,30 @@ class Parser:
             last_tok: The final token consumed from the stream, used as the
                 error anchor when a conflict is detected.  Non-``None``
                 whenever ``seen`` is non-empty or ``struct_tag`` / ``union_tag``
-                is set.
+                / ``enum_tag`` is set.
             struct_tag: When a ``struct identifier`` pair was consumed this
                 is the tag name; in that case ``seen`` must be empty.
             union_tag: When a ``union identifier`` pair was consumed this
                 is the tag name; in that case ``seen`` must be empty.
+            enum_tag: When an ``enum identifier`` pair was consumed this is
+                the tag name; in that case ``seen`` must be empty.
 
         Returns:
             The ``Type`` node corresponding to the combination of specifiers.
 
         Raises:
-            ParseError: If ``seen`` is empty and both ``struct_tag`` and
-                ``union_tag`` are ``None``, if ``double`` is combined with any
-                other specifier, if ``signed`` and ``unsigned`` appear together,
-                or if ``char`` is combined with specifiers other than ``signed``
-                / ``unsigned``.
+            ParseError: If ``seen`` is empty and ``struct_tag``, ``union_tag``,
+                and ``enum_tag`` are all ``None``, if ``double`` is combined
+                with any other specifier, if ``signed`` and ``unsigned`` appear
+                together, or if ``char`` is combined with specifiers other than
+                ``signed`` / ``unsigned``.
         """
         if struct_tag is not None:
             return Structure(tag=struct_tag)
         if union_tag is not None:
             return Union(tag=union_tag)
+        if enum_tag is not None:
+            return EnumType(tag=enum_tag)
         if not seen:
             tok = self._peek()
             if tok is None:
@@ -806,6 +828,7 @@ class Parser:
         storage: StorageClass | None = None
         struct_tag: str | None = None
         union_tag: str | None = None
+        enum_tag: str | None = None
 
         while (peek := self._peek()) is not None and peek.type in _DECLARATION_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
             if peek.type == TokenType.TYPEDEF:
@@ -828,6 +851,14 @@ class Parser:
                 union_tag = tag_token.value
                 last_type_tok = tag_token
                 break  # union tag exhausts the type-specifier sequence
+            if peek.type == TokenType.ENUM:
+                if type_seen:
+                    raise self._token_error("'enum' cannot be combined with other type specifiers", peek)
+                self._consume()  # consume 'enum'
+                tag_token = self._expect(TokenType.IDENTIFIER)
+                enum_tag = tag_token.value
+                last_type_tok = tag_token
+                break  # enum tag exhausts the type-specifier sequence
             tok = self._consume()
             if tok.type in {TokenType.STATIC, TokenType.EXTERN}:
                 if storage is not None:
@@ -847,7 +878,7 @@ class Parser:
                 last_type_tok = tok
 
         # If no type specifiers were consumed yet, check for a typedef-name identifier.
-        if not type_seen and struct_tag is None and union_tag is None:
+        if not type_seen and struct_tag is None and union_tag is None and enum_tag is None:
             peek = self._peek()
             if peek is not None and peek.type == TokenType.IDENTIFIER:
                 resolved = self._lookup_typedef(peek.value)
@@ -855,7 +886,7 @@ class Parser:
                     self._consume()
                     return resolved, storage
 
-        return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag), storage
+        return self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag, enum_tag), storage
 
     def _parse_params(self) -> tuple[tuple[Parameter, ...], bool]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -1139,6 +1170,16 @@ class Parser:
                 and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
             ):
                 return self._parse_union_declaration()
+        if self._match(TokenType.ENUM):
+            next1 = self._peek(1)
+            next2 = self._peek(2)
+            if (
+                next1 is not None
+                and next1.type == TokenType.IDENTIFIER
+                and next2 is not None
+                and next2.type == TokenType.LBRACE
+            ):
+                return self._parse_enum_declaration()
 
         if self._match(TokenType.TYPEDEF):
             self._consume()  # consume 'typedef'
@@ -1259,6 +1300,66 @@ class Parser:
             members = tuple(members_list)
         self._expect(TokenType.SEMICOLON)
         return UnionDecl(union_declaration=UnionDeclaration(tag=tag_token.value, members=members))
+
+    def _parse_enum_declaration(self) -> EnumDecl:
+        """Parse an enum type declaration or definition.
+
+        Grammar::
+
+            enum-declaration ::= "enum" identifier "{" enumerator {"," enumerator} [","] "}" ";"
+            enumerator        ::= identifier ["=" integer-literal]
+
+        The tag is required (anonymous enums are not supported at file or block scope
+        via this dispatch path).  A body enclosed in braces is mandatory — enum forward
+        declarations are not permitted.  At least one enumerator must appear inside the
+        braces.  Enumerator values are computed at parse time: starting from 0, each
+        enumerator without an explicit value takes the previous value plus one.
+
+        Returns:
+            An ``EnumDecl`` node wrapping the ``EnumDeclaration``.
+
+        Raises:
+            ParseError: If the tag identifier or opening brace is missing, if the
+                brace-enclosed enumerator list is empty, or if the trailing semicolon
+                is absent.
+        """
+        self._expect(TokenType.ENUM)
+        tag_token = self._expect(TokenType.IDENTIFIER)
+        self._expect(TokenType.LBRACE)
+        if self._match(TokenType.RBRACE):
+            tok = self._peek()
+            msg = "enum definition must contain at least one enumerator"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+        members_list: list[EnumeratorDeclaration] = []
+        counter = 0
+        while True:
+            if self._peek() is None:
+                raise self._eof_error("expected '}', got end of input")
+            name_tok = self._expect(TokenType.IDENTIFIER)
+            if self._match(TokenType.ASSIGNMENT):
+                self._consume()  # consume '='
+                # Parse an optional unary minus followed by an integer literal.
+                negative = False
+                if self._match(TokenType.MINUS):
+                    self._consume()
+                    negative = True
+                val_tok = self._peek()
+                if val_tok is None or val_tok.type != TokenType.NUMBER:
+                    msg = "expected integer constant after '=' in enumerator"
+                    raise self._eof_error(msg) if val_tok is None else self._token_error(msg, val_tok)
+                self._consume()
+                counter = -self._parse_int_value(val_tok.value) if negative else self._parse_int_value(val_tok.value)
+            members_list.append(EnumeratorDeclaration(name=name_tok.value, value=counter))
+            counter += 1
+            if self._match(TokenType.COMMA):
+                self._consume()
+                if self._match(TokenType.RBRACE):  # trailing comma
+                    break
+            else:
+                break
+        self._expect(TokenType.RBRACE)
+        self._expect(TokenType.SEMICOLON)
+        return EnumDecl(enum_declaration=EnumDeclaration(tag=tag_token.value, members=tuple(members_list)))
 
     def _parse_member_declaration(self) -> MemberDeclaration:
         """Parse a single struct member declaration.
@@ -2081,8 +2182,8 @@ class Parser:
             if resolved is not None:
                 self._consume()
                 return resolved
-        seen, last_tok, struct_tag, union_tag = self._consume_type_specifiers()
-        return self._resolve_type(seen, last_tok, struct_tag, union_tag)
+        seen, last_tok, struct_tag, union_tag, enum_tag = self._consume_type_specifiers()
+        return self._resolve_type(seen, last_tok, struct_tag, union_tag, enum_tag)
 
     def _parse_abstract_declarator(self) -> Callable[[Type], Type]:
         """Parse an abstract declarator (no identifier) for use in cast expressions.

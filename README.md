@@ -14,7 +14,6 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `unsigned long` / `unsigned long long` | 64-bit unsigned integer (both are 8 bytes on x86-64 Linux) |
 | `short` / `signed short` / `unsigned short` | 16-bit integer; promotes to `int` for arithmetic (C11 §6.3.1.1) |
 | `char` / `signed char` / `unsigned char` | 8-bit character types |
-| `_Bool` | C99 boolean type (1 byte); any nonzero value converts to 1; promotes to `int` in arithmetic (C11 §6.3.1.1) |
 | `__int128` / `unsigned __int128` | GCC 128-bit extension; static variables and zero-initialisation supported; see note below |
 | `float` | 32-bit IEEE 754 floating-point; `f`/`F` suffix on literals |
 | `double` | 64-bit IEEE 754 floating-point |
@@ -24,6 +23,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; array decay |
 | `struct` | Named/anonymous structs; nested structs; compound initialisers |
 | `union` | Named/anonymous unions |
+| `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
 | Function pointers | `int (*fp)(int, int)` style; call through a pointer |
 
 Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant.
@@ -80,6 +80,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Function declarations and definitions (multiple per translation unit)
 - Variadic function declarations (`int printf(char *fmt, ...)`) — calling variadic functions is fully supported; System V AMD64 ABI `%al` register is set to the number of floating-point arguments used
 - Struct and union declarations and definitions
+- `enum` declarations and definitions; enumerator constants fold to `int` values at semantic analysis time; enumerator values may be integer literals, unary-negated literals, or references to previously-declared enumerators in the same definition
 - Storage classes: `static` and `extern`
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 
@@ -221,7 +222,7 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Integer types
 
-`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, `char` (all three signed/plain/unsigned variants), and `_Bool` are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above.
+`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above.
 
 ### Floating-point types
 
@@ -233,7 +234,7 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Other scalar types
 
-- **`enum`** (sec. 6.7.2.2) - enumeration types and enumerator constants. Enum types currently fail to parse; each enumerator must be replaced by a `#define` or `const int`.
+- **`_Bool`** (sec. 6.2.5 p2) - the standard boolean type; `true`/`false` via `<stdbool.h>`. Any non-zero value converts to 1 rather than being preserved.
 
 ### Type qualifiers
 
@@ -274,6 +275,14 @@ Neither is recognised.
 
 - **Designated initialisers** (sec. 6.7.9) - `{.x = 1, .y = 2}` for structs and `{[0] = 'a', [1] = 'b'}` for arrays. Currently all initialisers must supply values in declaration order with no field selectors.
 - **Compound literals** (sec. 6.5.2.5) - `(struct Point){1, 2}` as an rvalue expression. The cast-like syntax is not parsed.
+
+### Enum limitations
+
+`enum` is supported at both file scope and block scope. The following are not yet implemented:
+
+- **Full constant-expression enumerator values** — enumerator values must be integer literals, unary-negated literals, or references to a previously-declared enumerator in the same definition. Expressions involving `sizeof`, bitwise shifts, or cross-enum references are not evaluated.
+- **Inline enum definitions as part of a variable declaration** — `enum Color { RED } x;` is not yet supported. The enum must be declared separately (`enum Color { RED }; enum Color x;`).
+- **Anonymous enum type specifiers** — `enum { A, B }` as a standalone type (without a tag and without a trailing variable name) is parsed but the resulting anonymous type cannot be used in subsequent declarations.
 
 ### Struct and union features
 
