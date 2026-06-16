@@ -136,6 +136,7 @@ from compiler.syntax.tac.operators import (
     UnaryOperator,
 )
 from compiler.syntax.tac.values import (
+    BoolInit,
     CharInit,
     Constant,
     DoubleInit,
@@ -223,6 +224,7 @@ __all__ = [
     "Constant",
     "Var",
     "StaticInit",
+    "BoolInit",
     "CharInit",
     "ShortInit",
     "UShortInit",

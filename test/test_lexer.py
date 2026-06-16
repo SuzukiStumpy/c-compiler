@@ -894,3 +894,27 @@ def test_ellipsis_not_lexed_as_three_period_tokens(preprocess_c_file: Preprocess
     """``...`` must produce one ``ELLIPSIS`` token, not three ``PERIOD`` tokens."""
     tokens = lexer(preprocess_c_file("valid/variadic_decl.c"))
     assert not any(t.type == TokenType.PERIOD for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# _Bool keyword (BOOL)
+# ---------------------------------------------------------------------------
+
+
+def test_bool_keyword_produces_bool_token(preprocess_c_file: Preprocessor) -> None:
+    """``_Bool`` keyword is lexed as a ``BOOL`` token."""
+    tokens = lexer(preprocess_c_file("valid/bool_type.c"))
+    assert any(t.type == TokenType.BOOL for t in tokens)
+
+
+def test_bool_keyword_token_value_is_underscore_bool(preprocess_c_file: Preprocessor) -> None:
+    """Every ``BOOL`` token carries the literal text ``_Bool``."""
+    tokens = lexer(preprocess_c_file("valid/bool_type.c"))
+    assert all(t.value == "_Bool" for t in tokens if t.type == TokenType.BOOL)
+
+
+def test_identifier_with_bool_prefix_is_not_bool_keyword(preprocess_c_file: Preprocessor) -> None:
+    """``_Boolean`` starts with ``_Bool`` but must not be classified as ``BOOL``."""
+    tokens = lexer(preprocess_c_file("valid/bool_type.c"))
+    bool_vals = {t.value for t in tokens if t.type == TokenType.BOOL}
+    assert "_Boolean" not in bool_vals

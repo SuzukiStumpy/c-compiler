@@ -109,6 +109,7 @@ constructed an AST node cannot be modified.
 
 from compiler.syntax.ast.constants import (
     Const,
+    ConstBool,
     ConstChar,
     ConstDouble,
     ConstFloat,
@@ -223,6 +224,7 @@ from compiler.syntax.ast.statements import (
 )
 from compiler.syntax.ast.types import (
     Array,
+    BoolType,
     Char,
     DoubleType,
     FloatType,
@@ -292,6 +294,8 @@ __all__ = [
     "DoubleType",
     "FloatType",
     "LongDoubleType",
+    "BoolType",
+    "ConstBool",
     "ConstUInt",
     "ConstULong",
     "UIntType",

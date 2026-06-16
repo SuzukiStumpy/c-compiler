@@ -89,6 +89,16 @@ class LongDoubleType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class BoolType(Type):
+    """Represents the C ``_Bool`` type (C99 § 6.2.5 p2).
+
+    A 1-byte unsigned integer whose only valid values are 0 and 1.  Any
+    nonzero value assigned or converted to ``_Bool`` is normalised to 1.
+    The node carries no fields - its identity is its type alone.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class VoidType(Type):
     """Represents the C ``void`` type.
 

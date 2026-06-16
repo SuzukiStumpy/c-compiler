@@ -142,6 +142,9 @@ from itertools import count
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.types.symbols import (
+    BoolInit as SymBoolInit,
+)
+from compiler.types.symbols import (
     CharInit as SymCharInit,
 )
 from compiler.types.symbols import (
@@ -253,6 +256,8 @@ def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
         CodeGenerationError: If the init variant has no TAC equivalent.
     """
     match sym_init:
+        case SymBoolInit(value=v):
+            return tac.BoolInit(v)
         case SymIntInit(value=v):
             return tac.IntInit(v)
         case SymLongInit(value=v):
@@ -313,6 +318,8 @@ def _convert_symbols_to_tacky(  # noqa: C901 - function too complex
                 skip = False
                 for elem in inits:
                     match elem:
+                        case SymBoolInit(value=v):
+                            static_inits.append(tac.BoolInit(v))
                         case SymIntInit(value=v):
                             static_inits.append(tac.IntInit(v))
                         case SymLongInit(value=v):
@@ -460,7 +467,7 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
     Raises:
         CodeGenerationError: If the type is not recognised, or a struct tag is unknown.
     """
-    if isinstance(t, (ast.Char, ast.SChar, ast.UChar)):
+    if isinstance(t, (ast.BoolType, ast.Char, ast.SChar, ast.UChar)):
         return 1
     if isinstance(t, (ast.ShortType, ast.UShortType)):
         return 2
@@ -499,7 +506,7 @@ def _is_signed(t: ast.Type) -> bool:
     """
     if isinstance(t, (ast.IntType, ast.LongType, ast.LongLongType, ast.Char, ast.SChar)):
         return True
-    if isinstance(t, (ast.UIntType, ast.ULongType, ast.ULongLongType, ast.Pointer, ast.UChar)):
+    if isinstance(t, (ast.BoolType, ast.UIntType, ast.ULongType, ast.ULongLongType, ast.Pointer, ast.UChar)):
         return False
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 
@@ -823,6 +830,19 @@ class _TacGenerator:
         """
         if src_type == dst_type:
             return src, []
+        if isinstance(dst_type, ast.BoolType):
+            # Converting to _Bool normalises: nonzero -> 1, zero -> 0 (C99 §6.3.1.2).
+            dst = self._make_temp(dst_type)
+            label_false = self._make_label("to_bool_false")
+            label_end = self._make_label("to_bool_end")
+            return dst, [
+                tac.JumpIfZero(condition=src, target=label_false.name),
+                tac.Copy(src=tac.Constant(ast.ConstBool(1)), dst=dst),
+                tac.Jump(target=label_end.name),
+                label_false,
+                tac.Copy(src=tac.Constant(ast.ConstBool(0)), dst=dst),
+                label_end,
+            ]
         dst = self._make_temp(dst_type)
         if isinstance(dst_type, ast.LongDoubleType) and isinstance(src_type, ast.DoubleType):
             conv: tac.Instruction = tac.DoubleToLongDouble(src=src, dst=dst)
@@ -1584,6 +1604,19 @@ class _TacGenerator:
                 inner_type = inner.exp_type
                 if t == inner_type:
                     return result, inner_instrs
+                if isinstance(t, ast.BoolType):
+                    dst = self._make_temp(t)
+                    label_false = self._make_label("to_bool_false")
+                    label_end = self._make_label("to_bool_end")
+                    return dst, [
+                        *inner_instrs,
+                        tac.JumpIfZero(condition=result, target=label_false.name),
+                        tac.Copy(src=tac.Constant(ast.ConstBool(1)), dst=dst),
+                        tac.Jump(target=label_end.name),
+                        label_false,
+                        tac.Copy(src=tac.Constant(ast.ConstBool(0)), dst=dst),
+                        label_end,
+                    ]
                 dst = self._make_temp(t)
                 if isinstance(t, ast.LongDoubleType) and isinstance(inner_type, ast.DoubleType):
                     conv: tac.Instruction = tac.DoubleToLongDouble(src=result, dst=dst)

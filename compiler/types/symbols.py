@@ -122,6 +122,21 @@ class LongDoubleInit(StaticInit):
 
 
 @dataclass(frozen=True, slots=True)
+class BoolInit(StaticInit):
+    """1-byte ``_Bool`` initialiser element.
+
+    Only 0 and 1 are valid; any nonzero constant is normalised to 1 before
+    this node is constructed.  Never zero - use ``ZeroInit(1)`` for the
+    false (zero) value.
+
+    Attributes:
+        value: 1 (the only non-zero ``_Bool`` value).
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
 class CharInit(StaticInit):
     """1-byte signed character initialiser element (C ``char`` / ``signed char``).
 

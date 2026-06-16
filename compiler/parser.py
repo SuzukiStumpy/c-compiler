@@ -202,7 +202,7 @@ from compiler.syntax.ast import (
     VoidType,
     While,
 )
-from compiler.syntax.ast.types import Int128Type, ShortType
+from compiler.syntax.ast.types import BoolType, Int128Type, ShortType
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -256,6 +256,7 @@ _TYPE_SPECIFIER_TOKENS: frozenset[TokenType] = frozenset(
         TokenType.CHAR,
         TokenType.SHORT,
         TokenType.INT128,
+        TokenType.BOOL,
         TokenType.VOID,
         TokenType.STRUCT,
         TokenType.UNION,
@@ -704,6 +705,11 @@ class Parser:
                 assert last_tok is not None
                 raise self._token_error("'float' cannot be combined with other type specifiers", last_tok)
             return FloatType()
+        if TokenType.BOOL in seen:
+            assert last_tok is not None
+            if len(seen) > 1:
+                raise self._token_error("'_Bool' cannot be combined with other type specifiers", last_tok)
+            return BoolType()
         assert last_tok is not None
         if TokenType.SIGNED in seen and TokenType.UNSIGNED in seen:
             raise self._token_error("invalid type specifier: can't have both 'signed' and 'unsigned'", last_tok)

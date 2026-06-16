@@ -33,6 +33,7 @@ from compiler.syntax.ast.constants import ConstFloat, ConstLongDouble, ConstLong
 from compiler.syntax.ast.expressions import Binary, Var  # noqa: F401
 from compiler.syntax.ast.operators import Add, PostIncrement
 from compiler.syntax.ast.types import (
+    BoolType,
     FloatType,
     Int128Type,
     LongDoubleType,
@@ -1536,5 +1537,52 @@ class TestVariadicDeclarations:
         """``int foo(...)`` with no preceding named param raises ``ParseError``."""
         _ELLIPSIS = _tok(TokenType.ELLIPSIS, "...")
         tokens = [_INT, _ident("foo"), _LPAREN, _ELLIPSIS, _RPAREN, _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+
+# ---------------------------------------------------------------------------
+# _Bool type (BoolType)
+# ---------------------------------------------------------------------------
+
+_BOOL = _tok(TokenType.BOOL, "_Bool")
+
+
+class TestBoolType:
+    """Parser recognises the ``_Bool`` type specifier."""
+
+    def test_bool_variable_declaration(self) -> None:
+        """``_Bool x;`` at file scope produces a ``BoolType`` variable."""
+        tokens = [_BOOL, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.var_type == BoolType()
+
+    def test_bool_return_type(self) -> None:
+        """``_Bool foo(void) { return 0; }`` parses with a ``BoolType`` return."""
+        tokens = [_BOOL, _ident("foo"), _LPAREN, _VOID, _RPAREN, _LBRACE, _RETURN, _number("0"), _SEMICOLON, _RBRACE]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.ret == BoolType()
+
+    def test_bool_parameter_type(self) -> None:
+        """``int foo(_Bool x);`` parses with a ``BoolType`` parameter."""
+        tokens = [_INT, _ident("foo"), _LPAREN, _BOOL, _ident("x"), _RPAREN, _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, FunDecl)
+        assert decl.function_declaration.fun_type.params == (BoolType(),)
+
+    def test_bool_cannot_combine_with_int(self) -> None:
+        """``_Bool int x;`` is a type-specifier conflict and raises ``ParseError``."""
+        tokens = [_BOOL, _INT, _ident("x"), _SEMICOLON]
+        with pytest.raises(ParseError):
+            parse(tokens)
+
+    def test_bool_cannot_combine_with_unsigned(self) -> None:
+        """``unsigned _Bool x;`` is invalid and raises ``ParseError``."""
+        tokens = [_UNSIGNED, _BOOL, _ident("x"), _SEMICOLON]
         with pytest.raises(ParseError):
             parse(tokens)

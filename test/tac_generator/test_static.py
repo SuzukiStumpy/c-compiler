@@ -4,6 +4,7 @@ import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.tac_generator import _convert_symbols_to_tacky, generate
 from compiler.types.symbols import (
+    BoolInit,
     FloatInit,
     FunAttr,
     Initial,
@@ -467,3 +468,25 @@ class TestInt128StaticInit:
         symbols = {"x": SymbolTableEntry(t=ast.UInt128Type(), attrs=StaticAttr(init=Tentative(), globl=True))}
         result = _convert_symbols_to_tacky(symbols)
         assert result == [tac.StaticVariable(name="x", globl=True, t=ast.UInt128Type(), init=(tac.ZeroInit(16),))]
+
+
+class TestBoolStaticInit:
+    """``BoolInit`` symbol-table inits are lowered to ``tac.BoolInit``."""
+
+    def test_bool_init_nonzero_emits_bool_init(self) -> None:
+        """``BoolInit(1)`` lowers to ``tac.BoolInit(1)``."""
+        symbols = {"b": SymbolTableEntry(t=ast.BoolType(), attrs=StaticAttr(init=Initial((BoolInit(1),)), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="b", globl=False, t=ast.BoolType(), init=(tac.BoolInit(1),))]
+
+    def test_bool_zero_emits_zero_init(self) -> None:
+        """``ZeroInit(1)`` for a ``_Bool`` lowers to ``tac.ZeroInit(1)``."""
+        symbols = {"b": SymbolTableEntry(t=ast.BoolType(), attrs=StaticAttr(init=Initial((ZeroInit(1),)), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="b", globl=False, t=ast.BoolType(), init=(tac.ZeroInit(1),))]
+
+    def test_bool_tentative_emits_zero_init(self) -> None:
+        """Tentative ``_Bool`` emits ``ZeroInit(1)``."""
+        symbols = {"b": SymbolTableEntry(t=ast.BoolType(), attrs=StaticAttr(init=Tentative(), globl=False))}
+        result = _convert_symbols_to_tacky(symbols)
+        assert result == [tac.StaticVariable(name="b", globl=False, t=ast.BoolType(), init=(tac.ZeroInit(1),))]

@@ -10,7 +10,7 @@ import pytest
 import compiler.syntax.ast as ast
 from compiler.semantic_analysis import get_common_type, is_arithmetic, is_integer, resolve, type_alignment, type_size
 from compiler.syntax.ast.constants import ConstFloat, ConstLongDouble, ConstLongLong, ConstULongLong
-from compiler.syntax.ast.types import LongDoubleType
+from compiler.syntax.ast.types import BoolType, LongDoubleType
 from compiler.utils.exceptions import SemanticError
 from test.semantic_analysis.helpers import _make_prog, _program, _vd
 
@@ -694,3 +694,48 @@ class TestLongDoubleType:
         prog = _program(_return_exp(ast.Unary(ast.Complement(), ld_const)))
         with pytest.raises(SemanticError, match="integer operand"):
             resolve(prog)
+
+
+class TestBoolType:
+    """Semantic analysis handles ``_Bool`` as a 1-byte unsigned integer."""
+
+    def test_bool_size_is_1(self) -> None:
+        """``sizeof(_Bool)`` returns 1."""
+        assert type_size(BoolType(), {}) == 1
+
+    def test_bool_alignment_is_1(self) -> None:
+        """``_Bool`` has 1-byte alignment."""
+        assert type_alignment(BoolType(), {}) == 1
+
+    def test_bool_is_arithmetic(self) -> None:
+        """``BoolType`` is an arithmetic type."""
+        assert is_arithmetic(BoolType())
+
+    def test_bool_is_integer(self) -> None:
+        """``BoolType`` is an integer type (not floating-point)."""
+        assert is_integer(BoolType())
+
+    def test_bool_promotes_to_int_in_arithmetic(self) -> None:
+        """``_Bool + _Bool`` common type is ``IntType`` (integer promotion)."""
+        result = get_common_type(BoolType(), BoolType())
+        assert result == ast.IntType()
+
+    def test_bool_plus_int_gives_int(self) -> None:
+        """``_Bool + int`` common type is ``IntType``."""
+        result = get_common_type(BoolType(), ast.IntType())
+        assert result == ast.IntType()
+
+    def test_bool_plus_long_gives_long(self) -> None:
+        """``_Bool + long`` common type is ``LongType``."""
+        result = get_common_type(BoolType(), ast.LongType())
+        assert result == ast.LongType()
+
+    def test_bool_variable_declaration_resolves(self) -> None:
+        """``_Bool x = 0;`` resolves without error."""
+        prog = _program((_vd("x", ast.Constant(ast.ConstInt(0)), BoolType()),) + _return_exp(_int_const()))
+        resolve(prog)
+
+    def test_nonzero_int_assigned_to_bool_is_normalised(self) -> None:
+        """Assigning a nonzero int constant to ``_Bool`` resolves without error."""
+        prog = _program((_vd("x", ast.Constant(ast.ConstInt(5)), BoolType()),) + _return_exp(_int_const()))
+        resolve(prog)

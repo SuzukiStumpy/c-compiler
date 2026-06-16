@@ -54,6 +54,21 @@ class StaticInit(ABC):
 
 
 @dataclass(frozen=True, slots=True)
+class BoolInit(StaticInit):
+    """Initialiser for a static variable of C ``_Bool`` type.
+
+    Emits a single byte (``.byte v``) in the data segment.  Only 0 and 1
+    are valid; any nonzero constant is already normalised to 1 by the
+    semantic analysis stage.
+
+    Attributes:
+        value: 1 (the only non-zero ``_Bool`` value stored here).
+    """
+
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
 class CharInit(StaticInit):
     """Initialiser for a static variable of C ``char``, ``signed char``, or ``unsigned char`` type.
 

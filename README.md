@@ -14,6 +14,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `unsigned long` / `unsigned long long` | 64-bit unsigned integer (both are 8 bytes on x86-64 Linux) |
 | `short` / `signed short` / `unsigned short` | 16-bit integer; promotes to `int` for arithmetic (C11 §6.3.1.1) |
 | `char` / `signed char` / `unsigned char` | 8-bit character types |
+| `_Bool` | C99 boolean type (1 byte); any nonzero value converts to 1; promotes to `int` in arithmetic (C11 §6.3.1.1) |
 | `__int128` / `unsigned __int128` | GCC 128-bit extension; static variables and zero-initialisation supported; see note below |
 | `float` | 32-bit IEEE 754 floating-point; `f`/`F` suffix on literals |
 | `double` | 64-bit IEEE 754 floating-point |
@@ -220,7 +221,7 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Integer types
 
-`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above.
+`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, `char` (all three signed/plain/unsigned variants), and `_Bool` are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above.
 
 ### Floating-point types
 
@@ -232,7 +233,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Other scalar types
 
-- **`_Bool`** (sec. 6.2.5 p2) - the standard boolean type; `true`/`false` via `<stdbool.h>`. Any non-zero value converts to 1 rather than being preserved.
 - **`enum`** (sec. 6.7.2.2) - enumeration types and enumerator constants. Enum types currently fail to parse; each enumerator must be replaced by a `#define` or `const int`.
 
 ### Type qualifiers

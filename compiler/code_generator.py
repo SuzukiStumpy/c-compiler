@@ -62,6 +62,7 @@ import compiler.syntax.tac as tac
 from compiler.optimiser.asm_main import allocate_registers
 from compiler.semantic_analysis import type_size
 from compiler.syntax.ast.constants import (
+    ConstBool,
     ConstChar,
     ConstDouble,
     ConstFloat,
@@ -79,6 +80,7 @@ from compiler.syntax.ast.constants import (
 )
 from compiler.syntax.ast.types import Array as ArrayType
 from compiler.syntax.ast.types import (
+    BoolType,
     Char,
     DoubleType,
     FloatType,
@@ -158,7 +160,7 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
         ``Quadword`` for 64-bit values, ``Double`` for floating-point values.
     """
     match val:
-        case tac.Constant(value=ConstChar() | ConstUChar()):
+        case tac.Constant(value=ConstBool() | ConstChar() | ConstUChar()):
             return asm.Byte()
         case tac.Constant(value=ConstShort() | ConstUShort()):
             return asm.Word()
@@ -182,7 +184,7 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
                     return asm.Float()
                 case LongDoubleType():
                     return asm.LongDouble()
-                case Char() | SChar() | UChar():
+                case BoolType() | Char() | SChar() | UChar():
                     return asm.Byte()
                 case ShortType() | UShortType():
                     return asm.Word()
@@ -223,12 +225,19 @@ def _is_unsigned(val: tac.Val, symbol_table: SymbolTable | None = None) -> bool:
     """
     match val:
         case tac.Constant(
-            value=ConstUChar() | ConstUShort() | ConstUInt() | ConstULong() | ConstULongLong() | ConstUInt128()
+            value=ConstBool()
+            | ConstUChar()
+            | ConstUShort()
+            | ConstUInt()
+            | ConstULong()
+            | ConstULongLong()
+            | ConstUInt128()
         ):
             return True
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
             return isinstance(
-                symbol_table[name].t, (UChar, UShortType, UIntType, ULongType, ULongLongType, Pointer, UInt128Type)
+                symbol_table[name].t,
+                (BoolType, UChar, UShortType, UIntType, ULongType, ULongLongType, Pointer, UInt128Type),
             )
         case _:
             return False
@@ -610,7 +619,7 @@ def _type_size(t: Type, struct_type_table: StructTypeTable | None = None) -> int
         ``double``/pointer; element_size * count for arrays; ``StructEntry.size`` for
         struct types when ``struct_type_table`` is provided; 8 as a fallback otherwise.
     """
-    if isinstance(t, (Char, SChar, UChar)):
+    if isinstance(t, (BoolType, Char, SChar, UChar)):
         return 1
     if isinstance(t, (IntType, UIntType, FloatType)):
         return 4
@@ -668,6 +677,8 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
         CodeGenerationError: If the initialiser variant is not supported.
     """
     match init:
+        case tac.BoolInit(value=v):
+            return asm.CharInit(v)
         case tac.IntInit(value=v):
             return asm.IntInit(v)
         case tac.LongInit(value=v):
@@ -2838,7 +2849,8 @@ def _translate_val(
                 constants.append(asm.StaticConstant(identifier=label, alignment=16, init=asm.LongDoubleInit(v)))
             return asm.Data(label)
         case tac.Constant(
-            value=ConstInt(val=v)
+            value=ConstBool(val=v)
+            | ConstInt(val=v)
             | ConstLong(val=v)
             | ConstLongLong(val=v)
             | ConstUInt(val=v)

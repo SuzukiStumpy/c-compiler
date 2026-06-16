@@ -68,6 +68,7 @@ from compiler.syntax.ast.operators import (
 )
 from compiler.syntax.ast.types import (
     Array,
+    BoolType,
     Char,
     DoubleType,
     FloatType,
@@ -93,6 +94,7 @@ from compiler.syntax.ast.types import (
     VoidType,
 )
 from compiler.types.symbols import (
+    BoolInit,
     CharInit,
     ConstantAttr,
     DoubleInit,
@@ -126,6 +128,7 @@ from compiler.types.symbols import (
 from compiler.utils.exceptions import SemanticError
 
 _TYPE_SIZE: dict[type, int] = {
+    BoolType: 1,
     IntType: 4,
     UIntType: 4,
     LongType: 8,
@@ -146,7 +149,7 @@ _TYPE_SIZE: dict[type, int] = {
 _SIGNED_TYPES: frozenset[type] = frozenset({IntType, LongType, LongLongType, Int128Type})
 _CHAR_TYPES: tuple[type, ...] = (Char, SChar, UChar)
 # Types that undergo integer promotion to IntType before arithmetic (C11 §6.3.1.1).
-_PROMOTE_TO_INT: tuple[type, ...] = (Char, SChar, UChar, ShortType, UShortType)
+_PROMOTE_TO_INT: tuple[type, ...] = (BoolType, Char, SChar, UChar, ShortType, UShortType)
 
 
 def _round_up(n: int, align: int) -> int:
@@ -182,6 +185,8 @@ def type_alignment(t: Type, struct_type_table: StructTypeTable) -> int:
             ``struct_type_table`` (incomplete struct type).
     """
     match t:
+        case BoolType():
+            return 1
         case IntType() | UIntType():
             return 4
         case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
@@ -223,6 +228,8 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
             ``struct_type_table`` (incomplete struct type).
     """
     match t:
+        case BoolType():
+            return 1
         case IntType() | UIntType():
             return 4
         case LongType() | ULongType() | LongLongType() | ULongLongType() | DoubleType() | Pointer():
@@ -610,7 +617,7 @@ def validate_type_specifier(t: Type, struct_type_table: StructTypeTable) -> None
             return
 
 
-def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initializer:
+def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initializer:  # noqa: C901
     """Create a zero-valued, fully type-annotated ``Initializer`` for the given type.
 
     Used to pad aggregate initialisers that are shorter than their declared size
@@ -631,6 +638,8 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
         SemanticError: If ``t`` is a ``FunType`` or otherwise uninitializable type.
     """
     match t:
+        case BoolType():
+            return ast.SingleInit(ast.Constant(ast.ConstBool(0), exp_type=BoolType()))
         case IntType():
             return ast.SingleInit(ast.Constant(ast.ConstInt(0), exp_type=IntType()))
         case LongType():
@@ -729,6 +738,8 @@ def _make_static_init(t: Type | None, v: int | float) -> StaticInit:
         ``CharInit``, or ``UCharInit`` node.
     """
     match t:
+        case BoolType():
+            return ZeroInit(1) if int(v) == 0 else BoolInit(1)
         case DoubleType():
             fv = float(v)
             return ZeroInit(8) if fv == 0.0 and math.copysign(1.0, fv) > 0 else DoubleInit(fv)

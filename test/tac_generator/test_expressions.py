@@ -5,7 +5,7 @@ import pytest
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.syntax.ast.constants import ConstFloat, ConstLongDouble
-from compiler.syntax.ast.types import LongDoubleType
+from compiler.syntax.ast.types import BoolType, LongDoubleType
 from compiler.tac_generator import generate
 from compiler.utils.exceptions import CodeGenerationError
 from test.tac_generator.helpers import _body, _instrs_for_body, _program_returning
@@ -854,3 +854,35 @@ class TestFloatCasts:
         """``(double)long_double_val`` emits ``LongDoubleToDouble``."""
         instrs = self._cast(ast.DoubleType(), LongDoubleType(), ConstLongDouble(3.0))
         assert any(isinstance(i, tac.LongDoubleToDouble) for i in instrs)
+
+
+class TestBoolCasts:
+    """Casts to ``_Bool`` normalise via JumpIfZero rather than plain truncation."""
+
+    def _cast(self, target: ast.Type, src_type: ast.Type, const: ast.Const) -> tuple[tac.Instruction, ...]:
+        """Build a cast expression and return the generated TAC instructions."""
+        inner = ast.Constant(value=const, exp_type=src_type)
+        cast_exp = ast.Cast(target_type=target, exp=inner, exp_type=target)
+        return _body(cast_exp)
+
+    def test_int_to_bool_uses_jump_if_zero(self) -> None:
+        """``(_Bool)int_val`` emits a ``JumpIfZero`` normalisation sequence."""
+        instrs = self._cast(BoolType(), ast.IntType(), ast.ConstInt(5))
+        assert any(isinstance(i, tac.JumpIfZero) for i in instrs)
+
+    def test_int_to_bool_no_truncate(self) -> None:
+        """``(_Bool)int_val`` must NOT emit a bare ``Truncate`` (which would not normalise)."""
+        instrs = self._cast(BoolType(), ast.IntType(), ast.ConstInt(5))
+        assert not any(isinstance(i, tac.Truncate) for i in instrs)
+
+    def test_int_to_bool_copies_one_on_nonzero(self) -> None:
+        """The true branch of the ``_Bool`` normalisation copies the constant 1."""
+        instrs = self._cast(BoolType(), ast.IntType(), ast.ConstInt(5))
+        copies = [i for i in instrs if isinstance(i, tac.Copy)]
+        values = [i.src for i in copies if isinstance(i, tac.Copy)]
+        assert any(v == tac.Constant(ast.ConstBool(1)) for v in values)
+
+    def test_long_to_bool_uses_jump_if_zero(self) -> None:
+        """``(_Bool)long_val`` also uses the normalise-via-jump path."""
+        instrs = self._cast(BoolType(), ast.LongType(), ast.ConstLong(0))
+        assert any(isinstance(i, tac.JumpIfZero) for i in instrs)

@@ -169,6 +169,20 @@ class ConstLongDouble(Const):
 
 
 @dataclass(frozen=True, slots=True)
+class ConstBool(Const):
+    """Represents a ``_Bool`` constant within the C code.
+
+    Only 0 and 1 are valid values; any nonzero integer is normalised to 1
+    before this node is constructed.
+
+    Attributes:
+        val: 0 (false) or 1 (true).
+    """
+
+    val: int
+
+
+@dataclass(frozen=True, slots=True)
 class ConstChar(Const):
     """Represents a signed character constant within the C code
 
