@@ -10,10 +10,12 @@ from compiler.syntax.ast import (
     ConstInt,
     ConstLong,
     Dereference,
+    FunctionCall,
     IntType,
     LongType,
     Pointer,
     String,
+    Subscript,
     Unary,
 )
 from compiler.syntax.ast.expressions import Assignment, Binary, Conditional, Var
@@ -54,6 +56,7 @@ from test.parser.helpers import (
     _BITWISE_NOT,
     _CARET,
     _COLON,
+    _COMMA,
     _DECREMENT,
     _DIVIDE,
     _EQ,
@@ -62,6 +65,7 @@ from test.parser.helpers import (
     _INCREMENT,
     _INT,
     _LBRACE,
+    _LBRACKET,
     _LEQ,
     _LONG,
     _LPAREN,
@@ -76,6 +80,7 @@ from test.parser.helpers import (
     _PLUS,
     _QUERY,
     _RBRACE,
+    _RBRACKET,
     _RETURN,
     _RPAREN,
     _RSHIFT,
@@ -717,3 +722,74 @@ class TestAlternateIntegerLiteralBases:
     def test_binary_uppercase_prefix_parses_to_correct_int_value(self) -> None:
         """``0B1100`` -> ``Constant(ConstInt(12))``."""
         assert _parsed_exp(_number("0B1100")) == Constant(ConstInt(12))
+
+
+# ---------------------------------------------------------------------------
+# Function pointer call expressions (postfix call on non-identifier primaries)
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionPointerCallExpressions:
+    """Parser correctly builds ``FunctionCall`` nodes when the callee is a non-identifier expression.
+
+    These tests cover calls through explicit dereferences (``(*fp)(args)``),
+    calls through subscript results (``arr[i](args)``), and chained calls
+    (``get_fn()(args)``).  All require the postfix-``(`` branch in the
+    primary-expression parser.
+    """
+
+    def test_call_through_dereferenced_pointer_no_args(self) -> None:
+        """``return (*fp)();`` -> ``FunctionCall(callee=Dereference(Var("fp")), args=[])``."""
+        result = _parsed_exp(_LPAREN, _ASTERISK, _ident("fp"), _RPAREN, _LPAREN, _RPAREN)
+        assert result == FunctionCall(callee=Dereference(Var("fp")), args=[])
+
+    def test_call_through_dereferenced_pointer_one_arg(self) -> None:
+        """``return (*fp)(x);`` -> ``FunctionCall(callee=Dereference(Var("fp")), args=[Var("x")])``."""
+        result = _parsed_exp(_LPAREN, _ASTERISK, _ident("fp"), _RPAREN, _LPAREN, _ident("x"), _RPAREN)
+        assert result == FunctionCall(callee=Dereference(Var("fp")), args=[Var("x")])
+
+    def test_call_through_dereferenced_pointer_two_args(self) -> None:
+        """``return (*fp)(x, y);`` -> two-element args list."""
+        result = _parsed_exp(
+            _LPAREN,
+            _ASTERISK,
+            _ident("fp"),
+            _RPAREN,
+            _LPAREN,
+            _ident("x"),
+            _COMMA,
+            _ident("y"),
+            _RPAREN,
+        )
+        assert result == FunctionCall(callee=Dereference(Var("fp")), args=[Var("x"), Var("y")])
+
+    def test_call_through_subscript_result(self) -> None:
+        """``return arr[0](x);`` -> ``FunctionCall(callee=Subscript(...), args=[Var("x")])``."""
+        result = _parsed_exp(
+            _ident("arr"),
+            _LBRACKET,
+            _number("0"),
+            _RBRACKET,
+            _LPAREN,
+            _ident("x"),
+            _RPAREN,
+        )
+        assert result == FunctionCall(
+            callee=Subscript(exp1=Var("arr"), exp2=Constant(ConstInt(0))),
+            args=[Var("x")],
+        )
+
+    def test_chained_postfix_calls(self) -> None:
+        """``return get_fn()(x);`` -> ``FunctionCall(callee=FunctionCall(Var("get_fn"), []), args=[Var("x")])``."""
+        result = _parsed_exp(
+            _ident("get_fn"),
+            _LPAREN,
+            _RPAREN,
+            _LPAREN,
+            _ident("x"),
+            _RPAREN,
+        )
+        assert result == FunctionCall(
+            callee=FunctionCall(callee=Var("get_fn"), args=[]),
+            args=[Var("x")],
+        )

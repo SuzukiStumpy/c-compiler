@@ -1957,6 +1957,20 @@ class Parser:
             case _:
                 raise self._token_error("Syntax error: Malformed expression.", token)
 
+        return self._apply_postfix_operators(primary)
+
+    def _apply_postfix_operators(self, primary: Exp) -> Exp:
+        """Repeatedly apply any postfix operators to *primary* and return the result.
+
+        Handles postfix ``++``/``--``, subscript ``[]``, member access ``.``/``->``,
+        and postfix function calls ``()``.
+
+        Args:
+            primary: The already-parsed primary expression.
+
+        Returns:
+            The expression after all postfix operators have been applied.
+        """
         while True:
             if self._match(TokenType.INCREMENT):
                 self._consume()
@@ -1977,6 +1991,16 @@ class Parser:
                 self._consume()
                 member_token = self._expect(TokenType.IDENTIFIER)
                 primary = Arrow(pointer=primary, member=member_token.value)
+            elif self._match(TokenType.LPAREN):
+                self._consume()
+                args: list[Exp] = []
+                if not self._match(TokenType.RPAREN):
+                    args.append(self._parse_exp())
+                    while self._match(TokenType.COMMA):
+                        self._consume()
+                        args.append(self._parse_exp())
+                self._expect(TokenType.RPAREN)
+                primary = FunctionCall(callee=primary, args=args)
             else:
                 return primary
 

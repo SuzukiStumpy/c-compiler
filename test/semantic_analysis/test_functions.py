@@ -1112,3 +1112,162 @@ class TestVariadicFunctions:
         entry = analyser._symbol_table["printf"]
         assert isinstance(entry.t, ast.FunType)
         assert entry.t.variadic is True
+
+
+# ---------------------------------------------------------------------------
+# Function pointer call resolution
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionPointerCalls:
+    """Function pointer variables may be called directly (``fp(args)``) or through an explicit
+    dereference (``(*fp)(args)``), and both forms resolve and type-check without error.
+    """
+
+    def _fun_ptr_type(
+        self,
+        params: tuple[ast.Type, ...] = (ast.IntType(),),
+        ret: ast.Type | None = None,
+    ) -> ast.Pointer:
+        """Return a ``Pointer(FunType(...))`` type for use in test declarations.
+
+        Args:
+            params: Parameter types of the pointed-to function; defaults to ``(IntType(),)``.
+            ret: Return type; defaults to ``IntType()``.
+
+        Returns:
+            A ``Pointer`` wrapping the described ``FunType``.
+        """
+        return ast.Pointer(ast.FunType(params=params, ret=ret or ast.IntType()))
+
+    def test_call_through_function_pointer_variable_resolves(self) -> None:
+        """``fp(1)`` where ``fp`` is ``int (*)(int)`` resolves without error."""
+        body = (
+            _vd("fp", var_type=self._fun_ptr_type()),
+            ast.S(
+                ast.Return(
+                    ast.FunctionCall(
+                        callee=ast.Var("fp"),
+                        args=[ast.Constant(ast.ConstInt(1))],
+                    )
+                )
+            ),
+        )
+        resolve(_program(body))
+
+    def test_call_through_dereferenced_function_pointer_resolves(self) -> None:
+        """``(*fp)(1)`` where ``fp`` is ``int (*)(int)`` resolves without error."""
+        body = (
+            _vd("fp", var_type=self._fun_ptr_type()),
+            ast.S(
+                ast.Return(
+                    ast.FunctionCall(
+                        callee=ast.Dereference(ast.Var("fp")),
+                        args=[ast.Constant(ast.ConstInt(1))],
+                    )
+                )
+            ),
+        )
+        resolve(_program(body))
+
+    def test_call_through_function_pointer_returns_correct_type(self) -> None:
+        """A call through a ``int (*)(int)`` pointer returns an ``int``-typed expression."""
+        body = (
+            _vd("fp", var_type=self._fun_ptr_type()),
+            _vd("x", var_type=ast.IntType()),
+            ast.S(
+                ast.Return(
+                    ast.FunctionCall(
+                        callee=ast.Var("fp"),
+                        args=[ast.Constant(ast.ConstInt(1))],
+                    )
+                )
+            ),
+        )
+        prog = resolve(_program(body))
+        fn = prog.declarations[0]
+        assert isinstance(fn, ast.FunDecl)
+        ret_stmt = fn.function_declaration.body[-1]
+        assert isinstance(ret_stmt, ast.S)
+        assert isinstance(ret_stmt.statement, ast.Return)
+        assert ret_stmt.statement.exp.exp_type == ast.IntType()
+
+    def test_call_through_function_pointer_wrong_arg_count_raises(self) -> None:
+        """Calling a ``int (*)(int)`` pointer with zero args raises ``SemanticError``."""
+        body = (
+            _vd("fp", var_type=self._fun_ptr_type()),
+            ast.S(ast.Return(ast.FunctionCall(callee=ast.Var("fp"), args=[]))),
+        )
+        with pytest.raises(SemanticError):
+            resolve(_program(body))
+
+    def test_call_through_function_pointer_too_many_args_raises(self) -> None:
+        """Calling a ``int (*)(int)`` pointer with two args raises ``SemanticError``."""
+        body = (
+            _vd("fp", var_type=self._fun_ptr_type()),
+            ast.S(
+                ast.Return(
+                    ast.FunctionCall(
+                        callee=ast.Var("fp"),
+                        args=[ast.Constant(ast.ConstInt(1)), ast.Constant(ast.ConstInt(2))],
+                    )
+                )
+            ),
+        )
+        with pytest.raises(SemanticError):
+            resolve(_program(body))
+
+    def test_call_through_non_function_pointer_raises(self) -> None:
+        """Calling a plain ``int`` variable as a function raises ``SemanticError``."""
+        body = (
+            _vd("x", var_type=ast.IntType()),
+            ast.S(ast.Return(ast.FunctionCall(callee=ast.Var("x"), args=[]))),
+        )
+        with pytest.raises(SemanticError):
+            resolve(_program(body))
+
+    def test_function_pointer_call_zero_params_resolves(self) -> None:
+        """``fp()`` where ``fp`` is ``int (*)(void)`` resolves without error."""
+        body = (
+            _vd("fp", var_type=self._fun_ptr_type(params=())),
+            ast.S(ast.Return(ast.FunctionCall(callee=ast.Var("fp"), args=[]))),
+        )
+        resolve(_program(body))
+
+    def test_function_address_assigned_to_pointer_resolves(self) -> None:
+        """``int (*fp)(int) = add;`` where ``add`` is a declared function resolves without error."""
+        add_decl = ast.FunDecl(
+            ast.Function(
+                name="add",
+                params=(ast.Parameter(ast.IntType(), "a"),),
+                body=None,
+                fun_type=ast.FunType(params=(ast.IntType(),), ret=ast.IntType()),
+            )
+        )
+        main_fn = ast.FunDecl(
+            ast.Function(
+                name="main",
+                params=(),
+                body=(
+                    ast.D(
+                        ast.VarDecl(
+                            ast.VariableDeclaration(
+                                "fp",
+                                ast.Var("add"),
+                                ast.Pointer(ast.FunType(params=(ast.IntType(),), ret=ast.IntType())),
+                            )
+                        )
+                    ),
+                    ast.S(
+                        ast.Return(
+                            ast.FunctionCall(
+                                callee=ast.Var("fp"),
+                                args=[ast.Constant(ast.ConstInt(5))],
+                            )
+                        )
+                    ),
+                ),
+                fun_type=ast.FunType(params=(), ret=ast.IntType()),
+            )
+        )
+        resolve(ast.Program(declarations=(add_decl, main_fn)))

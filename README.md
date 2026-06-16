@@ -25,7 +25,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `union` | Named/anonymous unions |
 | `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
 | `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
-| Function pointers | `int (*fp)(int, int)` style; call through a pointer |
+| Function pointers | `int (*fp)(int, int)` style; call via `fp(args)` or `(*fp)(args)`; pass/return by value |
 
 Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant.
 

@@ -40,6 +40,7 @@ from compiler.syntax.ast.types import (
     LongDoubleType,
     LongLongType,
     LongType,
+    Pointer,
     SChar,
     ShortType,
     UChar,
@@ -3213,3 +3214,186 @@ class TestVariadicCallAlRegister:
         al_reg = asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)
         al_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == al_reg]
         assert not al_movs, "non-variadic call must not set %al"
+
+
+# ---------------------------------------------------------------------------
+# Function pointer indirect call code generation
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionPointerIndirectCall:
+    """A ``FunCall`` whose ``fun_val`` names a ``Pointer(FunType(...))`` variable
+    must emit an ``IndirectCall`` instruction, not a direct ``Call``.
+    """
+
+    def _fp_call_program(self, fp_name: str = "fp") -> tac.Program:
+        """Build a ``tac.Program`` that calls through a function pointer variable.
+
+        Args:
+            fp_name: Name of the function pointer variable used as ``fun_val``.
+
+        Returns:
+            A minimal program whose sole function calls ``fp_name`` with one integer arg.
+        """
+        return tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var(fp_name),
+                            args=(tac.Constant(ConstInt(1)),),
+                            dst=tac.Var("result"),
+                        ),
+                        tac.Return(val=tac.Var("result")),
+                    ),
+                ),
+            )
+        )
+
+    def _fp_symbol_table(self, fp_name: str = "fp") -> SymbolTable:
+        """Build a symbol table marking *fp_name* as a local ``Pointer(FunType)`` variable.
+
+        Args:
+            fp_name: The function pointer variable name.
+
+        Returns:
+            A ``SymbolTable`` with a ``LocalAttr`` entry for *fp_name* and ``result``.
+        """
+        return {
+            fp_name: SymbolTableEntry(
+                t=Pointer(FunType(params=(IntType(),), ret=IntType())),
+                attrs=LocalAttr(),
+            ),
+            "result": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+
+    def test_function_pointer_call_emits_indirect_call(self) -> None:
+        """``FunCall`` through a ``Pointer(FunType)`` local variable emits ``IndirectCall``."""
+        instrs = _fn_instructions_with_table(self._fp_call_program(), self._fp_symbol_table())
+        indirect = [i for i in instrs if isinstance(i, asm.IndirectCall)]
+        assert len(indirect) == 1, f"expected one IndirectCall, got {len(indirect)}"
+
+    def test_function_pointer_call_does_not_emit_direct_call(self) -> None:
+        """A function pointer call must not emit a direct ``Call`` instruction."""
+        instrs = _fn_instructions_with_table(self._fp_call_program(), self._fp_symbol_table())
+        direct = [i for i in instrs if isinstance(i, asm.Call)]
+        assert not direct, f"expected no direct Call, got {direct}"
+
+    def test_direct_function_call_still_emits_call(self) -> None:
+        """A ``FunCall`` with a ``FunAttr`` callee still emits a direct ``Call`` (regression)."""
+        st: SymbolTable = {
+            "add": SymbolTableEntry(
+                t=FunType(params=(IntType(),), ret=IntType()),
+                attrs=FunAttr(defined=False, globl=True),
+            ),
+            "result": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var("add"),
+                            args=(tac.Constant(ConstInt(1)),),
+                            dst=tac.Var("result"),
+                        ),
+                        tac.Return(val=tac.Var("result")),
+                    ),
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        direct = [i for i in instrs if isinstance(i, asm.Call)]
+        indirect = [i for i in instrs if isinstance(i, asm.IndirectCall)]
+        assert len(direct) == 1, f"expected one direct Call, got {len(direct)}"
+        assert not indirect, f"expected no IndirectCall, got {indirect}"
+
+    def test_function_pointer_call_loads_pointer_into_r10(self) -> None:
+        """The function pointer is loaded into ``%r10`` before the indirect call."""
+        instrs = _fn_instructions_with_table(self._fp_call_program(), self._fp_symbol_table())
+        r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+        call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.IndirectCall))
+        pre_call = instrs[:call_idx]
+        r10_loads = [i for i in pre_call if isinstance(i, asm.Mov) and i.dst == r10q]
+        assert r10_loads, "expected a Mov into %r10 before the IndirectCall"
+
+    def test_variadic_function_pointer_sets_al(self) -> None:
+        """A call through a variadic ``Pointer(FunType(..., variadic=True))`` sets ``%al``."""
+        fp_name = "vfp"
+        st: SymbolTable = {
+            fp_name: SymbolTableEntry(
+                t=Pointer(FunType(params=(IntType(),), ret=IntType(), variadic=True)),
+                attrs=LocalAttr(),
+            ),
+            "result": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+        program = self._fp_call_program(fp_name)
+        instrs = _fn_instructions_with_table(program, st)
+        al_reg = asm.Register(asm.GPRegisters.AX, asm.Width.BYTE)
+        al_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.dst == al_reg]
+        assert al_movs, "expected movb $N, %al for variadic function pointer call"
+
+
+# ---------------------------------------------------------------------------
+# Passing a function name as a function-pointer argument
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionNameAsArgument:
+    """When a function name (``FunAttr`` entry) is passed as a call argument it must
+    be loaded via ``leaq`` (address-of), not ``movq`` (value-at), so the called
+    function receives a valid code pointer rather than bytes of machine code.
+    """
+
+    def _apply_call_program(self) -> tac.Program:
+        """Build a program that passes ``mul`` (a function name) as the first arg to ``apply``."""
+        return tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    body=(
+                        tac.FunCall(
+                            fun_val=tac.Var("apply"),
+                            args=(tac.Var("mul"), tac.Constant(ConstInt(3)), tac.Constant(ConstInt(4))),
+                            dst=tac.Var("result"),
+                        ),
+                        tac.Return(val=tac.Var("result")),
+                    ),
+                ),
+            )
+        )
+
+    def _apply_symbol_table(self) -> SymbolTable:
+        """Symbol table: ``apply`` and ``mul`` are declared functions; ``result`` is a local."""
+        return {
+            "apply": SymbolTableEntry(
+                t=FunType(
+                    params=(Pointer(FunType(params=(IntType(), IntType()), ret=IntType())), IntType(), IntType()),
+                    ret=IntType(),
+                ),
+                attrs=FunAttr(defined=False, globl=True),
+            ),
+            "mul": SymbolTableEntry(
+                t=FunType(params=(IntType(), IntType()), ret=IntType()),
+                attrs=FunAttr(defined=False, globl=True),
+            ),
+            "result": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+
+    def test_function_name_arg_uses_lea_not_mov_data(self) -> None:
+        """``mul`` passed as an argument must produce a ``Lea`` instruction, not a ``Mov(Data(...))``."""
+        instrs = _fn_instructions_with_table(self._apply_call_program(), self._apply_symbol_table())
+        mul_data = asm.Data("mul")
+        bad_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.src == mul_data]
+        assert not bad_movs, f"found Mov(Data('mul'), ...) — should be Lea: {bad_movs}"
+
+    def test_function_name_arg_emits_lea(self) -> None:
+        """A ``Lea`` instruction loading the address of ``mul`` must appear before the call."""
+        instrs = _fn_instructions_with_table(self._apply_call_program(), self._apply_symbol_table())
+        call_idx = next(i for i, instr in enumerate(instrs) if isinstance(instr, asm.Call))
+        pre_call = instrs[:call_idx]
+        mul_data = asm.Data("mul")
+        leas = [i for i in pre_call if isinstance(i, asm.Lea) and i.src == mul_data]
+        assert leas, "expected Lea(Data('mul'), ...) before the call"

@@ -177,7 +177,7 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
             return asm.LongDouble()
         case tac.Var(value=name) if symbol_table is not None and name in symbol_table:
             match symbol_table[name].t:
-                case LongType() | ULongType() | LongLongType() | ULongLongType() | Pointer():
+                case LongType() | ULongType() | LongLongType() | ULongLongType() | Pointer() | FunType():
                     return asm.Quadword()
                 case DoubleType():
                     return asm.Double()
@@ -2634,6 +2634,15 @@ def _translate_funcall(
                 else:
                     instrs.append(asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=r10d))
                 instrs.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
+            elif (
+                isinstance(arg, tac.Var)
+                and symbol_table is not None
+                and arg.value in symbol_table
+                and isinstance(symbol_table[arg.value].attrs, FunAttr)
+            ):
+                # Function name used as a value: get address via leaq before pushing.
+                instrs.append(asm.Lea(src=_translate_val(arg, constants), dst=r10q))
+                instrs.append(asm.Push(operand=r10q, assembly_type=asm.Quadword()))
             else:
                 instrs.append(asm.Push(operand=_translate_val(arg, constants), assembly_type=at))
 
@@ -2678,6 +2687,19 @@ def _translate_funcall(
                             asm.Movsx(src_type=asm.Byte(), dst_type=asm.Longword(), src=src_asm, dst=reg_dword)
                         )
                     byte_arg_in_reg[arg] = reg_dword
+            elif (
+                isinstance(arg, tac.Var)
+                and symbol_table is not None
+                and arg.value in symbol_table
+                and isinstance(symbol_table[arg.value].attrs, FunAttr)
+            ):
+                # Function name used as a value: load the address with leaq, not movq.
+                instrs.append(
+                    asm.Lea(
+                        src=_translate_val(arg, constants),
+                        dst=asm.Register(_ABI_REGS[i], asm.Width.QWORD),
+                    )
+                )
             else:
                 instrs.append(
                     asm.Mov(

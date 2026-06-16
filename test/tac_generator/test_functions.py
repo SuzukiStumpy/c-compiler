@@ -290,3 +290,58 @@ class TestTacGeneratorFunctionCall:
         assert unaries[0].src == tac.Constant(value=ast.ConstInt(1))
         assert unaries[1].src == tac.Constant(value=ast.ConstInt(2))
         assert funcall.args == (unaries[0].dst, unaries[1].dst)
+
+
+# ---------------------------------------------------------------------------
+# Function pointer call TAC generation
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionPointerCallTac:
+    """``ast.FunctionCall`` with a function-pointer callee lowers to ``tac.FunCall``
+    with the pointer variable as ``fun_val``; an explicit dereference is stripped.
+    """
+
+    def _fun_ptr_type(self) -> ast.Pointer:
+        """Return ``int (*)(int)`` as an AST type."""
+        return ast.Pointer(ast.FunType(params=(ast.IntType(),), ret=ast.IntType()))
+
+    def test_direct_pointer_call_uses_var_as_fun_val(self) -> None:
+        """``fp(1)`` where ``fp`` has type ``Pointer(FunType)`` emits ``FunCall(fun_val=Var("fp"), ...)``."""
+        fp_type = self._fun_ptr_type()
+        call = ast.FunctionCall(
+            callee=ast.Var("fp", exp_type=fp_type),
+            args=[ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())],
+            exp_type=ast.IntType(),
+        )
+        instrs = _body(call)
+        funcalls = [i for i in instrs if isinstance(i, tac.FunCall)]
+        assert len(funcalls) == 1
+        assert funcalls[0].fun_val == tac.Var("fp")
+
+    def test_dereferenced_pointer_call_strips_dereference(self) -> None:
+        """``(*fp)(1)`` emits the same ``FunCall(fun_val=Var("fp"), ...)`` — the ``Dereference`` is stripped."""
+        fp_type = self._fun_ptr_type()
+        inner = ast.Var("fp", exp_type=fp_type)
+        deref = ast.Dereference(inner, exp_type=ast.FunType(params=(ast.IntType(),), ret=ast.IntType()))
+        call = ast.FunctionCall(
+            callee=deref,
+            args=[ast.Constant(ast.ConstInt(1), exp_type=ast.IntType())],
+            exp_type=ast.IntType(),
+        )
+        instrs = _body(call)
+        funcalls = [i for i in instrs if isinstance(i, tac.FunCall)]
+        assert len(funcalls) == 1
+        assert funcalls[0].fun_val == tac.Var("fp")
+
+    def test_pointer_call_arg_is_passed_correctly(self) -> None:
+        """The argument value is forwarded to ``FunCall.args`` unchanged."""
+        fp_type = self._fun_ptr_type()
+        call = ast.FunctionCall(
+            callee=ast.Var("fp", exp_type=fp_type),
+            args=[ast.Constant(ast.ConstInt(42), exp_type=ast.IntType())],
+            exp_type=ast.IntType(),
+        )
+        instrs = _body(call)
+        funcall = next(i for i in instrs if isinstance(i, tac.FunCall))
+        assert funcall.args == (tac.Constant(ast.ConstInt(42)),)
