@@ -366,6 +366,32 @@ class TestBitFieldMemberDeclaration:
                 _SEMICOLON,
             )
 
+    def test_struct_member_no_declarator_is_parse_error(self) -> None:
+        """``struct s { int; };`` is rejected: a non-bit-field member must have a declarator."""
+        with pytest.raises(ParseError):
+            _parse_top(
+                _STRUCT,
+                _ident("S"),
+                _LBRACE,
+                _INT,
+                _SEMICOLON,
+                _RBRACE,
+                _SEMICOLON,
+            )
+
+    def test_union_member_no_declarator_is_parse_error(self) -> None:
+        """``union u { int; };`` is rejected: a non-bit-field member must have a declarator."""
+        with pytest.raises(ParseError):
+            _parse_top(
+                _tok(TokenType.UNION, "union"),
+                _ident("U"),
+                _LBRACE,
+                _INT,
+                _SEMICOLON,
+                _RBRACE,
+                _SEMICOLON,
+            )
+
     def test_regular_member_has_no_bit_width(self) -> None:
         """Regular members have bit_width=None."""
         prog = _parse_top(

@@ -1432,8 +1432,9 @@ class Parser:
 
         Raises:
             ParseError: If the type specifier is absent, if a function-type
-                declarator is present, if the trailing semicolon is missing, or
-                if a zero-width bit-field carries a name.
+                declarator is present, if the trailing semicolon is missing,
+                if a zero-width bit-field carries a name, or if the member has
+                neither a declarator nor a bit-field colon (e.g. ``int;``).
         """
         base_type = self._parse_type()
 
@@ -1460,6 +1461,10 @@ class Parser:
             bit_width = int(width_tok.value)
             if bit_width == 0 and name is not None:
                 raise self._token_error("zero-width bit-field must be unnamed (C11 §6.7.2.1p3)", width_tok)
+        elif name is None:
+            err_tok = self._peek()
+            msg = "struct/union member must have a declarator or be a bit-field"
+            raise self._token_error(msg, err_tok) if err_tok is not None else self._eof_error(msg)
 
         self._expect(TokenType.SEMICOLON)
         return MemberDeclaration(member_name=name, member_type=full_type, bit_width=bit_width)
