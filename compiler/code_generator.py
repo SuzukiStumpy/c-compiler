@@ -1828,6 +1828,44 @@ def _translate_instruction(
                 )
                 instrs.append(asm.Lea(src=asm.Indexed(r11, r10, 1), dst=dst_asm))
             return instrs
+        case tac.GetBitField(
+            src=bf_src,
+            byte_offset=bf_byte_off,
+            bit_offset=bf_bit_off,
+            bit_width=bf_width,
+            unit_size=bf_unit_size,
+            signed=bf_signed,
+            dst=bf_dst,
+        ):
+            return _lower_get_bit_field(
+                bf_src,
+                bf_byte_off,
+                bf_bit_off,
+                bf_width,
+                bf_unit_size,
+                bf_signed,
+                bf_dst,
+                symbol_table,
+                constants,
+            )
+        case tac.SetBitField(
+            src=bf_src_val,
+            dst=bf_dst_name,
+            byte_offset=bf_byte_off,
+            bit_offset=bf_bit_off,
+            bit_width=bf_width,
+            unit_size=bf_unit_size,
+        ):
+            return _lower_set_bit_field(
+                bf_src_val,
+                bf_dst_name,
+                bf_byte_off,
+                bf_bit_off,
+                bf_width,
+                bf_unit_size,
+                symbol_table,
+                constants,
+            )
         case _:
             raise CodeGenerationError(f"unsupported TAC instruction: {type(instr).__name__}")
 
@@ -2231,6 +2269,166 @@ def _struct_src_operand(name: str, offset: int, is_static: bool) -> asm.Operand:
         for locals.
     """
     return asm.Data(name, offset=offset) if is_static else asm.PseudoMem(name, offset)
+
+
+def _bf_asm_type(unit_size: int) -> asm.AssemblyType:
+    """Return the assembly type that matches a bit-field storage unit size.
+
+    Args:
+        unit_size: The storage unit size in bytes (1, 2, 4, or 8).
+
+    Returns:
+        The corresponding ``AssemblyType`` instance.
+
+    Raises:
+        CodeGenerationError: If ``unit_size`` is not one of the supported sizes.
+    """
+    match unit_size:
+        case 1:
+            return asm.Byte()
+        case 2:
+            return asm.Word()
+        case 4:
+            return asm.Longword()
+        case 8:
+            return asm.Quadword()
+        case _:
+            raise CodeGenerationError(f"unsupported bit-field unit size: {unit_size}")
+
+
+def _lower_get_bit_field(
+    src: str,
+    byte_offset: int,
+    bit_offset: int,
+    bit_width: int,
+    unit_size: int,
+    signed: bool,
+    dst: tac.Val,
+    symbol_table: SymbolTable | None,
+    constants: dict[str, asm.StaticConstant],
+) -> list[asm.Instruction]:
+    """Lower a ``GetBitField`` TAC instruction to assembly.
+
+    For unsigned fields: loads the storage unit, shifts right by ``bit_offset``,
+    then ANDs with a bit-width mask.
+    For signed fields: loads the storage unit, then uses a paired left-shift /
+    arithmetic-right-shift to sign-extend the field to the full register width.
+
+    Args:
+        src: Name of the aggregate variable.
+        byte_offset: Byte offset of the storage unit within ``src``.
+        bit_offset: Bit position of the LSB of the field within the storage unit.
+        bit_width: Number of bits in the field.
+        unit_size: Size in bytes of the storage unit.
+        signed: ``True`` for signed fields (sign-extension required).
+        dst: TAC destination value.
+        symbol_table: Symbol table for operand translation.
+        constants: Constants pool for operand translation.
+
+    Returns:
+        A list of assembly instructions that extract the bit-field into ``dst``.
+    """
+    at = _bf_asm_type(unit_size)
+    unit_bits = unit_size * 8
+    r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
+    cx = asm.Register(asm.GPRegisters.CX, asm.Width.DWORD)
+    is_static = bool(
+        symbol_table and src in symbol_table and isinstance(symbol_table[src].attrs, (StaticAttr, FunAttr))
+    )
+    src_op = _struct_src_operand(src, byte_offset, is_static)
+    dst_asm = _translate_val(dst, constants, symbol_table)
+    instrs: list[asm.Instruction] = [asm.Mov(src=src_op, dst=r10, assembly_type=at)]
+
+    if signed:
+        left_shift = unit_bits - bit_width - bit_offset
+        right_shift = unit_bits - bit_width
+        if left_shift > 0:
+            instrs += [
+                asm.Mov(src=asm.Imm(left_shift), dst=cx, assembly_type=asm.Longword()),
+                asm.Shl(operand=r10, assembly_type=at),
+            ]
+        if right_shift > 0:
+            instrs += [
+                asm.Mov(src=asm.Imm(right_shift), dst=cx, assembly_type=asm.Longword()),
+                asm.Sar(operand=r10, assembly_type=at),
+            ]
+    else:
+        if bit_offset > 0:
+            instrs += [
+                asm.Mov(src=asm.Imm(bit_offset), dst=cx, assembly_type=asm.Longword()),
+                asm.Shr(operand=r10, assembly_type=at),
+            ]
+        if bit_width < unit_bits:
+            mask = (1 << bit_width) - 1
+            instrs.append(asm.Binary(operator=asm.And(), src1=r10, src2=asm.Imm(mask), dst=r10, assembly_type=at))
+
+    instrs.append(asm.Mov(src=r10, dst=dst_asm, assembly_type=at))
+    return instrs
+
+
+def _lower_set_bit_field(
+    src: tac.Val,
+    dst: str,
+    byte_offset: int,
+    bit_offset: int,
+    bit_width: int,
+    unit_size: int,
+    symbol_table: SymbolTable | None,
+    constants: dict[str, asm.StaticConstant],
+) -> list[asm.Instruction]:
+    """Lower a ``SetBitField`` TAC instruction to assembly.
+
+    Performs a read-modify-write: loads the storage unit, clears the field bits,
+    ORs in the masked and shifted source value, then stores the unit back.
+
+    Args:
+        src: TAC source value to write into the bit-field.
+        dst: Name of the aggregate variable.
+        byte_offset: Byte offset of the storage unit within ``dst``.
+        bit_offset: Bit position of the LSB of the field within the storage unit.
+        bit_width: Number of bits in the field.
+        unit_size: Size in bytes of the storage unit.
+        symbol_table: Symbol table for operand translation.
+        constants: Constants pool for operand translation.
+
+    Returns:
+        A list of assembly instructions that write ``src`` into the bit-field.
+    """
+    at = _bf_asm_type(unit_size)
+    unit_bits = unit_size * 8
+    r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
+    r11 = asm.Register(asm.GPRegisters.R11, _reg_width(at))
+    cx = asm.Register(asm.GPRegisters.CX, asm.Width.DWORD)
+    is_static = bool(
+        symbol_table and dst in symbol_table and isinstance(symbol_table[dst].attrs, (StaticAttr, FunAttr))
+    )
+    dst_op = _struct_src_operand(dst, byte_offset, is_static)
+    src_asm = _translate_val(src, constants, symbol_table)
+
+    bit_mask = (1 << bit_width) - 1
+    full_mask = bit_mask << bit_offset
+    # Inverted mask: clears the field bits in the storage unit.
+    # Computed as a Python int; truncate to unit_bits so Imm encodes correctly.
+    clear_mask = (~full_mask) & ((1 << unit_bits) - 1)
+    # Sign-extend clear_mask to signed integer for Imm (x86 sign-extends from 32 bits).
+    if clear_mask >= (1 << (unit_bits - 1)):
+        clear_mask -= 1 << unit_bits
+
+    instrs: list[asm.Instruction] = [
+        asm.Mov(src=dst_op, dst=r10, assembly_type=at),
+        asm.Mov(src=src_asm, dst=r11, assembly_type=at),
+    ]
+    if bit_width < unit_bits:
+        instrs.append(asm.Binary(operator=asm.And(), src1=r11, src2=asm.Imm(bit_mask), dst=r11, assembly_type=at))
+    if bit_offset > 0:
+        instrs += [
+            asm.Mov(src=asm.Imm(bit_offset), dst=cx, assembly_type=asm.Longword()),
+            asm.Shl(operand=r11, assembly_type=at),
+        ]
+    instrs.append(asm.Binary(operator=asm.And(), src1=r10, src2=asm.Imm(clear_mask), dst=r10, assembly_type=at))
+    instrs.append(asm.Binary(operator=asm.Or(), src1=r10, src2=r11, dst=r10, assembly_type=at))
+    instrs.append(asm.Mov(src=r10, dst=dst_op, assembly_type=at))
+    return instrs
 
 
 def _load_partial_eightbyte(

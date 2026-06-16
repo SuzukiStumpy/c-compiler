@@ -1414,32 +1414,55 @@ class Parser:
         return EnumDecl(enum_declaration=EnumDeclaration(tag=tag_token.value, members=tuple(members_list)))
 
     def _parse_member_declaration(self) -> MemberDeclaration:
-        """Parse a single struct member declaration.
+        """Parse a single struct or union member declaration.
 
         Grammar::
 
-            member-declaration ::= {type-specifier}+ declarator ";"
+            member-declaration ::= {type-specifier}+ [declarator] [":" constant] ";"
 
         Unlike a variable declaration, no storage-class specifier is permitted
         and no initialiser may follow the declarator.  Function-type declarators
-        (e.g. ``int (*fn)(void)``) are also rejected.
+        (e.g. ``int (*fn)(void)``) are also rejected.  A trailing ``: constant``
+        introduces a bit-field width; the declarator name is optional in that case
+        (an absent name produces an unnamed padding bit-field).  A zero-width
+        bit-field must be unnamed (C11 §6.7.2.1p3).
 
         Returns:
             A ``MemberDeclaration`` node.
 
         Raises:
             ParseError: If the type specifier is absent, if a function-type
-                declarator is present, or if the trailing semicolon is missing.
+                declarator is present, if the trailing semicolon is missing, or
+                if a zero-width bit-field carries a name.
         """
         base_type = self._parse_type()
-        name, transform, _params = self._parse_declarator()
-        full_type = transform(base_type)
+
+        _DECLARATOR_STARTERS = (TokenType.ASTERISK, TokenType.IDENTIFIER, TokenType.LPAREN)
+        next_tok = self._peek()
+        if next_tok is not None and next_tok.type in _DECLARATOR_STARTERS:
+            name: str | None
+            name, transform, _params = self._parse_declarator()
+            full_type = transform(base_type)
+        else:
+            name = None
+            full_type = base_type
+
         if isinstance(full_type, FunType):
             err_tok = self._last
             msg = "function type declarators are not permitted in struct members"
             raise self._token_error(msg, err_tok) if err_tok is not None else self._eof_error(msg)
+
+        bit_width: int | None = None
+        next_tok = self._peek()
+        if next_tok is not None and next_tok.type == TokenType.COLON:
+            self._consume()
+            width_tok = self._expect(TokenType.NUMBER)
+            bit_width = int(width_tok.value)
+            if bit_width == 0 and name is not None:
+                raise self._token_error("zero-width bit-field must be unnamed (C11 §6.7.2.1p3)", width_tok)
+
         self._expect(TokenType.SEMICOLON)
-        return MemberDeclaration(member_name=name, member_type=full_type)
+        return MemberDeclaration(member_name=name, member_type=full_type, bit_width=bit_width)
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
         """Parse an optional expression and consume its terminating token.

@@ -616,6 +616,22 @@ def is_pointer_to_complete(t: Type | None, struct_type_table: StructTypeTable) -
             return False
 
 
+def _is_valid_bit_field_type(t: Type) -> bool:
+    """Return ``True`` if ``t`` is a type that may be used as a bit-field base type.
+
+    C11 §6.7.2.1p5 permits ``_Bool``, ``signed int``, and ``unsigned int``
+    (and their qualified variants).
+
+    Args:
+        t: The resolved C type to check.
+
+    Returns:
+        ``True`` if ``t`` is a legal bit-field type; ``False`` otherwise.
+    """
+    base = unqualify(t)
+    return isinstance(base, (IntType, UIntType, BoolType))
+
+
 def validate_type_specifier(t: Type, struct_type_table: StructTypeTable) -> None:
     """Recursively validate a type specifier for structural correctness.
 
@@ -1249,27 +1265,46 @@ class SemanticAnalyser:
     def _validate_struct_definition(self, struct_decl: StructDeclaration) -> None:
         """Validate the member list of a struct definition.
 
-        Checks that no two members share the same name and that every
-        member's type is eligible (complete, not void, not a function type).
+        Checks that no two named members share the same name, that every
+        member's type is eligible (complete, not void, not a function type),
+        and that bit-field declarations satisfy C11 §6.7.2.1p5:
+        only ``int``, ``unsigned int``, or ``_Bool`` (or their qualified
+        versions) are legal bit-field types, and the width must not exceed the
+        number of bits in the underlying storage type.
 
         Args:
             struct_decl: The resolved ``StructDeclaration`` whose members are
                 to be validated.  ``struct_decl.members`` must be non-empty.
 
         Raises:
-            SemanticError: If any member name is duplicated within the struct,
-                or if any member has an incomplete or invalid type.
+            SemanticError: If any named member name is duplicated, if any member
+                has an incomplete or invalid type, or if any bit-field declaration
+                violates the type or width constraints.
         """
         seen: set[str] = set()
         for member in struct_decl.members:
-            if member.member_name in seen:
-                raise SemanticError(f"Duplicate member '{member.member_name}' in struct '{struct_decl.tag}'")
-            seen.add(member.member_name)
-            if not self._is_member_type_complete(member.member_type):
-                raise SemanticError(
-                    f"Member '{member.member_name}' of struct '{struct_decl.tag}' has an incomplete or invalid type"
-                )
-            validate_type_specifier(member.member_type, self._struct_type_table)
+            if member.member_name is not None:
+                if member.member_name in seen:
+                    raise SemanticError(f"Duplicate member '{member.member_name}' in struct '{struct_decl.tag}'")
+                seen.add(member.member_name)
+            if member.bit_width is not None:
+                if not _is_valid_bit_field_type(member.member_type):
+                    raise SemanticError(
+                        f"Bit-field '{member.member_name}' in struct '{struct_decl.tag}' has an invalid type; "
+                        "only int, unsigned int, and _Bool are permitted"
+                    )
+                max_bits = type_size(member.member_type, self._struct_type_table) * 8
+                if member.bit_width > max_bits:
+                    raise SemanticError(
+                        f"Bit-field '{member.member_name}' width {member.bit_width} exceeds "
+                        f"the {max_bits}-bit storage type"
+                    )
+            else:
+                if not self._is_member_type_complete(member.member_type):
+                    raise SemanticError(
+                        f"Member '{member.member_name}' of struct '{struct_decl.tag}' has an incomplete or invalid type"
+                    )
+                validate_type_specifier(member.member_type, self._struct_type_table)
 
     def _typecheck_struct_declaration(self, struct_decl: StructDeclaration) -> None:
         """Validate a struct definition and record its layout in ``_struct_type_table``.
@@ -1303,44 +1338,111 @@ class SemanticAnalyser:
             return
         if struct_decl.tag in self._struct_type_table:
             raise SemanticError(f"Redefinition of struct '{struct_decl.tag}'.")
-        self._validate_struct_definition(struct_decl)  #
-        member_entries: list[MemberEntry] = []  #
+        self._validate_struct_definition(struct_decl)
+        member_entries: list[MemberEntry] = []
         struct_size = 0
         struct_alignment = 1
+
+        # Bit-packing state: tracks the active storage unit for consecutive bit-fields.
+        bit_unit_start = 0  # byte offset of the current bit-field unit
+        bit_unit_bytes = 0  # size in bytes of current unit (0 = no active unit)
+        bits_used = 0  # bits consumed so far in the current unit
+
+        def _flush_bit_unit() -> None:
+            """Close the active bit-field unit, advancing struct_size past it."""
+            nonlocal struct_size, bit_unit_bytes, bits_used
+            if bit_unit_bytes > 0 and bits_used > 0:
+                struct_size = max(struct_size, bit_unit_start + bit_unit_bytes)
+            bit_unit_bytes = 0
+            bits_used = 0
+
         for member in struct_decl.members:
-            member_align = type_alignment(member.member_type, self._struct_type_table)
-            member_offset = _round_up(struct_size, member_align)  #
-            member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))  #
-            struct_alignment = max(struct_alignment, member_align)
-            struct_size = member_offset + type_size(member.member_type, self._struct_type_table)
-        struct_size = _round_up(struct_size, struct_alignment)  #
+            if member.bit_width is None:
+                # Regular member: close any active bit-field unit first.
+                _flush_bit_unit()
+                member_align = type_alignment(member.member_type, self._struct_type_table)
+                member_offset = _round_up(struct_size, member_align)
+                member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))
+                struct_alignment = max(struct_alignment, member_align)
+                struct_size = member_offset + type_size(member.member_type, self._struct_type_table)
+            else:
+                field_type_size = type_size(member.member_type, self._struct_type_table)
+                field_type_align = type_alignment(member.member_type, self._struct_type_table)
+                struct_alignment = max(struct_alignment, field_type_align)
+
+                if member.bit_width == 0:
+                    # Zero-width unnamed: force next field to start of next aligned unit.
+                    _flush_bit_unit()
+                    struct_size = _round_up(struct_size, field_type_align)
+                else:
+                    field_bits = field_type_size * 8
+                    # Pack into current unit only when same unit size and bits fit.
+                    can_pack = bit_unit_bytes == field_type_size and bits_used + member.bit_width <= field_bits
+                    if not can_pack:
+                        _flush_bit_unit()
+                        bit_unit_start = _round_up(struct_size, field_type_align)
+                        bit_unit_bytes = field_type_size
+                        bits_used = 0
+
+                    bit_offset_in_unit = bits_used
+                    bits_used += member.bit_width
+
+                    if member.member_name is not None:
+                        member_entries.append(
+                            MemberEntry(
+                                member.member_name,
+                                member.member_type,
+                                bit_unit_start,
+                                bit_offset_in_unit,
+                                member.bit_width,
+                            )
+                        )
+
+        _flush_bit_unit()
+        struct_size = _round_up(struct_size, struct_alignment)
         struct_def = StructEntry(alignment=struct_alignment, size=struct_size, members=tuple(member_entries))
-        self._struct_type_table[struct_decl.tag] = struct_def  #
+        self._struct_type_table[struct_decl.tag] = struct_def
 
     def _validate_union_definition(self, union_decl: UnionDeclaration) -> None:
         """Validate the member list of a union definition.
 
-        Checks that no two members share the same name and that every
-        member's type is eligible (complete, not void, not a function type).
+        Checks that no two named members share the same name, that every
+        member's type is eligible (complete, not void, not a function type),
+        and that bit-field declarations satisfy C11 §6.7.2.1p5.
 
         Args:
             union_decl: The resolved ``UnionDeclaration`` whose members are
                 to be validated.  ``union_decl.members`` must be non-empty.
 
         Raises:
-            SemanticError: If any member name is duplicated within the union,
-                or if any member has an incomplete or invalid type.
+            SemanticError: If any named member name is duplicated, if any member
+                has an incomplete or invalid type, or if any bit-field violates
+                the type or width constraints.
         """
         seen: set[str] = set()
         for member in union_decl.members:
-            if member.member_name in seen:
-                raise SemanticError(f"Duplicate member '{member.member_name}' in union '{union_decl.tag}'")
-            seen.add(member.member_name)
-            if not self._is_member_type_complete(member.member_type):
-                raise SemanticError(
-                    f"Member '{member.member_name}' of union '{union_decl.tag}' has an incomplete or invalid type"
-                )
-            validate_type_specifier(member.member_type, self._struct_type_table)
+            if member.member_name is not None:
+                if member.member_name in seen:
+                    raise SemanticError(f"Duplicate member '{member.member_name}' in union '{union_decl.tag}'")
+                seen.add(member.member_name)
+            if member.bit_width is not None:
+                if not _is_valid_bit_field_type(member.member_type):
+                    raise SemanticError(
+                        f"Bit-field '{member.member_name}' in union '{union_decl.tag}' has an invalid type; "
+                        "only int, unsigned int, and _Bool are permitted"
+                    )
+                max_bits = type_size(member.member_type, self._struct_type_table) * 8
+                if member.bit_width > max_bits:
+                    raise SemanticError(
+                        f"Bit-field '{member.member_name}' width {member.bit_width} exceeds "
+                        f"the {max_bits}-bit storage type"
+                    )
+            else:
+                if not self._is_member_type_complete(member.member_type):
+                    raise SemanticError(
+                        f"Member '{member.member_name}' of union '{union_decl.tag}' has an incomplete or invalid type"
+                    )
+                validate_type_specifier(member.member_type, self._struct_type_table)
 
     def _typecheck_union_declaration(self, union_decl: UnionDeclaration) -> None:
         """Validate a union definition and record its layout in ``_struct_type_table``.
@@ -1368,19 +1470,25 @@ class SemanticAnalyser:
             return
         if union_decl.tag in self._struct_type_table:
             raise SemanticError(f"Redefinition of union '{union_decl.tag}'.")
-        self._validate_union_definition(union_decl)  #
+        self._validate_union_definition(union_decl)
         member_entries: list[MemberEntry] = []
         union_alignment = 1
         union_size = 0
         for member in union_decl.members:
             member_align = type_alignment(member.member_type, self._struct_type_table)
             member_size = type_size(member.member_type, self._struct_type_table)
-            member_entries.append(MemberEntry(member.member_name, member.member_type, 0))  #
-            union_alignment = max(union_alignment, member_align)  #
+            union_alignment = max(union_alignment, member_align)
             union_size = max(union_size, member_size)
-        union_size = _round_up(union_size, union_alignment)  #
+            if member.bit_width is not None:
+                if member.member_name is not None:
+                    # Named bit-field in union: byte offset 0, bit offset 0.
+                    member_entries.append(MemberEntry(member.member_name, member.member_type, 0, 0, member.bit_width))
+                # Unnamed bit-field: padding only; no entry added.
+            else:
+                member_entries.append(MemberEntry(member.member_name, member.member_type, 0))
+        union_size = _round_up(union_size, union_alignment)
         union_def = StructEntry(alignment=union_alignment, size=union_size, members=tuple(member_entries))
-        self._struct_type_table[union_decl.tag] = union_def  #
+        self._struct_type_table[union_decl.tag] = union_def
 
     def _collect_labels_in_statement(self, statement: ast.Statement) -> None:
         """Recursively collect label names from a statement into ``_label_set``.
@@ -3221,7 +3329,8 @@ class SemanticAnalyser:
                     unique_tag = self._make_struct_tag(tag)
                     self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
                 resolved_members = tuple(
-                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in struct_decl.members
+                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
+                    for m in struct_decl.members
                 )
                 resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
                 self._typecheck_struct_declaration(resolved_struct_decl)
@@ -3237,7 +3346,8 @@ class SemanticAnalyser:
                     unique_tag = self._make_union_tag(tag)
                     self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
                 resolved_members = tuple(
-                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in union_decl.members
+                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
+                    for m in union_decl.members
                 )
                 resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
                 self._typecheck_union_declaration(resolved_union_decl)
@@ -3381,7 +3491,8 @@ class SemanticAnalyser:
                         unique_tag = self._make_struct_tag(tag)
                         self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
                     resolved_members = tuple(
-                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in struct_decl.members
+                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
+                        for m in struct_decl.members
                     )
                     resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
                     self._typecheck_struct_declaration(resolved_struct_decl)
@@ -3397,7 +3508,8 @@ class SemanticAnalyser:
                         unique_tag = self._make_union_tag(tag)
                         self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
                     resolved_members = tuple(
-                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type)) for m in union_decl.members
+                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
+                        for m in union_decl.members
                     )
                     resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
                     self._typecheck_union_declaration(resolved_union_decl)

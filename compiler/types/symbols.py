@@ -379,17 +379,24 @@ SymbolTable = dict[str, SymbolTableEntry]
 
 @dataclass(frozen=True, slots=True)
 class MemberEntry:
-    """Layout information for a single member within a struct type.
+    """Layout information for a single member within a struct or union type.
 
     Attributes:
         name: The member name as it appears in the source.
         member_type: The resolved C type of the member.
         offset: Byte offset of the member from the start of the enclosing struct.
+        bit_offset: For bit-field members, the bit position within the storage
+            unit at ``offset`` where this field begins (0 = LSB of that unit).
+            ``None`` for regular (non-bit-field) members.
+        bit_width: Number of bits occupied by this bit-field, or ``None`` for
+            regular members.
     """
 
     name: str
     member_type: Type
     offset: int
+    bit_offset: int | None = None
+    bit_width: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

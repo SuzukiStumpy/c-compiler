@@ -510,3 +510,58 @@ class CopyFromOffset(Instruction):
     src: str
     offset: int
     dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class GetBitField(Instruction):
+    """Read a bit-field from a named aggregate variable.
+
+    Loads the storage unit at ``byte_offset`` from ``src``, shifts right by
+    ``bit_offset`` bits, and masks to ``bit_width`` bits.  If ``signed`` is
+    ``True`` the value is sign-extended to the natural integer width before
+    being stored in ``dst``.
+
+    Attributes:
+        src: Name of the aggregate variable containing the bit-field.
+        byte_offset: Byte offset from the start of ``src`` to the storage unit.
+        bit_offset: Bit position of the LSB of the field within the storage unit.
+        bit_width: Number of bits in the field.
+        unit_size: Size in bytes of the storage unit (e.g. 4 for ``int``/``unsigned int``,
+            1 for ``_Bool``).
+        signed: ``True`` if the bit-field type is signed (requires sign-extension).
+        dst: Destination that receives the extracted integer value.
+    """
+
+    src: str
+    byte_offset: int
+    bit_offset: int
+    bit_width: int
+    unit_size: int
+    signed: bool
+    dst: Val
+
+
+@dataclass(frozen=True, slots=True)
+class SetBitField(Instruction):
+    """Write a value into a bit-field within a named aggregate variable.
+
+    Reads the storage unit at ``byte_offset`` from ``dst``, clears the
+    ``bit_width`` bits starting at ``bit_offset``, ORs in the masked ``src``
+    value, and writes the storage unit back.
+
+    Attributes:
+        src: The value to store into the bit-field (only ``bit_width`` low bits used).
+        dst: Name of the aggregate variable containing the bit-field.
+        byte_offset: Byte offset from the start of ``dst`` to the storage unit.
+        bit_offset: Bit position of the LSB of the field within the storage unit.
+        bit_width: Number of bits in the field.
+        unit_size: Size in bytes of the storage unit (e.g. 4 for ``int``/``unsigned int``,
+            1 for ``_Bool``).
+    """
+
+    src: Val
+    dst: str
+    byte_offset: int
+    bit_offset: int
+    bit_width: int
+    unit_size: int

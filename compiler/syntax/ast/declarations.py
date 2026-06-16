@@ -190,15 +190,21 @@ class VarDecl(Declaration):
 
 @dataclass(frozen=True, slots=True)
 class MemberDeclaration:
-    """A single field declaration within a struct body.
+    """A single field declaration within a struct or union body.
 
     Attributes:
-        member_name: The name of the struct member as it appears in the source.
+        member_name: The name of the struct member as it appears in the source,
+            or ``None`` for an unnamed bit-field (padding) declaration.
         member_type: The declared C type of the member.
+        bit_width: For bit-field declarations, the number of bits to occupy.
+            ``None`` for regular (non-bit-field) members.  A width of zero is
+            only valid when ``member_name`` is also ``None``; it forces the
+            next bit-field to begin at the next storage-unit boundary.
     """
 
-    member_name: str
+    member_name: str | None
     member_type: Type
+    bit_width: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

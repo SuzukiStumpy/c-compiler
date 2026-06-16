@@ -13,19 +13,23 @@ from compiler.syntax.ast import (
     Program,
     StructDecl,
     Structure,
+    UIntType,
     VarDecl,
 )
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 from test.parser.helpers import (
+    _COLON,
     _INT,
     _LONG,
     _LPAREN,
     _RBRACE,
     _RPAREN,
     _SEMICOLON,
+    _UNSIGNED,
     _VOID,
     _ident,
+    _number,
     _parsed_exp,
 )
 
@@ -288,3 +292,114 @@ class TestStructParseErrors:
         ]
         with pytest.raises(ParseError):
             parse(tokens)
+
+
+class TestBitFieldMemberDeclaration:
+    """Struct member declarations with bit-field width specifiers (C11 §6.7.2.1p3)."""
+
+    def test_named_bit_field(self) -> None:
+        """``unsigned int x : 3;`` yields MemberDeclaration with bit_width=3."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Flags"),
+            _LBRACE,
+            _UNSIGNED,
+            _INT,
+            _ident("x"),
+            _COLON,
+            _number("3"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        members = prog.declarations[0].struct_declaration.members  # type: ignore[union-attr]
+        assert len(members) == 1
+        assert members[0] == MemberDeclaration(member_name="x", member_type=UIntType(), bit_width=3)
+
+    def test_unnamed_bit_field(self) -> None:
+        """``int : 5;`` yields MemberDeclaration with member_name=None, bit_width=5."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Flags"),
+            _LBRACE,
+            _INT,
+            _COLON,
+            _number("5"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        members = prog.declarations[0].struct_declaration.members  # type: ignore[union-attr]
+        assert len(members) == 1
+        assert members[0] == MemberDeclaration(member_name=None, member_type=IntType(), bit_width=5)
+
+    def test_zero_width_unnamed_bit_field(self) -> None:
+        """``int : 0;`` yields MemberDeclaration with bit_width=0 (forces unit boundary)."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Flags"),
+            _LBRACE,
+            _INT,
+            _COLON,
+            _number("0"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        members = prog.declarations[0].struct_declaration.members  # type: ignore[union-attr]
+        assert len(members) == 1
+        assert members[0] == MemberDeclaration(member_name=None, member_type=IntType(), bit_width=0)
+
+    def test_zero_width_named_bit_field_is_parse_error(self) -> None:
+        """``int x : 0;`` is a parse error (C11 §6.7.2.1p3)."""
+        with pytest.raises(ParseError):
+            _parse_top(
+                _STRUCT,
+                _ident("Flags"),
+                _LBRACE,
+                _INT,
+                _ident("x"),
+                _COLON,
+                _number("0"),
+                _SEMICOLON,
+                _RBRACE,
+                _SEMICOLON,
+            )
+
+    def test_regular_member_has_no_bit_width(self) -> None:
+        """Regular members have bit_width=None."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("S"),
+            _LBRACE,
+            _INT,
+            _ident("x"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        members = prog.declarations[0].struct_declaration.members  # type: ignore[union-attr]
+        assert members[0].bit_width is None
+
+    def test_bit_field_mixed_with_regular_members(self) -> None:
+        """Bit fields and regular members can coexist in the same struct."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Mixed"),
+            _LBRACE,
+            _INT,
+            _ident("x"),
+            _SEMICOLON,
+            _UNSIGNED,
+            _INT,
+            _ident("flags"),
+            _COLON,
+            _number("3"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        members = prog.declarations[0].struct_declaration.members  # type: ignore[union-attr]
+        assert len(members) == 2
+        assert members[0] == MemberDeclaration(member_name="x", member_type=IntType(), bit_width=None)
+        assert members[1] == MemberDeclaration(member_name="flags", member_type=UIntType(), bit_width=3)

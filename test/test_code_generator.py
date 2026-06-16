@@ -3397,3 +3397,121 @@ class TestFunctionNameAsArgument:
         mul_data = asm.Data("mul")
         leas = [i for i in pre_call if isinstance(i, asm.Lea) and i.src == mul_data]
         assert leas, "expected Lea(Data('mul'), ...) before the call"
+
+
+# ---------------------------------------------------------------------------
+# Bit-field code generation
+# ---------------------------------------------------------------------------
+
+
+def _bf_program(instr: tac.Instruction) -> tac.Program:
+    """Build a TAC program containing a single bit-field instruction plus a Return.
+
+    Args:
+        instr: The ``GetBitField`` or ``SetBitField`` instruction to test.
+
+    Returns:
+        A ``tac.Program`` wrapping the instruction in a minimal ``main`` function.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                body=(instr, tac.Return(val=tac.Constant(ConstInt(0)))),
+            ),
+        )
+    )
+
+
+def _bf_sym(var_name: str) -> SymbolTable:
+    """Build a minimal symbol table with a single 4-byte struct variable.
+
+    Args:
+        var_name: The name of the aggregate variable.
+
+    Returns:
+        A ``SymbolTable`` mapping ``var_name`` to a ``LocalAttr`` entry.
+    """
+    from compiler.syntax.ast.types import Structure
+
+    return {var_name: SymbolTableEntry(t=Structure(".Sflags.0"), attrs=LocalAttr())}
+
+
+class TestGetBitFieldCodegen:
+    """``GetBitField`` lowers to shift-and-mask sequences in assembly."""
+
+    def test_get_bit_field_generates_valid_assembly(self) -> None:
+        """``GetBitField`` produces a valid ``asm.Program`` without error."""
+        instr = tac.GetBitField(
+            src="s", byte_offset=0, bit_offset=0, bit_width=3, unit_size=4, signed=False, dst=tac.Var("tmp")
+        )
+        result = generate(_bf_program(instr), _bf_sym("s"))
+        assert isinstance(result, asm.Program)
+
+    def test_get_unsigned_bit_field_uses_shr(self) -> None:
+        """Unsigned ``GetBitField`` uses logical right shift (``Shr``), not ``Sar``."""
+        instr = tac.GetBitField(
+            src="s", byte_offset=0, bit_offset=3, bit_width=5, unit_size=4, signed=False, dst=tac.Var("tmp")
+        )
+        instrs = generate(_bf_program(instr), _bf_sym("s")).definitions[0].instructions
+        assert any(isinstance(i, asm.Shr) for i in instrs), "expected Shr for unsigned bit-field read"
+        assert not any(isinstance(i, asm.Sar) for i in instrs), "Sar must not appear for unsigned bit-field read"
+
+    def test_get_signed_bit_field_uses_sar_for_sign_extension(self) -> None:
+        """Signed ``GetBitField`` uses arithmetic right shift (``Sar``) for sign-extension."""
+        instr = tac.GetBitField(
+            src="s", byte_offset=0, bit_offset=3, bit_width=5, unit_size=4, signed=True, dst=tac.Var("tmp")
+        )
+        instrs = generate(_bf_program(instr), _bf_sym("s")).definitions[0].instructions
+        assert any(isinstance(i, asm.Sar) for i in instrs), "expected Sar for sign-extension of signed bit-field"
+
+    def test_get_bit_field_at_offset_zero_skips_initial_shift(self) -> None:
+        """A bit-field at ``bit_offset=0`` does not emit a right-shift instruction."""
+        instr = tac.GetBitField(
+            src="s", byte_offset=0, bit_offset=0, bit_width=3, unit_size=4, signed=False, dst=tac.Var("tmp")
+        )
+        instrs = generate(_bf_program(instr), _bf_sym("s")).definitions[0].instructions
+        assert not any(isinstance(i, asm.Shr) for i in instrs), "no Shr needed when bit_offset=0"
+
+
+class TestSetBitFieldCodegen:
+    """``SetBitField`` lowers to a read-modify-write sequence in assembly."""
+
+    def test_set_bit_field_generates_valid_assembly(self) -> None:
+        """``SetBitField`` produces a valid ``asm.Program`` without error."""
+        instr = tac.SetBitField(
+            src=tac.Constant(ConstInt(5)),
+            dst="s",
+            byte_offset=0,
+            bit_offset=3,
+            bit_width=5,
+            unit_size=4,
+        )
+        result = generate(_bf_program(instr), _bf_sym("s"))
+        assert isinstance(result, asm.Program)
+
+    def test_set_bit_field_uses_shl_to_position_value(self) -> None:
+        """``SetBitField`` emits ``Shl`` to shift the source value into the correct bit position."""
+        instr = tac.SetBitField(
+            src=tac.Constant(ConstInt(5)),
+            dst="s",
+            byte_offset=0,
+            bit_offset=3,
+            bit_width=5,
+            unit_size=4,
+        )
+        instrs = generate(_bf_program(instr), _bf_sym("s")).definitions[0].instructions
+        assert any(isinstance(i, asm.Shl) for i in instrs), "expected Shl to position src into bit field"
+
+    def test_set_bit_field_at_offset_zero_skips_shl(self) -> None:
+        """``SetBitField`` with ``bit_offset=0`` does not emit ``Shl`` for src positioning."""
+        instr = tac.SetBitField(
+            src=tac.Constant(ConstInt(5)),
+            dst="s",
+            byte_offset=0,
+            bit_offset=0,
+            bit_width=3,
+            unit_size=4,
+        )
+        instrs = generate(_bf_program(instr), _bf_sym("s")).definitions[0].instructions
+        assert not any(isinstance(i, asm.Shl) for i in instrs), "no Shl needed when bit_offset=0"

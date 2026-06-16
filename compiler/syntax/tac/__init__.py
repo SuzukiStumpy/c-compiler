@@ -89,6 +89,7 @@ from compiler.syntax.tac.instructions import (
     FloatToUInt,
     FunCall,
     GetAddress,
+    GetBitField,
     Instruction,
     IntToDouble,
     IntToFloat,
@@ -103,6 +104,7 @@ from compiler.syntax.tac.instructions import (
     LongDoubleToInt,
     LongDoubleToUInt,
     Return,
+    SetBitField,
     SignExtend,
     Store,
     Truncate,
@@ -158,6 +160,8 @@ from compiler.syntax.tac.values import (
 
 __all__ = [
     "CopyFromOffset",
+    "GetBitField",
+    "SetBitField",
     "StaticConstant",
     "AddPtr",
     "CopyToOffset",

@@ -151,6 +151,7 @@ from compiler.types.symbols import (
     ConstantAttr,
     Initial,
     LocalAttr,
+    MemberEntry,
     NoInitializer,
     PointerInit,
     StaticAttr,
@@ -534,13 +535,27 @@ class _SubObject:
     single ``SubObject("s", offset_a + offset_b)`` without emitting any
     intermediate ``CopyFromOffset``.
 
+    When ``bit_offset`` is not ``None`` the sub-object is a bit-field; reads
+    become ``GetBitField`` and writes become ``SetBitField`` instead of the
+    regular ``CopyFromOffset`` / ``CopyToOffset`` instructions.
+
     Attributes:
         base: Name of the aggregate variable in the symbol table.
         offset: Byte offset from the start of ``base`` to this sub-object.
+        bit_offset: Bit position of the LSB within the storage unit, or ``None``
+            for regular (non-bit-field) members.
+        bit_width: Number of bits in the bit-field, or ``None`` for regular members.
+        unit_size: Size in bytes of the storage unit, or ``None`` for regular members.
+        signed: ``True`` if the bit-field type is signed (requires sign-extension
+            during reads).  Ignored when ``bit_offset`` is ``None``.
     """
 
     base: str
     offset: int
+    bit_offset: int | None = None
+    bit_width: int | None = None
+    unit_size: int | None = None
+    signed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -638,16 +653,16 @@ class _TacGenerator:
         """
         return _type_size(t, self._struct_type_table)
 
-    def _get_member(self, tag: str, member_name: str) -> tuple[int, ast.Type]:
-        """Return the byte offset and declared type of a named member within a struct.
+    def _get_member(self, tag: str, member_name: str) -> MemberEntry:
+        """Return the layout entry for a named member within a struct.
 
         Args:
             tag: The struct tag to look up in the struct type table.
             member_name: The name of the member to locate.
 
         Returns:
-            A ``(offset, member_type)`` tuple where ``offset`` is the byte offset from
-            the start of the struct and ``member_type`` is the C type of the member.
+            The ``MemberEntry`` carrying the byte offset, type, and optional
+            bit-field position of the named member.
 
         Raises:
             CodeGenerationError: If ``tag`` is absent from the struct type table or
@@ -658,7 +673,7 @@ class _TacGenerator:
             raise CodeGenerationError(f"unknown struct tag '{tag}'")
         for m in entry.members:
             if m.name == member_name:
-                return m.offset, m.member_type
+                return m
         raise CodeGenerationError(f"struct '{tag}' has no member '{member_name}'")
 
     def _eval_exp(self, exp: ast.Exp) -> tuple[_AbstractObject, list[tac.Instruction]]:
@@ -704,14 +719,35 @@ class _TacGenerator:
                 ]
             case ast.Dot(structure=structure, member=member):
                 assert isinstance(structure.exp_type, (ast.Structure, ast.Union))
-                offset, _ = self._get_member(structure.exp_type.tag, member)
+                mem_entry = self._get_member(structure.exp_type.tag, member)
+                offset = mem_entry.offset
+                bf_signed = isinstance(ast.unqualify(mem_entry.member_type), ast.IntType)
+                bf_unit_size = (
+                    _type_size(mem_entry.member_type, self._struct_type_table)
+                    if mem_entry.bit_offset is not None
+                    else None
+                )
                 inner_obj, inner_instrs = self._eval_exp(structure)
                 match inner_obj:
                     case _PlainOperand(val=tac.Var(value=v)):
-                        return _SubObject(base=v, offset=offset), inner_instrs  #
+                        return _SubObject(
+                            base=v,
+                            offset=offset,
+                            bit_offset=mem_entry.bit_offset,
+                            bit_width=mem_entry.bit_width,
+                            unit_size=bf_unit_size,
+                            signed=bf_signed,
+                        ), inner_instrs
                     case _SubObject(base=base, offset=inner_offset):
-                        return _SubObject(base=base, offset=inner_offset + offset), inner_instrs  #
-                    case _DereferencedPointer(ptr=ptr):  #
+                        return _SubObject(
+                            base=base,
+                            offset=inner_offset + offset,
+                            bit_offset=mem_entry.bit_offset,
+                            bit_width=mem_entry.bit_width,
+                            unit_size=bf_unit_size,
+                            signed=bf_signed,
+                        ), inner_instrs
+                    case _DereferencedPointer(ptr=ptr):
                         if offset == 0:
                             return _DereferencedPointer(ptr=ptr), inner_instrs
                         dst_ptr = self._make_temp(ast.Pointer(exp.exp_type or ast.IntType()))
@@ -724,7 +760,8 @@ class _TacGenerator:
             case ast.Arrow(pointer=pointer, member=member):
                 assert isinstance(pointer.exp_type, ast.Pointer)
                 assert isinstance(pointer.exp_type.referenced, (ast.Structure, ast.Union))
-                offset, _ = self._get_member(pointer.exp_type.referenced.tag, member)
+                mem_entry = self._get_member(pointer.exp_type.referenced.tag, member)
+                offset = mem_entry.offset
                 ptr_val, ptr_instrs = self.translate_exp(pointer)
                 if offset == 0:
                     return _DereferencedPointer(ptr=ptr_val), ptr_instrs
@@ -751,8 +788,27 @@ class _TacGenerator:
         match obj:
             case _PlainOperand(val=val):
                 return val, []
-            case _SubObject(base=base, offset=offset):
+            case _SubObject(
+                base=base,
+                offset=offset,
+                bit_offset=bit_offset,
+                bit_width=bit_width,
+                unit_size=unit_size,
+                signed=signed,
+            ):
                 dst = self._make_temp(t)
+                if bit_offset is not None and bit_width is not None and unit_size is not None:
+                    return dst, [
+                        tac.GetBitField(
+                            src=base,
+                            byte_offset=offset,
+                            bit_offset=bit_offset,
+                            bit_width=bit_width,
+                            unit_size=unit_size,
+                            signed=signed,
+                            dst=dst,
+                        )
+                    ]
                 return dst, [tac.CopyFromOffset(src=base, offset=offset, dst=dst)]
             case _DereferencedPointer(ptr=ptr):
                 dst = self._make_temp(t)
@@ -809,7 +865,18 @@ class _TacGenerator:
         match obj:
             case _PlainOperand(val=tac.Var() as dst_var):
                 return [tac.Copy(src=val, dst=dst_var)]
-            case _SubObject(base=base, offset=offset):
+            case _SubObject(base=base, offset=offset, bit_offset=bit_offset, bit_width=bit_width, unit_size=unit_size):
+                if bit_offset is not None and bit_width is not None and unit_size is not None:
+                    return [
+                        tac.SetBitField(
+                            src=val,
+                            dst=base,
+                            byte_offset=offset,
+                            bit_offset=bit_offset,
+                            bit_width=bit_width,
+                            unit_size=unit_size,
+                        )
+                    ]
                 return [tac.CopyToOffset(src=val, dst=base, offset=offset)]
             case _DereferencedPointer(ptr=ptr):
                 return [tac.Store(src=val, dst_ptr=ptr)]

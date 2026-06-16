@@ -21,8 +21,8 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
 | Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; array decay |
-| `struct` | Named/anonymous structs; nested structs; compound initialisers |
-| `union` | Named/anonymous unions |
+| `struct` | Named/anonymous structs; nested structs; compound initialisers; bit-fields (`int x : 3`) |
+| `union` | Named/anonymous unions; bit-field members |
 | `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
 | `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
 | Function pointers | `int (*fp)(int, int)` style; call via `fp(args)` or `(*fp)(args)`; pass/return by value |
@@ -80,7 +80,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Compound initialisers for arrays and structs (`{ ... }`)
 - Function declarations and definitions (multiple per translation unit)
 - Variadic function declarations (`int printf(char *fmt, ...)`) — calling variadic functions is fully supported; System V AMD64 ABI `%al` register is set to the number of floating-point arguments used
-- Struct and union declarations and definitions
+- Struct and union declarations and definitions, including bit-fields (`int x : 3;`, `unsigned int : 5;`, `int : 0;`)
 - `enum` declarations and definitions; enumerator constants fold to `int` values at semantic analysis time; enumerator values may be integer literals, unary-negated literals, or references to previously-declared enumerators in the same definition
 - Storage classes: `static` and `extern`
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
@@ -287,7 +287,6 @@ Neither is recognised.
 
 ### Struct and union features
 
-- **Bit-fields** (sec. 6.7.2.1 p10-14) - `unsigned int flags : 3;`. Neither declaration nor read/write of bit-fields is supported.
 - **Flexible array members** (sec. 6.7.2.1 p18) - `struct S { int n; char buf[]; };`. The trailing incomplete-array member pattern is not parsed.
 - **Anonymous struct/union members** (sec. 6.7.2.1 p13-15) - an unnamed `struct` or `union` nested inside another `struct`/`union` whose fields are promoted directly into the enclosing type. Unnamed tags (e.g. `struct { int x; }`) are supported, but only when a member name follows; the anonymous-member form (no member name at all) is not.
 
