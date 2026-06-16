@@ -24,6 +24,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `struct` | Named/anonymous structs; nested structs; compound initialisers |
 | `union` | Named/anonymous unions |
 | `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
+| `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
 | Function pointers | `int (*fp)(int, int)` style; call through a pointer |
 
 Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant.
@@ -231,10 +232,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 | `_Complex` / `_Imaginary` | Complex and imaginary arithmetic (sec. 6.2.5 p11) |
 
 `float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported. All arithmetic, relational, and conversion operations between `float`, `double`, `long double`, and integer types are implemented, including the SysV AMD64 ABI calling conventions (XMM registers for `float`/`double`; stack (MEMORY class) for `long double`).
-
-### Other scalar types
-
-- **`_Bool`** (sec. 6.2.5 p2) - the standard boolean type; `true`/`false` via `<stdbool.h>`. Any non-zero value converts to 1 rather than being preserved.
 
 ### Type qualifiers
 
