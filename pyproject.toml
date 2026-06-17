@@ -15,7 +15,7 @@ compiler = "compiler.compiler:compiler"
 
 [dependency-groups]
 dev = [
-    "debugpy>=1.8.20",
+    "debugpy>=1.8.21",
     "pre-commit>=4.6.0",
     "pyrefly>=0.62.0",
     "pytest>=9.0.3",
