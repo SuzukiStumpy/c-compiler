@@ -152,6 +152,9 @@ class Function:
         is_inline: ``True`` when the ``inline`` function specifier appears on the
             declaration.  Stored for completeness; the compiler does not perform
             inlining and treats this flag as informational only.
+        is_noreturn: ``True`` when the ``_Noreturn`` function specifier appears on the
+            declaration.  Stored for completeness; the compiler does not enforce
+            the no-return contract and treats this flag as informational only.
     """
 
     name: str
@@ -163,6 +166,7 @@ class Function:
     source_file: str = ""
     source_line: int = 0
     is_inline: bool = False
+    is_noreturn: bool = False
 
 
 @dataclass(frozen=True, slots=True)

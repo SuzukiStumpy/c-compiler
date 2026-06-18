@@ -46,6 +46,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("VOLATILE", r"volatile\b"),
     ("RESTRICT", r"restrict\b"),
     ("INLINE", r"inline\b"),
+    ("NORETURN", r"_Noreturn\b"),
     # Identifiers and literals — INT128 must precede IDENTIFIER so __int128 is not classified as IDENTIFIER
     ("INT128", r"__int128\b"),
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),

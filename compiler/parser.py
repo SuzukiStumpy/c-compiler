@@ -289,6 +289,7 @@ _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | f
         TokenType.EXTERN,
         TokenType.TYPEDEF,
         TokenType.INLINE,
+        TokenType.NORETURN,
     }
 )
 
@@ -817,7 +818,7 @@ class Parser:
             raise self._eof_error("expected a declaration, got empty input")
         return Program(declarations=tuple(declarations))
 
-    def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool]:
+    def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool, bool]:
         """Parse one or more declaration specifiers.
 
         Grammar::
@@ -825,6 +826,7 @@ class Parser:
             type-specifier   ::= "int" | "long" | "signed" | "unsigned" | "double"
                                | "struct" identifier
             specifier        ::= type-specifier | "static" | "extern" | "inline"
+                               | "_Noreturn"
 
         Consumes a run of specifier tokens in any order.  At least one type
         specifier must appear; ``unsigned`` or ``signed`` alone are treated as
@@ -835,14 +837,16 @@ class Parser:
         specifiers (though a storage-class specifier preceding it is fine,
         e.g. ``static struct Foo``).
 
-        The ``inline`` function specifier (C11 sec. 6.7.4) is parsed and
-        returned as a boolean flag.  The compiler does not perform inlining;
-        the flag is stored on the ``Function`` node for completeness only.
+        The ``inline`` function specifier (C11 sec. 6.7.4) and the ``_Noreturn``
+        function specifier (C11 sec. 6.7.4) are parsed and returned as boolean
+        flags.  The compiler does not perform inlining or enforce no-return
+        contracts; the flags are stored on the ``Function`` node for completeness.
 
         Returns:
-            A ``(type, storage_class, is_inline)`` triple where
-            ``storage_class`` is ``None`` when absent and ``is_inline`` is
-            ``True`` when the ``inline`` keyword appeared.
+            A ``(type, storage_class, is_inline, is_noreturn)`` 4-tuple where
+            ``storage_class`` is ``None`` when absent, ``is_inline`` is ``True``
+            when the ``inline`` keyword appeared, and ``is_noreturn`` is ``True``
+            when the ``_Noreturn`` keyword appeared.
 
         Raises:
             ParseError: If no type specifier is present, if a type specifier
@@ -856,6 +860,7 @@ class Parser:
         last_type_tok: Token | None = None
         storage: StorageClass | None = None
         is_inline: bool = False
+        is_noreturn: bool = False
         struct_tag: str | None = None
         union_tag: str | None = None
         enum_tag: str | None = None
@@ -871,6 +876,10 @@ class Parser:
             if peek.type == TokenType.INLINE:
                 self._consume()
                 is_inline = True
+                continue
+            if peek.type == TokenType.NORETURN:
+                self._consume()
+                is_noreturn = True
                 continue
             if peek.type == TokenType.STRUCT:
                 if type_seen:
@@ -930,7 +939,7 @@ class Parser:
                     volatile=TokenType.VOLATILE in seen_qualifiers,
                     restrict=TokenType.RESTRICT in seen_qualifiers,
                 )
-            return resolved, storage, is_inline
+            return resolved, storage, is_inline, is_noreturn
 
         base_type = self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag, enum_tag)
         if seen_qualifiers:
@@ -940,7 +949,7 @@ class Parser:
                 volatile=TokenType.VOLATILE in seen_qualifiers,
                 restrict=TokenType.RESTRICT in seen_qualifiers,
             )
-        return base_type, storage, is_inline
+        return base_type, storage, is_inline, is_noreturn
 
     def _parse_params(self) -> tuple[tuple[Parameter, ...], bool]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -1258,7 +1267,7 @@ class Parser:
             return TypedefDecl(name=alias_name, aliased_type=full_typedef_type)
 
         first_token = self._peek()
-        base_type, storage, is_inline = self._parse_specifiers()
+        base_type, storage, is_inline, is_noreturn = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
         full_type = transform(base_type)
 
@@ -1282,6 +1291,7 @@ class Parser:
                     source_file=first_token.filename if first_token is not None else "",
                     source_line=first_token.line if first_token is not None else 0,
                     is_inline=is_inline,
+                    is_noreturn=is_noreturn,
                 )
             )
         init: Initializer | None = None
@@ -1560,7 +1570,7 @@ class Parser:
             ParseError: If a function declarator is detected, if the identifier or
                 semicolon is missing, or if the initialiser expression is malformed.
         """
-        base_type, storage, _is_inline = self._parse_specifiers()
+        base_type, storage, _is_inline, _is_noreturn = self._parse_specifiers()
         name, transform, _params = self._parse_declarator()
         full_type = transform(base_type)
         if isinstance(full_type, FunType):

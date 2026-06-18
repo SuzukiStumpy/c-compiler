@@ -937,3 +937,10 @@ def test_inline_keyword_produces_inline_token_not_identifier(preprocess_c_file: 
     tokens = lexer(preprocess_c_file("valid/inline_function.c"))
     inline_token = next(t for t in tokens if t.value == "inline")
     assert inline_token.type == TokenType.INLINE
+
+
+def test_noreturn_keyword_produces_noreturn_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """``_Noreturn`` is a keyword and must produce a ``NORETURN`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/noreturn_function.c"))
+    noreturn_token = next(t for t in tokens if t.value == "_Noreturn")
+    assert noreturn_token.type == TokenType.NORETURN

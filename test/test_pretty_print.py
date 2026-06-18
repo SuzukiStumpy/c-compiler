@@ -77,6 +77,7 @@ def test_minimal_program_indentation() -> None:
         '                source_file=""\n'
         "                source_line=0\n"
         "                is_inline=False\n"
+        "                is_noreturn=False\n"
         "            )\n"
         "        )\n"
         "    )\n"
@@ -239,7 +240,7 @@ def test_function_with_none_body_renders_inline() -> None:
     assert pretty_print(node) == (
         'Function(name="foo", params=(), body=None, '
         "fun_type=FunType(params=(), ret=IntType(), variadic=False), "
-        'globl=False, storage_class=None, source_file="", source_line=0, is_inline=False)'
+        'globl=False, storage_class=None, source_file="", source_line=0, is_inline=False, is_noreturn=False)'
     )
 
 
