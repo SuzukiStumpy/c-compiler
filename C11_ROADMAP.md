@@ -5,7 +5,7 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | Feature | Effort | Effect | Notes |
 |---|---|---|---|
 | `-I`/`-D`/`-U` passthrough | L | H | ✓ Done — forwarded to GCC preprocessor |
-| `inline` specifier | L | M | Parse + mostly ignore; affects external linkage rules only |
+| `inline` specifier | L | M | ✓ Done — parsed; `Function.is_inline` flag set; no inlining performed |
 | `_Noreturn` | L | L | Parse + ignore; hint only |
 | `_Static_assert` | L | M | Constant expr eval → error; already have const eval |
 | Inline enum `enum E { A } x;` | L | M | Parser-only change |

@@ -149,6 +149,9 @@ class Function:
             available (e.g. in hand-constructed ASTs used by tests).
         source_line: 1-indexed line number of the first token of the function
             declaration in ``source_file``.  Zero when not available.
+        is_inline: ``True`` when the ``inline`` function specifier appears on the
+            declaration.  Stored for completeness; the compiler does not perform
+            inlining and treats this flag as informational only.
     """
 
     name: str
@@ -159,6 +162,7 @@ class Function:
     storage_class: StorageClass | None = None
     source_file: str = ""
     source_line: int = 0
+    is_inline: bool = False
 
 
 @dataclass(frozen=True, slots=True)

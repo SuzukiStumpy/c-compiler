@@ -288,8 +288,13 @@ _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | f
         TokenType.STATIC,
         TokenType.EXTERN,
         TokenType.TYPEDEF,
+        TokenType.INLINE,
     }
 )
+
+# All tokens that may begin or appear within a declaration specifier sequence,
+# combining type specifiers, storage-class keywords, function specifiers, and type qualifiers.
+_ALL_SPECIFIER_TOKENS: frozenset[TokenType] = _DECLARATION_SPECIFIER_TOKENS | _TYPE_QUALIFIER_TOKENS
 
 
 class Parser:
@@ -812,14 +817,14 @@ class Parser:
             raise self._eof_error("expected a declaration, got empty input")
         return Program(declarations=tuple(declarations))
 
-    def _parse_specifiers(self) -> tuple[Type, StorageClass | None]:
+    def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool]:
         """Parse one or more declaration specifiers.
 
         Grammar::
 
-            type-specifier ::= "int" | "long" | "signed" | "unsigned" | "double"
-                              | "struct" identifier
-            specifier      ::= type-specifier | "static" | "extern"
+            type-specifier   ::= "int" | "long" | "signed" | "unsigned" | "double"
+                               | "struct" identifier
+            specifier        ::= type-specifier | "static" | "extern" | "inline"
 
         Consumes a run of specifier tokens in any order.  At least one type
         specifier must appear; ``unsigned`` or ``signed`` alone are treated as
@@ -830,9 +835,14 @@ class Parser:
         specifiers (though a storage-class specifier preceding it is fine,
         e.g. ``static struct Foo``).
 
+        The ``inline`` function specifier (C11 sec. 6.7.4) is parsed and
+        returned as a boolean flag.  The compiler does not perform inlining;
+        the flag is stored on the ``Function`` node for completeness only.
+
         Returns:
-            A ``(type, storage_class)`` pair where ``storage_class`` is
-            ``None`` when no storage-class specifier was present.
+            A ``(type, storage_class, is_inline)`` triple where
+            ``storage_class`` is ``None`` when absent and ``is_inline`` is
+            ``True`` when the ``inline`` keyword appeared.
 
         Raises:
             ParseError: If no type specifier is present, if a type specifier
@@ -845,13 +855,12 @@ class Parser:
         seen_qualifiers: set[TokenType] = set()
         last_type_tok: Token | None = None
         storage: StorageClass | None = None
+        is_inline: bool = False
         struct_tag: str | None = None
         union_tag: str | None = None
         enum_tag: str | None = None
 
-        while (peek := self._peek()) is not None and (
-            peek.type in _DECLARATION_SPECIFIER_TOKENS or peek.type in _TYPE_QUALIFIER_TOKENS  # type: ignore[missing-attribute]
-        ):
+        while (peek := self._peek()) is not None and peek.type in _ALL_SPECIFIER_TOKENS:  # type: ignore[missing-attribute]
             if peek.type in _TYPE_QUALIFIER_TOKENS:
                 seen_qualifiers.add(self._consume().type)
                 continue
@@ -859,6 +868,10 @@ class Parser:
                 # TYPEDEF is intercepted by _parse_declaration before _parse_specifiers is called;
                 # if it appears here something is wrong — stop and let _resolve_type raise.
                 break
+            if peek.type == TokenType.INLINE:
+                self._consume()
+                is_inline = True
+                continue
             if peek.type == TokenType.STRUCT:
                 if type_seen:
                     raise self._token_error("'struct' cannot be combined with other type specifiers", peek)
@@ -902,20 +915,22 @@ class Parser:
                 last_type_tok = tok
 
         # If no type specifiers were consumed yet, check for a typedef-name identifier.
-        if not type_seen and struct_tag is None and union_tag is None and enum_tag is None:
-            peek = self._peek()
-            if peek is not None and peek.type == TokenType.IDENTIFIER:
-                resolved = self._lookup_typedef(peek.value)
-                if resolved is not None:
-                    self._consume()
-                    if seen_qualifiers:
-                        resolved = QualifiedType(
-                            base=resolved,
-                            const=TokenType.CONST in seen_qualifiers,
-                            volatile=TokenType.VOLATILE in seen_qualifiers,
-                            restrict=TokenType.RESTRICT in seen_qualifiers,
-                        )
-                    return resolved, storage
+        no_type_info = not type_seen and struct_tag is None and union_tag is None and enum_tag is None
+        if (
+            no_type_info
+            and (peek := self._peek()) is not None
+            and peek.type == TokenType.IDENTIFIER
+            and (resolved := self._lookup_typedef(peek.value)) is not None
+        ):
+            self._consume()
+            if seen_qualifiers:
+                resolved = QualifiedType(
+                    base=resolved,
+                    const=TokenType.CONST in seen_qualifiers,
+                    volatile=TokenType.VOLATILE in seen_qualifiers,
+                    restrict=TokenType.RESTRICT in seen_qualifiers,
+                )
+            return resolved, storage, is_inline
 
         base_type = self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag, enum_tag)
         if seen_qualifiers:
@@ -925,7 +940,7 @@ class Parser:
                 volatile=TokenType.VOLATILE in seen_qualifiers,
                 restrict=TokenType.RESTRICT in seen_qualifiers,
             )
-        return base_type, storage
+        return base_type, storage, is_inline
 
     def _parse_params(self) -> tuple[tuple[Parameter, ...], bool]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -1243,7 +1258,7 @@ class Parser:
             return TypedefDecl(name=alias_name, aliased_type=full_typedef_type)
 
         first_token = self._peek()
-        base_type, storage = self._parse_specifiers()
+        base_type, storage, is_inline = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
         full_type = transform(base_type)
 
@@ -1266,6 +1281,7 @@ class Parser:
                     storage_class=storage,
                     source_file=first_token.filename if first_token is not None else "",
                     source_line=first_token.line if first_token is not None else 0,
+                    is_inline=is_inline,
                 )
             )
         init: Initializer | None = None
@@ -1544,7 +1560,7 @@ class Parser:
             ParseError: If a function declarator is detected, if the identifier or
                 semicolon is missing, or if the initialiser expression is malformed.
         """
-        base_type, storage = self._parse_specifiers()
+        base_type, storage, _is_inline = self._parse_specifiers()
         name, transform, _params = self._parse_declarator()
         full_type = transform(base_type)
         if isinstance(full_type, FunType):

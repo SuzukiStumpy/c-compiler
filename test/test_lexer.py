@@ -930,3 +930,10 @@ def test_restrict_keyword_produces_restrict_token_not_identifier(preprocess_c_fi
     tokens = lexer(preprocess_c_file("valid/qualifiers.c"))
     restrict_token = next(t for t in tokens if t.value == "restrict")
     assert restrict_token.type == TokenType.RESTRICT
+
+
+def test_inline_keyword_produces_inline_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """``inline`` is a keyword and must produce an ``INLINE`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/inline_function.c"))
+    inline_token = next(t for t in tokens if t.value == "inline")
+    assert inline_token.type == TokenType.INLINE

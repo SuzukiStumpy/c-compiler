@@ -110,6 +110,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Floating-point**: `float`, `double`, `long double` (x87 80-bit, stored as 16 bytes on Linux)
 - **Derived types**: pointers, arrays (fixed-size), structs, unions, enums, function pointers, bitfields
 - **Type qualifiers**: `const`, `volatile`, `restrict` (parsed; restrict has no semantic effect)
+- **Function specifiers**: `inline` (parsed; stored as `Function.is_inline`; no inlining performed — flag is informational only)
 - **Storage classes**: `auto`, `static`, `extern`, `typedef`
 - **Control flow**: `if`/`else`, `while`, `do`/`while`, `for`, `switch`/`case`/`default`, `break`, `continue`, `goto`, labels
 - **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, member access (`.` and `->`)

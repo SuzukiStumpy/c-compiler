@@ -85,6 +85,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Storage classes: `static` and `extern`
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
+- Function specifier: `inline` — parsed and stored on the function declaration; no inlining is performed
 
 ### Semantic analysis
 
@@ -276,7 +277,6 @@ Neither is recognised.
 
 | Missing feature | C11 reference | Notes |
 |---|---|---|
-| `inline` function specifier | sec. 6.7.4 | Inline hint to the optimiser; also affects external linkage rules. |
 | `_Noreturn` function specifier | sec. 6.7.4 | Marks functions that never return (e.g. `exit`, `abort`). |
 | `_Static_assert` | sec. 6.7.10 | Compile-time assertion; fails the translation if a constant expression is false. |
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>`. |
