@@ -48,6 +48,8 @@ uv run test
 
 ## Architecture
 
+See `ARCHITECTURE.md` for the full architecture reference (pipeline, node types, optimiser, ABI, supported C subset, test layout). **Keep `ARCHITECTURE.md` up to date whenever you make changes to the codebase.**
+
 Tests go in `test/`. Pytest is configured to look there and ignores the `compiler/` source directory for test discovery (`norecursedirs` + `addopts = "--ignore=compiler"`).
 
 The `compiler` package is installed in editable mode into `.venv` via the `c_compiler.pth` path file, so `import compiler` works without reinstalling after edits.

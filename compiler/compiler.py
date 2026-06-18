@@ -170,6 +170,9 @@ def compile(
     is_flag=True,
     help="Don't assemble or link, just produce the assembly file.",
 )
+@click.option("-I", "include_dirs", multiple=True, help="Add a directory to the preprocessor include search path.")
+@click.option("-D", "defines", multiple=True, help="Define a preprocessor macro (NAME or NAME=VALUE).")
+@click.option("-U", "undefines", multiple=True, help="Undefine a preprocessor macro.")
 @click.option("-l", "libraries", multiple=True, help="Link a library into the compiled binary")
 @click.option(
     "--lex",
@@ -216,6 +219,9 @@ def compiler(
     source: str,
     c: bool,
     s: bool,
+    include_dirs: tuple[str, ...],
+    defines: tuple[str, ...],
+    undefines: tuple[str, ...],
     libraries: tuple[str, ...],
     lex: bool,
     parse: bool,
@@ -234,6 +240,9 @@ def compiler(
         source: Path to the C source file to compile.
         c: Don't link an executable file, just produce object file.
         s: Don't assemble or link, just produce the assembly file.
+        include_dirs: Directories forwarded as ``-I`` to the GCC preprocessor.
+        defines: Macro definitions forwarded as ``-D`` to the GCC preprocessor.
+        undefines: Macros to undefine, forwarded as ``-U`` to the GCC preprocessor.
         libraries: Libraries to link into the compiled binary.
         lex: Stop the pipeline after lexing.
         parse: Stop the pipeline after parsing; print the AST.
@@ -267,7 +276,7 @@ def compiler(
     )
 
     try:
-        pre_processed = preprocess(Path(source))
+        pre_processed = preprocess(Path(source), include_dirs=include_dirs, defines=defines, undefines=undefines)
         compile(pre_processed, stages=stages, exe_out=not c, assembly_only=s, libs=libraries, optimize=optimisations)
     except (LexerError, ParseError, CodeGenerationError) as ex:
         click.echo(format_for_terminal(ex), err=True)

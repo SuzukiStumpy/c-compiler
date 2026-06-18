@@ -11,7 +11,12 @@ from compiler.utils.exceptions import SubprocessError
     lambda result: SubprocessError(result[0], "gcc", result[1]),
     ok=lambda result: isinstance(result, Path),
 )
-def preprocess(source: Path) -> tuple[int, str] | Path:
+def preprocess(
+    source: Path,
+    include_dirs: tuple[str, ...] = (),
+    defines: tuple[str, ...] = (),
+    undefines: tuple[str, ...] = (),
+) -> tuple[int, str] | Path:
     """Run the GCC preprocessor on a C source file.
 
     Invokes ``gcc -E`` to expand macros and include directives, writing the
@@ -21,6 +26,9 @@ def preprocess(source: Path) -> tuple[int, str] | Path:
 
     Args:
         source: Path to the ``.c`` file to preprocess.
+        include_dirs: Directories appended as ``-I<dir>`` to the gcc invocation.
+        defines: Macro definitions appended as ``-D<name[=value]>`` to gcc.
+        undefines: Macros to undefine, appended as ``-U<name>`` to gcc.
 
     Returns:
         The path to the generated ``.i`` file on success.
@@ -33,14 +41,16 @@ def preprocess(source: Path) -> tuple[int, str] | Path:
 
     print(f"Preprocessing {source}...")
 
+    gcc_args = ["gcc", "-E", source.as_posix(), "-o", (Path(file_path) / f"{file_name_no_ext}.i").as_posix()]
+    for d in include_dirs:
+        gcc_args.append(f"-I{d}")
+    for d in defines:
+        gcc_args.append(f"-D{d}")
+    for u in undefines:
+        gcc_args.append(f"-U{u}")
+
     r = subprocess.run(
-        [
-            "gcc",
-            "-E",
-            source.as_posix(),
-            "-o",
-            (Path(file_path) / f"{file_name_no_ext}.i").as_posix(),
-        ],
+        gcc_args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

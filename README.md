@@ -153,6 +153,9 @@ Usage: compiler [OPTIONS] SOURCE
 Options:
   -c                            Don't link; produce an object file.
   -S                            Don't assemble or link; produce the assembly file.
+  -I DIR                        Add DIR to the preprocessor include search path (repeatable).
+  -D NAME[=VALUE]               Define a preprocessor macro (repeatable).
+  -U NAME                       Undefine a preprocessor macro (repeatable).
   -l NAME                       Link library NAME (repeatable).
   --lex                         Stop after lexing.
   --parse                       Stop after parsing; print the AST.
@@ -167,7 +170,7 @@ Options:
   --help                        Show this message and exit.
 ```
 
-The stage flags are mutually exclusive. `-c`, `-S`, and `-l` may be combined freely.
+The stage flags are mutually exclusive. `-c`, `-S`, `-l`, `-I`, `-D`, and `-U` may be combined freely.
 
 ### Examples
 
@@ -177,6 +180,12 @@ compiler hello.c
 
 # Link against the math library
 compiler -lm hello.c
+
+# Add an include directory and define a macro
+compiler -I/usr/local/include -DNDEBUG hello.c
+
+# Undefine a macro
+compiler -UDEBUG hello.c
 
 # Compile to an object file only
 compiler -c hello.c
@@ -303,9 +312,8 @@ VLAs (sec. 6.7.6.2) - arrays whose size is a runtime expression - were mandatory
 The compiler accepts exactly one source file per invocation (`nargs=1`). There is no support for:
 
 - Compiling multiple `.c` files in a single invocation
-- Passing `-I` (include search path), `-D` (macro define), or `-U` (macro undefine) flags through to the GCC preprocessor
 
-Separate compilation of individual files followed by linking with a system linker does work, because each `.c` file is compiled to a standard ELF object file.
+`-I`, `-D`, and `-U` are supported and forwarded directly to the GCC preprocessor. Separate compilation of individual files followed by linking with a system linker does work, because each `.c` file is compiled to a standard ELF object file.
 
 ### Standard library
 
