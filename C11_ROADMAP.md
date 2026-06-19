@@ -11,8 +11,8 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | Inline enum `enum E { A } x;` | L | M | ✓ Done — `_parse_enum_declaration` emits `[EnumDecl, VarDecl]`; callers use `extend` |
 | Anonymous enum `enum { A, B }` standalone | L | L | ✓ Done — tag is optional; `None` → unique internal tag via `_make_enum_tag("")` |
 | Full constant-expr enum values | L | M | Extend existing const evaluator |
-| `_Alignof` | M | M | New operator; type-size lookup |
-| `_Alignas` | M | M | Parse + emit `.align`; affects struct layout |
+| `_Alignof` | M | M | ✓ Done — `AlignOf(exp)` / `AlignOfT(type)` AST nodes; evaluates at SA to `unsigned long` alignment; TAC constant-folds to natural alignment |
+| `_Alignas` | M | M | ✓ Done — `VariableDeclaration.align_as_exp` parsed; SA evaluates to `align_as: int`; static `.balign` and local stack-slot alignment override |
 | Designated initialisers `{.x=1}` | M | H | ✓ Done — struct member (`.field = val`) and array index (`[n] = val`) designators; mixed positional/designated supported |
 | Compound literals `(T){...}` | M | M | Parse as temp + existing init machinery |
 | Flexible array members | M | M | Incomplete-type size calc |

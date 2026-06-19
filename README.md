@@ -55,6 +55,7 @@ All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to eve
 - Assignment `=` and compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - Explicit type casts
 - `sizeof` on expressions and on type names
+- `_Alignof` on expressions and on type names — returns `unsigned long` alignment of the type at compile time
 - Address-of `&` and pointer dereference `*`
 - Array subscript `arr[i]`
 - Struct and union member access: `.` and `->`
@@ -87,6 +88,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
 - Function specifiers: `inline` — parsed and stored on the function declaration; no inlining is performed; `_Noreturn` — parsed and stored on the function declaration; no contract enforcement is performed
 - `_Static_assert(expr, msg)` at file scope and block scope — constant expression evaluated at compile time; a zero result is a compile-time error with the supplied message; no runtime code is emitted
+- `_Alignas(expr)` and `_Alignas(type)` alignment specifiers on variable declarations — evaluated at compile time; overrides `.balign` for static variables and stack-slot alignment for local variables; value must be a positive power of two
 
 ### Semantic analysis
 
@@ -268,11 +270,6 @@ C11 introduced a concurrency model alongside `<stdatomic.h>`:
 - **`_Thread_local`** storage-class specifier (sec. 6.7.1) - per-thread static storage.
 
 Neither is recognised.
-
-### Alignment
-
-- **`_Alignas`** specifier (sec. 6.7.5) - over-align a declaration.
-- **`_Alignof`** operator (sec. 6.5.3.4) - query alignment of a type.
 
 ### Declarations and specifiers
 

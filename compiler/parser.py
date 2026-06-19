@@ -91,6 +91,8 @@ from pathlib import Path
 from compiler.syntax.ast import (
     Add,
     AddrOf,
+    AlignOf,
+    AlignOfT,
     And,
     Array,
     Arrow,
@@ -297,6 +299,7 @@ _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | f
         TokenType.INLINE,
         TokenType.NORETURN,
         TokenType.STATIC_ASSERT,
+        TokenType.ALIGNAS,
     }
 )
 
@@ -826,15 +829,17 @@ class Parser:
             raise self._eof_error("expected a declaration, got empty input")
         return Program(declarations=tuple(declarations))
 
-    def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool, bool]:
+    def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool, bool, Exp | None]:  # noqa: C901
         """Parse one or more declaration specifiers.
 
         Grammar::
 
-            type-specifier   ::= "int" | "long" | "signed" | "unsigned" | "double"
-                               | "struct" identifier
-            specifier        ::= type-specifier | "static" | "extern" | "inline"
-                               | "_Noreturn"
+            type-specifier        ::= "int" | "long" | "signed" | "unsigned" | "double"
+                                    | "struct" identifier
+            alignment-specifier   ::= "_Alignas" "(" type-name ")"
+                                    | "_Alignas" "(" constant-expression ")"
+            specifier             ::= type-specifier | "static" | "extern" | "inline"
+                                    | "_Noreturn" | alignment-specifier
 
         Consumes a run of specifier tokens in any order.  At least one type
         specifier must appear; ``unsigned`` or ``signed`` alone are treated as
@@ -850,11 +855,16 @@ class Parser:
         flags.  The compiler does not perform inlining or enforce no-return
         contracts; the flags are stored on the ``Function`` node for completeness.
 
+        ``_Alignas(type)`` is normalised to ``AlignOfT(type)`` and
+        ``_Alignas(expr)`` is returned as the raw expression; semantic analysis
+        evaluates the expression to a concrete integer.
+
         Returns:
-            A ``(type, storage_class, is_inline, is_noreturn)`` 4-tuple where
-            ``storage_class`` is ``None`` when absent, ``is_inline`` is ``True``
-            when the ``inline`` keyword appeared, and ``is_noreturn`` is ``True``
-            when the ``_Noreturn`` keyword appeared.
+            A ``(type, storage_class, is_inline, is_noreturn, align_as_exp)`` 5-tuple
+            where ``storage_class`` is ``None`` when absent, ``is_inline`` is ``True``
+            when the ``inline`` keyword appeared, ``is_noreturn`` is ``True`` when the
+            ``_Noreturn`` keyword appeared, and ``align_as_exp`` holds the raw
+            alignment expression from ``_Alignas`` (or ``None`` if absent).
 
         Raises:
             ParseError: If no type specifier is present, if a type specifier
@@ -869,6 +879,7 @@ class Parser:
         storage: StorageClass | None = None
         is_inline: bool = False
         is_noreturn: bool = False
+        align_as_exp: Exp | None = None
         struct_tag: str | None = None
         union_tag: str | None = None
         enum_tag: str | None = None
@@ -888,6 +899,28 @@ class Parser:
             if peek.type == TokenType.NORETURN:
                 self._consume()
                 is_noreturn = True
+                continue
+            if peek.type == TokenType.ALIGNAS:
+                self._consume()  # consume '_Alignas'
+                self._expect(TokenType.LPAREN)
+                next_tok = self._peek()
+                if next_tok is not None and (
+                    next_tok.type in _TYPE_SPECIFIER_TOKENS or next_tok.type in _TYPE_QUALIFIER_TOKENS
+                ):
+                    base_t = self._parse_type()
+                    if (
+                        self._match(TokenType.ASTERISK)
+                        or self._match(TokenType.LPAREN)
+                        or self._match(TokenType.LBRACKET)
+                    ):
+                        alignas_type: Type = self._parse_abstract_declarator()(base_t)
+                    else:
+                        alignas_type = base_t
+                    self._expect(TokenType.RPAREN)
+                    align_as_exp = AlignOfT(t=alignas_type)
+                else:
+                    align_as_exp = self._parse_exp()
+                    self._expect(TokenType.RPAREN)
                 continue
             if peek.type == TokenType.STRUCT:
                 if type_seen:
@@ -947,7 +980,7 @@ class Parser:
                     volatile=TokenType.VOLATILE in seen_qualifiers,
                     restrict=TokenType.RESTRICT in seen_qualifiers,
                 )
-            return resolved, storage, is_inline, is_noreturn
+            return resolved, storage, is_inline, is_noreturn, align_as_exp
 
         base_type = self._resolve_type(frozenset(type_seen), last_type_tok, struct_tag, union_tag, enum_tag)
         if seen_qualifiers:
@@ -957,7 +990,7 @@ class Parser:
                 volatile=TokenType.VOLATILE in seen_qualifiers,
                 restrict=TokenType.RESTRICT in seen_qualifiers,
             )
-        return base_type, storage, is_inline, is_noreturn
+        return base_type, storage, is_inline, is_noreturn, align_as_exp
 
     def _parse_params(self) -> tuple[tuple[Parameter, ...], bool]:
         """Parse the parameter list between the parentheses of a function declaration.
@@ -1291,7 +1324,7 @@ class Parser:
             return [TypedefDecl(name=alias_name, aliased_type=full_typedef_type)]
 
         first_token = self._peek()
-        base_type, storage, is_inline, is_noreturn = self._parse_specifiers()
+        base_type, storage, is_inline, is_noreturn, align_as_exp = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
         full_type = transform(base_type)
 
@@ -1328,7 +1361,7 @@ class Parser:
         return [
             VarDecl(
                 variable_declaration=VariableDeclaration(
-                    name=name, init=init, var_type=full_type, storage_class=storage
+                    name=name, init=init, var_type=full_type, storage_class=storage, align_as_exp=align_as_exp
                 )
             )
         ]
@@ -1730,7 +1763,7 @@ class Parser:
             ParseError: If a function declarator is detected, if the identifier or
                 semicolon is missing, or if the initialiser expression is malformed.
         """
-        base_type, storage, _is_inline, _is_noreturn = self._parse_specifiers()
+        base_type, storage, _is_inline, _is_noreturn, align_as_exp_for = self._parse_specifiers()
         name, transform, _params = self._parse_declarator()
         full_type = transform(base_type)
         if isinstance(full_type, FunType):
@@ -1743,7 +1776,9 @@ class Parser:
             init = self._parse_initializer()
         self._expect(TokenType.SEMICOLON)
         return VarDecl(
-            variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
+            variable_declaration=VariableDeclaration(
+                name=name, init=init, var_type=full_type, storage_class=storage, align_as_exp=align_as_exp_for
+            )
         )
 
     def _parse_for_init(self) -> ForInit:
@@ -2143,6 +2178,26 @@ class Parser:
                         self._expect(TokenType.RPAREN)
                         return SizeOfT(t=sizeof_type)
                 return SizeOf(exp=self._parse_cast_exp())
+            case TokenType.ALIGNOF:
+                self._consume()
+                if self._match(TokenType.LPAREN):
+                    next_tok = self._peek(1)
+                    if next_tok is not None and (
+                        next_tok.type in _TYPE_SPECIFIER_TOKENS or next_tok.type in _TYPE_QUALIFIER_TOKENS
+                    ):
+                        self._consume()  # consume "("
+                        base_type = self._parse_type()
+                        if (
+                            self._match(TokenType.ASTERISK)
+                            or self._match(TokenType.LPAREN)
+                            or self._match(TokenType.LBRACKET)
+                        ):
+                            alignof_type: Type = self._parse_abstract_declarator()(base_type)
+                        else:
+                            alignof_type = base_type
+                        self._expect(TokenType.RPAREN)
+                        return AlignOfT(t=alignof_type)
+                return AlignOf(exp=self._parse_cast_exp())
             case (
                 TokenType.NUMBER
                 | TokenType.LONGLONG

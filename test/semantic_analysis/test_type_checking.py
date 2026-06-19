@@ -739,3 +739,41 @@ class TestBoolType:
         """Assigning a nonzero int constant to ``_Bool`` resolves without error."""
         prog = _program((_vd("x", ast.Constant(ast.ConstInt(5)), BoolType()),) + _return_exp(_int_const()))
         resolve(prog)
+
+
+class TestAlignOfTypeChecking:
+    """``AlignOf`` and ``AlignOfT`` expressions are correctly typed."""
+
+    def test_alignof_t_int_has_ulong_type(self) -> None:
+        """``_Alignof(int)`` yields an expression of type ``ULongType``."""
+        body = _expr_stmt(ast.AlignOfT(ast.IntType())) + _return_exp(_int_const())
+        resolved = resolve(_program(body))
+        stmt = resolved.declarations[0].function_declaration.body[0].statement
+        assert isinstance(stmt, ast.Expression)
+        assert stmt.exp.exp_type == ast.ULongType()
+
+    def test_alignof_t_double_has_ulong_type(self) -> None:
+        """``_Alignof(double)`` yields an expression of type ``ULongType``."""
+        body = _expr_stmt(ast.AlignOfT(ast.DoubleType())) + _return_exp(_int_const())
+        resolved = resolve(_program(body))
+        stmt = resolved.declarations[0].function_declaration.body[0].statement
+        assert isinstance(stmt, ast.Expression)
+        assert stmt.exp.exp_type == ast.ULongType()
+
+    def test_alignof_expression_has_ulong_type(self) -> None:
+        """``_Alignof x`` for an ``int`` variable yields an expression of type ``ULongType``."""
+        body = (
+            (_vd("x", ast.Constant(ast.ConstInt(1))),)
+            + _expr_stmt(ast.AlignOf(ast.Var("x")))
+            + _return_exp(_int_const())
+        )
+        resolved = resolve(_program(body))
+        stmt = resolved.declarations[0].function_declaration.body[1].statement
+        assert isinstance(stmt, ast.Expression)
+        assert stmt.exp.exp_type == ast.ULongType()
+
+    def test_alignof_t_void_raises(self) -> None:
+        """``_Alignof(void)`` raises ``SemanticError`` because ``void`` has no alignment."""
+        prog = _program(_return_exp(ast.AlignOfT(ast.VoidType())))
+        with pytest.raises(SemanticError):
+            resolve(prog)

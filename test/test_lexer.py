@@ -944,3 +944,17 @@ def test_noreturn_keyword_produces_noreturn_token_not_identifier(preprocess_c_fi
     tokens = lexer(preprocess_c_file("valid/noreturn_function.c"))
     noreturn_token = next(t for t in tokens if t.value == "_Noreturn")
     assert noreturn_token.type == TokenType.NORETURN
+
+
+def test_alignof_keyword_produces_alignof_token(preprocess_c_file: Preprocessor) -> None:
+    """``_Alignof`` is a keyword and must produce an ``ALIGNOF`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/alignof_basic.c"))
+    alignof_token = next(t for t in tokens if t.value == "_Alignof")
+    assert alignof_token.type == TokenType.ALIGNOF
+
+
+def test_alignas_keyword_produces_alignas_token(preprocess_c_file: Preprocessor) -> None:
+    """``_Alignas`` is a keyword and must produce an ``ALIGNAS`` token, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/alignas_basic.c"))
+    alignas_token = next(t for t in tokens if t.value == "_Alignas")
+    assert alignas_token.type == TokenType.ALIGNAS

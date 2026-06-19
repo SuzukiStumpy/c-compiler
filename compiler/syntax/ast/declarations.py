@@ -38,12 +38,19 @@ class VariableDeclaration:
             ``None`` if the variable is declared without an initial value.
         var_type: The type of this variable.
         storage_class: The storage class specifier, or ``None`` if omitted.
+        align_as_exp: Raw alignment expression from ``_Alignas(expr)`` or
+            ``_Alignas(type)`` (represented as ``AlignOfT``), or ``None`` if
+            no alignment specifier was present.  Consumed by semantic analysis.
+        align_as: Evaluated alignment in bytes from ``_Alignas``, set by
+            semantic analysis.  ``None`` when no ``_Alignas`` specifier appeared.
     """
 
     name: str
     init: Initializer | None
     var_type: Type
     storage_class: StorageClass | None = None
+    align_as_exp: Exp | None = None
+    align_as: int | None = None
 
     def __post_init__(self) -> None:
         """Wrap a bare ``Exp`` passed as ``init`` in a ``SingleInit`` node.

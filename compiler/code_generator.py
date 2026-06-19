@@ -588,12 +588,12 @@ def generate(
                         gp_callee_size=gp_callee_size,
                     )
                 )
-            case tac.StaticVariable(name=name, globl=globl, t=t, init=init):
+            case tac.StaticVariable(name=name, globl=globl, t=t, init=init, align_as=align_as):
                 definitions.append(
                     asm.StaticVariable(
                         identifier=name,
                         globl=globl,
-                        alignment=_static_alignment(t),
+                        alignment=align_as if align_as is not None else _static_alignment(t),
                         init=tuple(_translate_static_init(i) for i in init),
                         read_only=is_const(t),
                     )
@@ -3541,13 +3541,18 @@ def _replace_pseudos(
         if operand.name not in pseudo_offsets:
             # Compiler-generated hidden-return-pointer pseudo is always pointer-sized (8 bytes).
             size = 8 if operand.name == ".__ret_ptr" else 4
+            alignment = 1
             if symbol_table is not None and operand.name in symbol_table:
-                t = symbol_table[operand.name].t
+                entry = symbol_table[operand.name]
+                t = entry.t
                 if isinstance(t, (LongType, ULongType, LongLongType, ULongLongType, DoubleType, Pointer)):
                     size = 8
                 elif isinstance(t, (Char, UChar, SChar)):
                     size = 1
+                alignment = entry.align_as if entry.align_as is not None else size
             next_offset[0] -= size
+            if alignment > 1:
+                next_offset[0] = (next_offset[0] // alignment) * alignment
             pseudo_offsets[operand.name] = next_offset[0]
         return asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=pseudo_offsets[operand.name])
 

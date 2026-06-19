@@ -367,10 +367,13 @@ class SymbolTableEntry:
         t: The C type of the symbol, carried through from the AST.
         attrs: The attribute variant that describes how this symbol should be
                treated by downstream compilation passes.
+        align_as: Explicit alignment in bytes from ``_Alignas``, or ``None``
+            when no alignment specifier was present.
     """
 
     t: Type
     attrs: SymbolAttrs
+    align_as: int | None = None
 
 
 SymbolTable = dict[str, SymbolTableEntry]

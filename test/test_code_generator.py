@@ -3515,3 +3515,46 @@ class TestSetBitFieldCodegen:
         )
         instrs = generate(_bf_program(instr), _bf_sym("s")).definitions[0].instructions
         assert not any(isinstance(i, asm.Shl) for i in instrs), "no Shl needed when bit_offset=0"
+
+
+class TestAlignAsCodeGen:
+    """``_Alignas`` alignment overrides are applied to static variable ``.balign`` directives."""
+
+    def test_alignas_overrides_static_var_alignment(self) -> None:
+        """``tac.StaticVariable(align_as=16)`` emits ``asm.StaticVariable(alignment=16)`` for an int."""
+        prog = tac.Program(
+            top_level=(tac.StaticVariable(name="x", globl=True, t=IntType(), init=(tac.IntInit(0),), align_as=16),)
+        )
+        asm_prog = generate(prog, {})
+        sv = next(d for d in asm_prog.definitions if isinstance(d, asm.StaticVariable) and d.identifier == "x")
+        assert sv.alignment == 16
+
+    def test_no_alignas_uses_natural_alignment(self) -> None:
+        """``tac.StaticVariable`` without ``align_as`` keeps the natural 4-byte alignment for int."""
+        prog = tac.Program(top_level=(tac.StaticVariable(name="x", globl=True, t=IntType(), init=(tac.IntInit(0),)),))
+        asm_prog = generate(prog, {})
+        sv = next(d for d in asm_prog.definitions if isinstance(d, asm.StaticVariable) and d.identifier == "x")
+        assert sv.alignment == 4
+
+    def test_alignas_local_var_aligns_stack_slot(self) -> None:
+        """A local int with ``align_as=16`` in the symbol table must be placed at a 16-byte-aligned offset."""
+        from compiler.code_generator import _replace_pseudos
+        from compiler.types.symbols import LocalAttr, SymbolTableEntry
+
+        sym = {"x": SymbolTableEntry(t=IntType(), attrs=LocalAttr(), align_as=16)}
+        pseudo_fn = asm.Function(
+            name="main",
+            globl=False,
+            instructions=(asm.Mov(src=asm.Pseudo("x"), dst=asm.Pseudo("x"), assembly_type=asm.Longword()),),
+            gp_callee_saved=(),
+        )
+        resolved_fn, _ = _replace_pseudos(pseudo_fn, frozenset(), symbol_table=sym)
+        mem_ops = [
+            op
+            for instr in resolved_fn.instructions
+            for op in [getattr(instr, "src", None), getattr(instr, "dst", None)]
+            if isinstance(op, asm.Memory)
+        ]
+        assert mem_ops, "expected at least one Memory operand"
+        for mem in mem_ops:
+            assert mem.offset % 16 == 0, f"stack offset {mem.offset} not 16-byte aligned"

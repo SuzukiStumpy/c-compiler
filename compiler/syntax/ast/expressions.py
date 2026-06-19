@@ -238,6 +238,30 @@ class SizeOfT(Exp):
     t: Type
 
 
+@dataclass(frozen=True, slots=True)
+class AlignOf(Exp):
+    """Expression returning the alignment of the type of the given expression.
+
+    The expression is not evaluated; only its type is inspected.
+
+    Attributes:
+        exp: The expression whose type alignment is queried.
+    """
+
+    exp: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class AlignOfT(Exp):
+    """Expression returning the alignment requirement of the specified type.
+
+    Attributes:
+        t: The type whose alignment requirement is returned.
+    """
+
+    t: Type
+
+
 class Initializer(ABC):
     """Abstract base for initializer objects.  Wraps the SingleInit and CompoundInit
     AST Nodes

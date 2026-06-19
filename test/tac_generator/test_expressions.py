@@ -886,3 +886,38 @@ class TestBoolCasts:
         """``(_Bool)long_val`` also uses the normalise-via-jump path."""
         instrs = self._cast(BoolType(), ast.LongType(), ast.ConstLong(0))
         assert any(isinstance(i, tac.JumpIfZero) for i in instrs)
+
+
+class TestAlignOfTacGen:
+    """``_Alignof`` and ``_Alignof(T)`` translate to TAC constants."""
+
+    def test_alignof_t_int_returns_constant_4(self) -> None:
+        """``_Alignof(int)`` translates to ``Constant(ConstULong(4))``."""
+        exp = ast.AlignOfT(t=ast.IntType(), exp_type=ast.ULongType())
+        instrs = _body(exp)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstULong(4))),)
+
+    def test_alignof_t_double_returns_constant_8(self) -> None:
+        """``_Alignof(double)`` translates to ``Constant(ConstULong(8))``."""
+        exp = ast.AlignOfT(t=ast.DoubleType(), exp_type=ast.ULongType())
+        instrs = _body(exp)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstULong(8))),)
+
+    def test_alignof_t_long_returns_constant_8(self) -> None:
+        """``_Alignof(long)`` translates to ``Constant(ConstULong(8))``."""
+        exp = ast.AlignOfT(t=ast.LongType(), exp_type=ast.ULongType())
+        instrs = _body(exp)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstULong(8))),)
+
+    def test_alignof_t_char_returns_constant_1(self) -> None:
+        """``_Alignof(char)`` translates to ``Constant(ConstULong(1))``."""
+        exp = ast.AlignOfT(t=ast.Char(), exp_type=ast.ULongType())
+        instrs = _body(exp)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstULong(1))),)
+
+    def test_alignof_expression_uses_exp_type(self) -> None:
+        """``_Alignof x`` for an ``int`` var translates to ``Constant(ConstULong(4))``."""
+        inner = ast.Var(name="x", exp_type=ast.IntType())
+        exp = ast.AlignOf(exp=inner, exp_type=ast.ULongType())
+        instrs = _body(exp)
+        assert instrs == (tac.Return(val=tac.Constant(value=ast.ConstULong(4))),)

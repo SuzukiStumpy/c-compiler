@@ -141,6 +141,7 @@ from itertools import count
 
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
+from compiler.semantic_analysis import type_alignment
 from compiler.types.symbols import (
     BoolInit as SymBoolInit,
 )
@@ -359,15 +360,31 @@ def _convert_symbols_to_tacky(  # noqa: C901 - function too complex
                             skip = True
                             break
                 if not skip:
-                    result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=tuple(static_inits)))
+                    result.append(
+                        tac.StaticVariable(
+                            name=name, globl=globl, t=entry.t, init=tuple(static_inits), align_as=entry.align_as
+                        )
+                    )
             case StaticAttr(init=Tentative(), globl=globl):
                 n_bytes = _type_size(entry.t, struct_type_table)
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.ZeroInit(n_bytes),)))
+                result.append(
+                    tac.StaticVariable(
+                        name=name, globl=globl, t=entry.t, init=(tac.ZeroInit(n_bytes),), align_as=entry.align_as
+                    )
+                )
             case StaticAttr(init=ULongInit(), globl=globl):
                 # Null pointer constant: pointer-sized (8-byte) zero.
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.LongInit(0),)))
+                result.append(
+                    tac.StaticVariable(
+                        name=name, globl=globl, t=entry.t, init=(tac.LongInit(0),), align_as=entry.align_as
+                    )
+                )
             case StaticAttr(init=PointerInit(name=target), globl=globl):
-                result.append(tac.StaticVariable(name=name, globl=globl, t=entry.t, init=(tac.PointerInit(target),)))
+                result.append(
+                    tac.StaticVariable(
+                        name=name, globl=globl, t=entry.t, init=(tac.PointerInit(target),), align_as=entry.align_as
+                    )
+                )
             case StaticAttr(init=NoInitializer()):
                 pass
             case ConstantAttr(init=sym_init):
@@ -652,6 +669,17 @@ class _TacGenerator:
             The size in bytes as reported by ``_type_size``.
         """
         return _type_size(t, self._struct_type_table)
+
+    def _align_of(self, t: ast.Type) -> int:
+        """Return the alignment requirement of ``t`` in bytes.
+
+        Args:
+            t: The C type whose alignment is needed.
+
+        Returns:
+            The alignment in bytes as reported by ``type_alignment``.
+        """
+        return type_alignment(t, self._struct_type_table)
 
     def _get_member(self, tag: str, member_name: str) -> MemberEntry:
         """Return the layout entry for a named member within a struct.
@@ -1747,6 +1775,10 @@ class _TacGenerator:
                 return tac.Constant(ast.ConstULong(self._size_of(inner.exp_type or ast.IntType()))), []
             case ast.SizeOfT(t=t):
                 return tac.Constant(ast.ConstULong(self._size_of(t))), []
+            case ast.AlignOf(exp=inner):
+                return tac.Constant(ast.ConstULong(self._align_of(inner.exp_type or ast.IntType()))), []
+            case ast.AlignOfT(t=t):
+                return tac.Constant(ast.ConstULong(self._align_of(t))), []
             case ast.Constant(value=value):
                 return tac.Constant(value=value), []
             case ast.Unary(

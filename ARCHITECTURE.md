@@ -43,7 +43,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 | Submodule | Contents |
 |---|---|
 | `types.py` | `Type` hierarchy: `IntType`, `LongType`, `UIntType`, `ULongType`, `ShortType`, `UShortType`, `Char`, `SChar`, `UChar`, `BoolType`, `FloatType`, `DoubleType`, `LongDoubleType`, `Int128Type`, `UInt128Type`, `LongLongType`, `ULongLongType`, `VoidType`, `FunType`, `Pointer`, `Array`, `Structure`, `Union`, `EnumType`, `QualifiedType` |
-| `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `Dot`, `Arrow`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit` |
+| `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `AlignOf`, `AlignOfT`, `Dot`, `Arrow`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit` |
 | `statements.py` | `Statement` hierarchy: `Return`, `Expression`, `If`, `Goto`, `Label`, `Compound`, `Break`, `Continue`, `While`, `DoWhile`, `For`, `Switch`, `Case`, `Default`, `Null` |
 | `declarations.py` | `Declaration` hierarchy + `Program`, `Function`, `Block`, `BlockItem`, `VariableDeclaration`, `FunDecl`, `VarDecl`, `StructDecl`, `UnionDecl`, `EnumDecl`, `TypedefDecl`, `StaticAssert`, `Parameter`; `MemberDeclaration` carries optional `nested_decl: StructDecl | UnionDecl | None` for anonymous struct/union members |
 | `constants.py` | `Const` hierarchy: `ConstInt`, `ConstLong`, `ConstUInt`, `ConstULong`, `ConstDouble`, `ConstFloat`, `ConstLongDouble`, `ConstChar`, `ConstUChar`, `ConstShort`, `ConstUShort`, `ConstLongLong`, `ConstULongLong`, `ConstInt128`, `ConstUInt128`, `ConstBool` |
@@ -114,7 +114,8 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Static assertions**: `_Static_assert(expr, msg)` at file scope and block scope; constant expression is evaluated during semantic analysis; a zero result raises a `SemanticError` with the supplied message; no runtime code is emitted
 - **Storage classes**: `auto`, `static`, `extern`, `typedef`
 - **Control flow**: `if`/`else`, `while`, `do`/`while`, `for`, `switch`/`case`/`default`, `break`, `continue`, `goto`, labels
-- **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, member access (`.` and `->`)
+- **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, `_Alignof`, member access (`.` and `->`)
+- **Alignment specifiers**: `_Alignas(expr)` and `_Alignas(type)` on variable declarations; SA evaluates to `VariableDeclaration.align_as: int`; overrides `.balign` for static variables and stack-slot alignment for locals; `_Alignof(type)` / `_Alignof expr` returns `unsigned long` alignment at compile time
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
 - **String literals** (stored as hidden static objects in `.rodata`)
 

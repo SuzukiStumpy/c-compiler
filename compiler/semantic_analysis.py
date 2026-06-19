@@ -1646,6 +1646,32 @@ class SemanticAnalyser:
                 case ast.S(statement=statement):
                     self._collect_labels_in_statement(statement)
 
+    def _eval_alignas(self, exp: ast.Exp) -> int:
+        """Evaluate an ``_Alignas`` expression to a concrete alignment integer.
+
+        Resolves and type-checks the expression, then constant-folds it.  Raises
+        ``SemanticError`` if the expression is not a compile-time constant or if
+        the resulting value is not a positive power of two.
+
+        Args:
+            exp: The raw alignment expression from ``VariableDeclaration.align_as_exp``.
+                May be an ``AlignOfT``, a ``Constant``, or any other constant expression.
+
+        Returns:
+            The alignment in bytes.
+
+        Raises:
+            SemanticError: If the expression is not a constant, is zero, negative,
+                or not a power of two.
+        """
+        typed_exp = self.resolve_exp(exp)
+        val = self._eval_const_expr(typed_exp)
+        if val is None or not isinstance(val, int):
+            raise SemanticError("_Alignas requires a constant integer expression")
+        if val <= 0 or (val & (val - 1)) != 0:
+            raise SemanticError(f"_Alignas value {val} is not a positive power of two")
+        return val
+
     def resolve_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:  # noqa: C901
         """Resolve a block-scope variable declaration against the current symbol table.
 
@@ -1681,8 +1707,13 @@ class SemanticAnalyser:
                 name was already declared in this block; or if a non-``extern``
                 name conflicts with a same-scope function declaration.
         """
+        align_as = self._eval_alignas(var_decl.align_as_exp) if var_decl.align_as_exp is not None else None
         var_decl = ast.VariableDeclaration(
-            var_decl.name, var_decl.init, self._resolve_type(var_decl.var_type), var_decl.storage_class
+            var_decl.name,
+            var_decl.init,
+            self._resolve_type(var_decl.var_type),
+            var_decl.storage_class,
+            align_as=align_as,
         )
         validate_type_specifier(var_decl.var_type, self._struct_type_table)
         if isinstance(unqualify(var_decl.var_type), VoidType):
@@ -1810,11 +1841,19 @@ class SemanticAnalyser:
                     assert isinstance(init, ast.SingleInit)
                     static_init = Initial((self._exp_to_static_init(init.exp),))
                 self._symbol_table[unique_name] = SymbolTableEntry(
-                    t=var_decl.var_type, attrs=StaticAttr(init=static_init, globl=False)
+                    t=var_decl.var_type,
+                    attrs=StaticAttr(init=static_init, globl=False),
+                    align_as=var_decl.align_as,
                 )
             else:
-                self._symbol_table[unique_name] = SymbolTableEntry(t=var_decl.var_type, attrs=LocalAttr())
-            return ast.VariableDeclaration(unique_name, init, var_decl.var_type, var_decl.storage_class)
+                self._symbol_table[unique_name] = SymbolTableEntry(
+                    t=var_decl.var_type,
+                    attrs=LocalAttr(),
+                    align_as=var_decl.align_as,
+                )
+            return ast.VariableDeclaration(
+                unique_name, init, var_decl.var_type, var_decl.storage_class, align_as=var_decl.align_as
+            )
 
     def _resolve_file_scope_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:  # noqa: C901
         """Record a file-scope variable declaration in the identifier table.
@@ -1845,8 +1884,13 @@ class SemanticAnalyser:
                 the same name carried a different C type; or if linkage conflicts
                 with a prior declaration.
         """
+        align_as_file = self._eval_alignas(var_decl.align_as_exp) if var_decl.align_as_exp is not None else None
         var_decl = ast.VariableDeclaration(
-            var_decl.name, var_decl.init, self._resolve_type(var_decl.var_type), var_decl.storage_class
+            var_decl.name,
+            var_decl.init,
+            self._resolve_type(var_decl.var_type),
+            var_decl.storage_class,
+            align_as=align_as_file,
         )
         validate_type_specifier(var_decl.var_type, self._struct_type_table)
         if isinstance(var_decl.var_type, VoidType):
@@ -1956,6 +2000,7 @@ class SemanticAnalyser:
             self._symbol_table[var_decl.name] = SymbolTableEntry(
                 t=var_decl.var_type,
                 attrs=StaticAttr(init=file_init, globl=globl),
+                align_as=var_decl.align_as,
             )
         elif var_decl.storage_class == StorageClass.Extern:
             # A non-defining extern declaration - add a NoInitializer entry only when the name
@@ -1964,6 +2009,7 @@ class SemanticAnalyser:
                 self._symbol_table[var_decl.name] = SymbolTableEntry(
                     t=var_decl.var_type,
                     attrs=StaticAttr(init=NoInitializer(), globl=globl),
+                    align_as=var_decl.align_as,
                 )
         else:
             # Tentative definition - upgrade from NoInitializer but never downgrade from Initial.
@@ -1973,7 +2019,9 @@ class SemanticAnalyser:
                 and isinstance(existing_entry.attrs.init, NoInitializer)
             ):
                 self._symbol_table[var_decl.name] = SymbolTableEntry(
-                    t=var_decl.var_type, attrs=StaticAttr(init=Tentative(), globl=globl)
+                    t=var_decl.var_type,
+                    attrs=StaticAttr(init=Tentative(), globl=globl),
+                    align_as=var_decl.align_as,
                 )
         return var_decl
 
@@ -2710,6 +2758,17 @@ class SemanticAnalyser:
                 if typed_inner.exp_type is not None and not is_complete(typed_inner.exp_type, self._struct_type_table):
                     raise SemanticError("Cannot get the size of an incomplete type")
                 return ast.SizeOf(typed_inner, exp_type=ULongType())
+            case ast.AlignOfT(t=t):
+                t = self._resolve_type(t)
+                validate_type_specifier(t, self._struct_type_table)
+                if not is_complete(t, self._struct_type_table):
+                    raise SemanticError("Cannot get the alignment of an incomplete type")
+                return ast.AlignOfT(t, exp_type=ULongType())
+            case ast.AlignOf(exp=exp):
+                typed_inner = self._type_check_exp(exp)
+                if typed_inner.exp_type is not None and not is_complete(typed_inner.exp_type, self._struct_type_table):
+                    raise SemanticError("Cannot get the alignment of an incomplete type")
+                return ast.AlignOf(typed_inner, exp_type=ULongType())
             case ast.Dot(structure=structure, member=member):
                 typed_structure = self._typecheck_and_convert(structure)  #
                 match typed_structure.exp_type:
@@ -3244,6 +3303,10 @@ class SemanticAnalyser:
                 return self._type_check_exp(e)
             case ast.SizeOf(exp=exp):
                 return self._type_check_exp(ast.SizeOf(self.resolve_exp(exp)))
+            case ast.AlignOfT():
+                return self._type_check_exp(e)
+            case ast.AlignOf(exp=exp):
+                return self._type_check_exp(ast.AlignOf(self.resolve_exp(exp)))
             case ast.Dot(structure=structure, member=member):
                 return self._type_check_exp(ast.Dot(self.resolve_exp(structure), member))
             case ast.Arrow(pointer=pointer, member=member):
@@ -3570,6 +3633,18 @@ class SemanticAnalyser:
                     return None
                 try:
                     return type_size(inner.exp_type, self._struct_type_table)
+                except SemanticError:
+                    return None
+            case ast.AlignOfT(t=t):
+                try:
+                    return type_alignment(t, self._struct_type_table)
+                except SemanticError:
+                    return None
+            case ast.AlignOf(exp=inner):
+                if inner.exp_type is None:
+                    return None
+                try:
+                    return type_alignment(inner.exp_type, self._struct_type_table)
                 except SemanticError:
                     return None
             case ast.Cast(exp=inner):

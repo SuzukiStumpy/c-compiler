@@ -57,12 +57,15 @@ class StaticVariable(TopLevel):
         init: The ordered sequence of zero or more initialisers for the variable. Scalars have
             exactly one entry; arrays have one entry per element; zero-initialised variables
             have an empty tuple.
+        align_as: Explicit alignment override in bytes from ``_Alignas``, or ``None`` to use
+            the natural type alignment.
     """
 
     name: str
     globl: bool
     t: Type
     init: tuple[StaticInit, ...]
+    align_as: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
