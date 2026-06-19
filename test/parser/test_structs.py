@@ -429,3 +429,198 @@ class TestBitFieldMemberDeclaration:
         assert len(members) == 2
         assert members[0] == MemberDeclaration(member_name="x", member_type=IntType(), bit_width=None)
         assert members[1] == MemberDeclaration(member_name="flags", member_type=UIntType(), bit_width=3)
+
+
+class TestAnonymousStructMember:
+    """Anonymous struct members (no tag, no name) embed a ``StructDecl`` in ``nested_decl``."""
+
+    def test_anonymous_struct_member_has_no_name(self) -> None:
+        """``struct Outer { int x; struct { int y; }; }`` - anonymous member has no name."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _INT,
+            _ident("x"),
+            _SEMICOLON,
+            _STRUCT,
+            _LBRACE,
+            _INT,
+            _ident("y"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        assert len(sd.members) == 2
+        anon = sd.members[1]
+        assert anon.member_name is None
+        assert anon.bit_width is None
+
+    def test_anonymous_struct_member_has_nested_decl(self) -> None:
+        """The anonymous member carries a ``StructDecl`` in ``nested_decl``."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _INT,
+            _ident("x"),
+            _SEMICOLON,
+            _STRUCT,
+            _LBRACE,
+            _INT,
+            _ident("y"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        anon = sd.members[1]
+        assert isinstance(anon.nested_decl, StructDecl)
+        inner = anon.nested_decl.struct_declaration
+        assert len(inner.members) == 1
+        assert inner.members[0] == MemberDeclaration(member_name="y", member_type=IntType())
+
+    def test_anonymous_struct_member_type_is_structure(self) -> None:
+        """The anonymous member's ``member_type`` is a ``Structure`` referencing the inner tag."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _STRUCT,
+            _LBRACE,
+            _INT,
+            _ident("y"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        anon = sd.members[0]
+        assert isinstance(anon.member_type, Structure)
+        assert isinstance(anon.nested_decl, StructDecl)
+        assert anon.member_type.tag == anon.nested_decl.struct_declaration.tag
+
+    def test_named_member_with_anonymous_struct_type(self) -> None:
+        """``struct Outer { struct { int y; } member; }`` - named member with inline anon struct type."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _STRUCT,
+            _LBRACE,
+            _INT,
+            _ident("y"),
+            _SEMICOLON,
+            _RBRACE,
+            _ident("member"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        assert len(sd.members) == 1
+        m = sd.members[0]
+        assert m.member_name == "member"
+        assert isinstance(m.member_type, Structure)
+        assert isinstance(m.nested_decl, StructDecl)
+
+    def test_anonymous_struct_member_empty_body_is_error(self) -> None:
+        """``struct Outer { struct {}; };`` is rejected (empty body)."""
+        with pytest.raises(ParseError):
+            _parse_top(
+                _STRUCT,
+                _ident("Outer"),
+                _LBRACE,
+                _STRUCT,
+                _LBRACE,
+                _RBRACE,
+                _SEMICOLON,
+                _RBRACE,
+                _SEMICOLON,
+            )
+
+    def test_anonymous_union_member_has_no_name(self) -> None:
+        """``struct Outer { union { int a; int b; }; }`` - anonymous union member has no name."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _tok(TokenType.UNION, "union"),
+            _LBRACE,
+            _INT,
+            _ident("a"),
+            _SEMICOLON,
+            _INT,
+            _ident("b"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        assert len(sd.members) == 1
+        anon = sd.members[0]
+        assert anon.member_name is None
+        assert anon.bit_width is None
+
+    def test_anonymous_union_member_has_nested_union_decl(self) -> None:
+        """Anonymous union member ``nested_decl`` is a ``UnionDecl``."""
+        from compiler.syntax.ast import UnionDecl  # noqa: PLC0415
+
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _tok(TokenType.UNION, "union"),
+            _LBRACE,
+            _INT,
+            _ident("a"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        anon = sd.members[0]
+        assert isinstance(anon.nested_decl, UnionDecl)
+        inner = anon.nested_decl.union_declaration
+        assert len(inner.members) == 1
+        assert inner.members[0].member_name == "a"
+
+    def test_distinct_anonymous_members_get_distinct_tags(self) -> None:
+        """Two anonymous struct members within the same outer struct get distinct tags."""
+        prog = _parse_top(
+            _STRUCT,
+            _ident("Outer"),
+            _LBRACE,
+            _STRUCT,
+            _LBRACE,
+            _INT,
+            _ident("y"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _STRUCT,
+            _LBRACE,
+            _INT,
+            _ident("z"),
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+            _RBRACE,
+            _SEMICOLON,
+        )
+        sd = prog.declarations[0].struct_declaration  # type: ignore[union-attr]
+        assert len(sd.members) == 2
+        tag0 = sd.members[0].nested_decl.struct_declaration.tag  # type: ignore[union-attr]
+        tag1 = sd.members[1].nested_decl.struct_declaration.tag  # type: ignore[union-attr]
+        assert tag0 != tag1

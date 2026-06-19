@@ -16,7 +16,7 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | Designated initialisers `{.x=1}` | M | H | ✓ Done — struct member (`.field = val`) and array index (`[n] = val`) designators; mixed positional/designated supported |
 | Compound literals `(T){...}` | M | M | Parse as temp + existing init machinery |
 | Flexible array members | M | M | Incomplete-type size calc |
-| Anonymous struct/union members | M | H | Field promotion; common in Linux-style code |
+| Anonymous struct/union members | M | H | ✓ Done — `nested_decl` field on `MemberDeclaration`; parser handles `struct {` / `union {` without tag; SA flattens promoted fields into outer `StructEntry` |
 | `__int128` full arithmetic | H | L | Multi-word insn sequences; niche use |
 | Variadic fn definition (`va_list` etc.) | H | H | `__builtin_va_*` intrinsics + ABI stack layout |
 | `_Generic` selection | H | L | Mainly `<tgmath.h>`; complex type dispatch |

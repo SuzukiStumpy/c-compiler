@@ -21,8 +21,8 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
 | Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; designated initialisers (`{[n] = val}`); array decay |
-| `struct` | Named/anonymous structs; nested structs; compound initialisers; designated initialisers (`{.field = val}`); bit-fields (`int x : 3`) |
-| `union` | Named/anonymous unions; bit-field members |
+| `struct` | Named/anonymous structs; nested structs; anonymous struct/union members (field promotion, C11 §6.7.2.1); compound initialisers; designated initialisers (`{.field = val}`); bit-fields (`int x : 3`) |
+| `union` | Named/anonymous unions; anonymous struct/union members (field promotion); bit-field members |
 | `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
 | `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
 | Function pointers | `int (*fp)(int, int)` style; call via `fp(args)` or `(*fp)(args)`; pass/return by value |
@@ -298,7 +298,6 @@ The following are not yet implemented:
 ### Struct and union features
 
 - **Flexible array members** (sec. 6.7.2.1 p18) - `struct S { int n; char buf[]; };`. The trailing incomplete-array member pattern is not parsed.
-- **Anonymous struct/union members** (sec. 6.7.2.1 p13-15) - an unnamed `struct` or `union` nested inside another `struct`/`union` whose fields are promoted directly into the enclosing type. Unnamed tags (e.g. `struct { int x; }`) are supported, but only when a member name follows; the anonymous-member form (no member name at all) is not.
 
 ### Variadic functions
 

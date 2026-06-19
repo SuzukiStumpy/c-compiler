@@ -84,6 +84,7 @@ The public ``parse()`` function is the only entry point intended for use by
 other pipeline stages.
 """
 
+import itertools
 from collections.abc import Callable
 from pathlib import Path
 
@@ -330,6 +331,7 @@ class Parser:
         self._pos = 0
         self._last: Token | None = None
         self._typedef_scopes: list[dict[str, Type]] = [{}]
+        self._anon_tag_counter: itertools.count[int] = itertools.count()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1331,6 +1333,35 @@ class Parser:
             )
         ]
 
+    def _parse_member_body(self, kind: str) -> tuple[MemberDeclaration, ...]:
+        """Parse a brace-enclosed member list: ``'{' member-declaration+ '}'``.
+
+        Used by ``_parse_struct_declaration``, ``_parse_union_declaration``, and
+        ``_parse_member_declaration`` (for inline anonymous struct/union bodies).
+
+        Args:
+            kind: ``"struct"`` or ``"union"``, used only in error messages.
+
+        Returns:
+            A tuple of ``MemberDeclaration`` nodes.
+
+        Raises:
+            ParseError: If the opening brace is absent, if the body is empty,
+                or if any member declaration is malformed.
+        """
+        self._expect(TokenType.LBRACE)
+        if self._match(TokenType.RBRACE):
+            tok = self._peek()
+            msg = f"{kind} definition must contain at least one member"
+            raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
+        members_list: list[MemberDeclaration] = []
+        while not self._match(TokenType.RBRACE):
+            if self._peek() is None:
+                raise self._eof_error("expected '}', got end of input")
+            members_list.append(self._parse_member_declaration())
+        self._consume()  # consume '}'
+        return tuple(members_list)
+
     def _parse_struct_declaration(self) -> StructDecl:
         """Parse a struct type declaration or definition.
 
@@ -1354,18 +1385,7 @@ class Parser:
         tag_token = self._expect(TokenType.IDENTIFIER)
         members: tuple[MemberDeclaration, ...] = ()
         if self._match(TokenType.LBRACE):
-            self._consume()
-            if self._match(TokenType.RBRACE):
-                tok = self._peek()
-                msg = "struct definition must contain at least one member"
-                raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
-            members_list: list[MemberDeclaration] = []
-            while not self._match(TokenType.RBRACE):
-                if self._peek() is None:
-                    raise self._eof_error("expected '}', got end of input")
-                members_list.append(self._parse_member_declaration())
-            self._consume()  # consume '}'
-            members = tuple(members_list)
+            members = self._parse_member_body("struct")
         self._expect(TokenType.SEMICOLON)
         return StructDecl(struct_declaration=StructDeclaration(tag=tag_token.value, members=members))
 
@@ -1392,18 +1412,7 @@ class Parser:
         tag_token = self._expect(TokenType.IDENTIFIER)
         members: tuple[MemberDeclaration, ...] = ()
         if self._match(TokenType.LBRACE):
-            self._consume()
-            if self._match(TokenType.RBRACE):
-                tok = self._peek()
-                msg = "union definition must contain at least one member"
-                raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
-            members_list: list[MemberDeclaration] = []
-            while not self._match(TokenType.RBRACE):
-                if self._peek() is None:
-                    raise self._eof_error("expected '}', got end of input")
-                members_list.append(self._parse_member_declaration())
-            self._consume()  # consume '}'
-            members = tuple(members_list)
+            members = self._parse_member_body("union")
         self._expect(TokenType.SEMICOLON)
         return UnionDecl(union_declaration=UnionDeclaration(tag=tag_token.value, members=members))
 
@@ -1527,6 +1536,8 @@ class Parser:
         Grammar::
 
             member-declaration ::= {type-specifier}+ [declarator] [":" constant] ";"
+                                 | "struct" "{" member-declaration+ "}" [declarator] ";"
+                                 | "union" "{" member-declaration+ "}" [declarator] ";"
 
         Unlike a variable declaration, no storage-class specifier is permitted
         and no initialiser may follow the declarator.  Function-type declarators
@@ -1535,6 +1546,12 @@ class Parser:
         (an absent name produces an unnamed padding bit-field).  A zero-width
         bit-field must be unnamed (C11 §6.7.2.1p3).
 
+        When ``struct {`` or ``union {`` is encountered (keyword immediately followed
+        by ``{``), the inline body is parsed and wrapped in a ``nested_decl``.  If no
+        declarator name follows the closing ``}``, the member is an *anonymous
+        struct/union member* (C11 §6.7.2.1p13): its fields are promoted into the
+        enclosing aggregate by the semantic analyser.
+
         Returns:
             A ``MemberDeclaration`` node.
 
@@ -1542,9 +1559,39 @@ class Parser:
             ParseError: If the type specifier is absent, if a function-type
                 declarator is present, if the trailing semicolon is missing,
                 if a zero-width bit-field carries a name, or if the member has
-                neither a declarator nor a bit-field colon (e.g. ``int;``).
+                neither a declarator nor a bit-field colon and is not an anonymous
+                struct/union (e.g. ``int;``).
         """
-        base_type = self._parse_type()
+        nested_decl: StructDecl | UnionDecl | None = None
+
+        peek0 = self._peek()
+        peek1 = self._peek(1)
+        _is_anon_struct = (
+            peek0 is not None
+            and peek0.type == TokenType.STRUCT
+            and (peek1 is not None and peek1.type == TokenType.LBRACE)
+        )
+        _is_anon_union = (
+            peek0 is not None
+            and peek0.type == TokenType.UNION
+            and (peek1 is not None and peek1.type == TokenType.LBRACE)
+        )
+        if _is_anon_struct:
+            # Anonymous struct type: 'struct {'
+            self._consume()  # consume 'struct'
+            anon_tag = f"(anon_struct_{next(self._anon_tag_counter)})"
+            body_members = self._parse_member_body("struct")
+            nested_decl = StructDecl(StructDeclaration(tag=anon_tag, members=body_members))
+            base_type: Type = Structure(tag=anon_tag)
+        elif _is_anon_union:
+            # Anonymous union type: 'union {'
+            self._consume()  # consume 'union'
+            anon_tag = f"(anon_union_{next(self._anon_tag_counter)})"
+            body_members = self._parse_member_body("union")
+            nested_decl = UnionDecl(UnionDeclaration(tag=anon_tag, members=body_members))
+            base_type = Union(tag=anon_tag)
+        else:
+            base_type = self._parse_type()
 
         _DECLARATOR_STARTERS = (TokenType.ASTERISK, TokenType.IDENTIFIER, TokenType.LPAREN)
         next_tok = self._peek()
@@ -1569,13 +1616,14 @@ class Parser:
             bit_width = int(width_tok.value)
             if bit_width == 0 and name is not None:
                 raise self._token_error("zero-width bit-field must be unnamed (C11 §6.7.2.1p3)", width_tok)
-        elif name is None:
+        elif name is None and nested_decl is None:
+            # No name, no bit-field, and no anonymous struct/union body: error
             err_tok = self._peek()
             msg = "struct/union member must have a declarator or be a bit-field"
             raise self._token_error(msg, err_tok) if err_tok is not None else self._eof_error(msg)
 
         self._expect(TokenType.SEMICOLON)
-        return MemberDeclaration(member_name=name, member_type=full_type, bit_width=bit_width)
+        return MemberDeclaration(member_name=name, member_type=full_type, bit_width=bit_width, nested_decl=nested_decl)
 
     def _parse_optional_exp(self, terminator: TokenType) -> Exp | None:
         """Parse an optional expression and consume its terminating token.

@@ -318,3 +318,116 @@ class TestArrowTypeChecking:
         )
         with pytest.raises(SemanticError):
             resolve(prog)
+
+
+def _anon_struct_member(*members: "ast.MemberDeclaration") -> "ast.MemberDeclaration":
+    """Return a ``MemberDeclaration`` representing an anonymous struct member.
+
+    Args:
+        *members: Members of the anonymous inner struct.
+
+    Returns:
+        An ``ast.MemberDeclaration`` with ``member_name=None`` and a ``StructDecl`` in ``nested_decl``.
+    """
+    tag = "(anon_struct_test)"
+    inner_decl = ast.StructDecl(ast.StructDeclaration(tag=tag, members=members))
+    return ast.MemberDeclaration(member_name=None, member_type=ast.Structure(tag=tag), nested_decl=inner_decl)
+
+
+def _anon_union_member(*members: "ast.MemberDeclaration") -> "ast.MemberDeclaration":
+    """Return a ``MemberDeclaration`` representing an anonymous union member.
+
+    Args:
+        *members: Members of the anonymous inner union.
+
+    Returns:
+        An ``ast.MemberDeclaration`` with ``member_name=None`` and a ``UnionDecl`` in ``nested_decl``.
+    """
+    tag = "(anon_union_test)"
+    inner_decl = ast.UnionDecl(ast.UnionDeclaration(tag=tag, members=members))
+    return ast.MemberDeclaration(member_name=None, member_type=ast.Union(tag=tag), nested_decl=inner_decl)
+
+
+class TestAnonymousStructMemberLayout:
+    """Anonymous struct members promote their fields into the enclosing struct."""
+
+    def test_anonymous_struct_member_single_field_promoted(self) -> None:
+        """An anonymous struct with ``int y`` promotes ``y`` at correct offset in outer struct."""
+        outer = _struct_decl("Outer", _anon_struct_member(_member("y", ast.IntType())))
+        prog = _prog_with_decls(outer)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
+        outer_entry = next(e for e in struct_table.values() if any(m.name == "y" for m in e.members))
+        y_entry = next(m for m in outer_entry.members if m.name == "y")
+        assert y_entry.offset == 0
+        assert y_entry.member_type == ast.IntType()
+
+    def test_anonymous_struct_after_named_member(self) -> None:
+        """An anonymous struct after ``int x`` places promoted fields after ``x``."""
+        outer = _struct_decl(
+            "Outer",
+            _member("x", ast.IntType()),
+            _anon_struct_member(_member("y", ast.IntType())),
+        )
+        prog = _prog_with_decls(outer)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
+        # Outer struct has both "x" and "y"; inner only has "y".
+        outer_entry = next(
+            e
+            for e in struct_table.values()
+            if any(m.name == "x" for m in e.members) and any(m.name == "y" for m in e.members)
+        )
+        x_entry = next(m for m in outer_entry.members if m.name == "x")
+        y_entry = next(m for m in outer_entry.members if m.name == "y")
+        assert x_entry.offset == 0
+        assert y_entry.offset == 4
+
+    def test_anonymous_struct_two_fields_both_promoted(self) -> None:
+        """Both fields of an anonymous struct are promoted to the outer struct."""
+        outer = _struct_decl(
+            "Outer",
+            _anon_struct_member(_member("a", ast.IntType()), _member("b", ast.LongType())),
+        )
+        prog = _prog_with_decls(outer)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
+        outer_entry = next(e for e in struct_table.values() if any(m.name == "a" for m in e.members))
+        names = {m.name for m in outer_entry.members}
+        assert "a" in names
+        assert "b" in names
+
+    def test_anonymous_union_member_fields_promoted_at_same_offset(self) -> None:
+        """An anonymous union's fields are all promoted at the base offset of the anonymous member."""
+        outer = _struct_decl(
+            "Outer",
+            _member("x", ast.IntType()),
+            _anon_union_member(_member("a", ast.IntType()), _member("b", ast.LongType())),
+        )
+        prog = _prog_with_decls(outer)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
+        # Outer struct has "x", "a", "b"; inner union only has "a" and "b".
+        outer_entry = next(e for e in struct_table.values() if any(m.name == "x" for m in e.members))
+        a_entry = next(m for m in outer_entry.members if m.name == "a")
+        b_entry = next(m for m in outer_entry.members if m.name == "b")
+        assert a_entry.offset == b_entry.offset
+
+    def test_anonymous_struct_inner_entry_registered_in_table(self) -> None:
+        """The anonymous inner struct is also registered in the struct type table."""
+        outer = _struct_decl("Outer", _anon_struct_member(_member("y", ast.IntType())))
+        prog = _prog_with_decls(outer)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
+        assert len(struct_table) == 2
+
+    def test_outer_struct_size_accounts_for_anonymous_member(self) -> None:
+        """Outer struct size includes the anonymous struct's footprint."""
+        outer = _struct_decl(
+            "Outer",
+            _member("x", ast.IntType()),
+            _anon_struct_member(_member("y", ast.IntType())),
+        )
+        prog = _prog_with_decls(outer)
+        _, _, struct_table, _ = resolve_with_symbols(prog)
+        outer_entry = next(
+            e
+            for e in struct_table.values()
+            if any(m.name == "x" for m in e.members) and any(m.name == "y" for m in e.members)
+        )
+        assert outer_entry.size == 8

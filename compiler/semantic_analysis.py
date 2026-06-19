@@ -1266,6 +1266,68 @@ class SemanticAnalyser:
             case _:
                 return True
 
+    def _resolve_member_with_nested(self, m: MemberDeclaration) -> MemberDeclaration:
+        """Resolve a single struct/union member, processing any anonymous nested aggregate first.
+
+        When ``m.nested_decl`` is set the inner ``StructDecl`` or ``UnionDecl`` is
+        processed via ``_resolve_anonymous_aggregate_decl`` before the outer member
+        type is resolved.  This guarantees the inner tag is in ``_structure_map`` /
+        ``_union_map`` by the time ``_resolve_type`` is called on the member's type.
+
+        Args:
+            m: The raw (parser-level) ``MemberDeclaration`` to resolve.
+
+        Returns:
+            A new ``MemberDeclaration`` with uniquified types and resolved nested decl.
+
+        Raises:
+            SemanticError: If the member's type is undeclared or otherwise invalid.
+        """
+        resolved_nested: ast.StructDecl | ast.UnionDecl | None = None
+        if m.nested_decl is not None:
+            resolved_nested = self._resolve_anonymous_aggregate_decl(m.nested_decl)
+        return MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width, resolved_nested)
+
+    def _resolve_anonymous_aggregate_decl(
+        self, nested_decl: ast.StructDecl | ast.UnionDecl
+    ) -> ast.StructDecl | ast.UnionDecl:
+        """Resolve and register an anonymous struct or union nested inside a member declaration.
+
+        Generates a unique internal tag for the anonymous aggregate, registers it in
+        ``_structure_map`` or ``_union_map``, resolves all of its members (recursively
+        handling further nested anonymous aggregates), computes the layout, and stores
+        the result in ``_struct_type_table``.
+
+        Args:
+            nested_decl: A ``StructDecl`` or ``UnionDecl`` produced by the parser for
+                an inline anonymous struct/union body (e.g. ``struct { int y; }``).
+
+        Returns:
+            A resolved ``StructDecl`` or ``UnionDecl`` with the uniquified internal tag.
+
+        Raises:
+            SemanticError: If any member of the nested aggregate is invalid.
+        """
+        match nested_decl:
+            case ast.StructDecl(struct_declaration=inner_decl):
+                tag = inner_decl.tag
+                unique_tag = self._make_struct_tag(tag)
+                self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
+                resolved_members = tuple(self._resolve_member_with_nested(m) for m in inner_decl.members)
+                resolved_inner = StructDeclaration(tag=unique_tag, members=resolved_members)
+                self._typecheck_struct_declaration(resolved_inner)
+                return ast.StructDecl(resolved_inner)
+            case ast.UnionDecl(union_declaration=inner_decl):
+                tag = inner_decl.tag
+                unique_tag = self._make_union_tag(tag)
+                self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
+                resolved_members = tuple(self._resolve_member_with_nested(m) for m in inner_decl.members)
+                resolved_inner = UnionDeclaration(tag=unique_tag, members=resolved_members)
+                self._typecheck_union_declaration(resolved_inner)
+                return ast.UnionDecl(resolved_inner)
+            case _:  # pragma: no cover
+                raise SemanticError("Expected StructDecl or UnionDecl in nested_decl")
+
     def _validate_struct_definition(self, struct_decl: StructDeclaration) -> None:
         """Validate the member list of a struct definition.
 
@@ -1366,9 +1428,25 @@ class SemanticAnalyser:
                 _flush_bit_unit()
                 member_align = type_alignment(member.member_type, self._struct_type_table)
                 member_offset = _round_up(struct_size, member_align)
-                member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))
                 struct_alignment = max(struct_alignment, member_align)
                 struct_size = member_offset + type_size(member.member_type, self._struct_type_table)
+                if member.member_name is None and member.nested_decl is not None:
+                    # Anonymous struct/union member: promote inner fields (C11 §6.7.2.1p13).
+                    inner_tag = member.member_type.tag if isinstance(member.member_type, (Structure, Union)) else None
+                    if inner_tag is not None and inner_tag in self._struct_type_table:
+                        inner_entry = self._struct_type_table[inner_tag]
+                        for inner_m in inner_entry.members:
+                            member_entries.append(
+                                MemberEntry(
+                                    inner_m.name,
+                                    inner_m.member_type,
+                                    member_offset + inner_m.offset,
+                                    inner_m.bit_offset,
+                                    inner_m.bit_width,
+                                )
+                            )
+                elif member.member_name is not None:
+                    member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))
             else:
                 field_type_size = type_size(member.member_type, self._struct_type_table)
                 field_type_align = type_alignment(member.member_type, self._struct_type_table)
@@ -1488,8 +1566,24 @@ class SemanticAnalyser:
                     # Named bit-field in union: byte offset 0, bit offset 0.
                     member_entries.append(MemberEntry(member.member_name, member.member_type, 0, 0, member.bit_width))
                 # Unnamed bit-field: padding only; no entry added.
+            elif member.member_name is None and member.nested_decl is not None:
+                # Anonymous struct/union member: promote inner fields at offset 0 (C11 §6.7.2.1p13).
+                inner_tag = member.member_type.tag if isinstance(member.member_type, (Structure, Union)) else None
+                if inner_tag is not None and inner_tag in self._struct_type_table:
+                    inner_entry = self._struct_type_table[inner_tag]
+                    for inner_m in inner_entry.members:
+                        member_entries.append(
+                            MemberEntry(
+                                inner_m.name,
+                                inner_m.member_type,
+                                inner_m.offset,  # anonymous member at offset 0 in union
+                                inner_m.bit_offset,
+                                inner_m.bit_width,
+                            )
+                        )
             else:
-                member_entries.append(MemberEntry(member.member_name, member.member_type, 0))
+                if member.member_name is not None:
+                    member_entries.append(MemberEntry(member.member_name, member.member_type, 0))
         union_size = _round_up(union_size, union_alignment)
         union_def = StructEntry(alignment=union_alignment, size=union_size, members=tuple(member_entries))
         self._struct_type_table[union_decl.tag] = union_def
@@ -3612,10 +3706,7 @@ class SemanticAnalyser:
                 else:
                     unique_tag = self._make_struct_tag(tag)
                     self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
-                resolved_members = tuple(
-                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
-                    for m in struct_decl.members
-                )
+                resolved_members = tuple(self._resolve_member_with_nested(m) for m in struct_decl.members)
                 resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
                 self._typecheck_struct_declaration(resolved_struct_decl)
                 return ast.D(ast.StructDecl(resolved_struct_decl))
@@ -3629,10 +3720,7 @@ class SemanticAnalyser:
                 else:
                     unique_tag = self._make_union_tag(tag)
                     self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=True)
-                resolved_members = tuple(
-                    MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
-                    for m in union_decl.members
-                )
+                resolved_members = tuple(self._resolve_member_with_nested(m) for m in union_decl.members)
                 resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
                 self._typecheck_union_declaration(resolved_union_decl)
                 return ast.D(ast.UnionDecl(resolved_union_decl))
@@ -3777,10 +3865,7 @@ class SemanticAnalyser:
                     else:
                         unique_tag = self._make_struct_tag(tag)
                         self._structure_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
-                    resolved_members = tuple(
-                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
-                        for m in struct_decl.members
-                    )
+                    resolved_members = tuple(self._resolve_member_with_nested(m) for m in struct_decl.members)
                     resolved_struct_decl = StructDeclaration(tag=unique_tag, members=resolved_members)
                     self._typecheck_struct_declaration(resolved_struct_decl)
                     resolved.append(ast.StructDecl(resolved_struct_decl))
@@ -3794,10 +3879,7 @@ class SemanticAnalyser:
                     else:
                         unique_tag = self._make_union_tag(tag)
                         self._union_map[tag] = StructureBinding(new_tag=unique_tag, from_current_scope=False)
-                    resolved_members = tuple(
-                        MemberDeclaration(m.member_name, self._resolve_type(m.member_type), m.bit_width)
-                        for m in union_decl.members
-                    )
+                    resolved_members = tuple(self._resolve_member_with_nested(m) for m in union_decl.members)
                     resolved_union_decl = UnionDeclaration(tag=unique_tag, members=resolved_members)
                     self._typecheck_union_declaration(resolved_union_decl)
                     resolved.append(ast.UnionDecl(resolved_union_decl))
