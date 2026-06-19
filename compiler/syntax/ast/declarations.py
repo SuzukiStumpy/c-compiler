@@ -329,6 +329,25 @@ class TypedefDecl(Declaration):
 
 
 @dataclass(frozen=True, slots=True)
+class StaticAssert(Declaration):
+    """A ``_Static_assert`` declaration.
+
+    Records the constant-expression condition and the diagnostic string message
+    from a ``_Static_assert(condition, message)`` declaration.  The condition
+    is evaluated as a constant expression during semantic analysis; if it
+    evaluates to zero the compiler raises a compile-time error using the
+    provided message.  A passing assertion produces no runtime code.
+
+    Attributes:
+        condition: The constant expression to evaluate.
+        message: The decoded string literal message to display on failure.
+    """
+
+    condition: Exp
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class Program:
     """The root AST node representing a complete translation unit.
 

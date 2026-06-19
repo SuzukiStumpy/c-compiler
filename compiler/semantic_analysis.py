@@ -3295,6 +3295,139 @@ class SemanticAnalyser:
         resolved_decl = EnumDeclaration(tag=unique_tag, members=enum_decl.members)
         return ast.EnumDecl(resolved_decl)
 
+    def _eval_const_expr(self, exp: ast.Exp) -> int | float | None:  # noqa: C901 - ignore complexity warning
+        """Evaluate a constant expression at compile time.
+
+        Recursively reduces the expression to a numeric value where possible.
+        Handles integer and floating-point constants, ``sizeof`` expressions,
+        casts, unary and binary arithmetic, and ternary conditionals.  Returns
+        ``None`` for any expression that cannot be reduced to a compile-time
+        constant (e.g. variable references or function calls).
+
+        Args:
+            exp: A fully type-annotated expression node (as produced by
+                ``_type_check_exp``).
+
+        Returns:
+            The numeric value of the constant expression, or ``None`` if the
+            expression is not a compile-time constant.
+        """
+        match exp:
+            case ast.Constant(value=const):
+                return const.val
+            case ast.SizeOfT(t=t):
+                try:
+                    return type_size(t, self._struct_type_table)
+                except SemanticError:
+                    return None
+            case ast.SizeOf(exp=inner):
+                if inner.exp_type is None:
+                    return None
+                try:
+                    return type_size(inner.exp_type, self._struct_type_table)
+                except SemanticError:
+                    return None
+            case ast.Cast(exp=inner):
+                return self._eval_const_expr(inner)
+            case ast.Unary(operator=op, exp=inner):
+                val = self._eval_const_expr(inner)
+                if val is None:
+                    return None
+                match op:
+                    case ast.Negate():
+                        return -val
+                    case ast.Complement():
+                        return ~int(val)
+                    case ast.Not():
+                        return 0 if val else 1
+                    case _:
+                        return None
+            case ast.Binary(operator=op, left=left, right=right):
+                lval = self._eval_const_expr(left)
+                rval = self._eval_const_expr(right)
+                if lval is None or rval is None:
+                    return None
+                match op:
+                    case ast.Add():
+                        return lval + rval
+                    case ast.Subtract():
+                        return lval - rval
+                    case ast.Multiply():
+                        return lval * rval
+                    case ast.Divide():
+                        if rval == 0:
+                            return None
+                        if isinstance(lval, int) and isinstance(rval, int):
+                            return lval // rval
+                        return lval / rval  # type: ignore[operator]
+                    case ast.Remainder():
+                        if rval == 0:
+                            return None
+                        return int(lval) % int(rval)
+                    case ast.Equal():
+                        return 1 if lval == rval else 0
+                    case ast.NotEqual():
+                        return 1 if lval != rval else 0
+                    case ast.LessThan():
+                        return 1 if lval < rval else 0
+                    case ast.LessOrEqual():
+                        return 1 if lval <= rval else 0
+                    case ast.GreaterThan():
+                        return 1 if lval > rval else 0
+                    case ast.GreaterOrEqual():
+                        return 1 if lval >= rval else 0
+                    case ast.And():
+                        return 1 if (lval and rval) else 0
+                    case ast.Or():
+                        return 1 if (lval or rval) else 0
+                    case ast.BitwiseAnd():
+                        return int(lval) & int(rval)
+                    case ast.BitwiseOr():
+                        return int(lval) | int(rval)
+                    case ast.BitwiseXor():
+                        return int(lval) ^ int(rval)
+                    case ast.LeftShift():
+                        return int(lval) << int(rval)
+                    case ast.RightShift():
+                        return int(lval) >> int(rval)
+                    case _:
+                        return None
+            case ast.Conditional(condition=cond, exp_true=t, exp_false=f):
+                cval = self._eval_const_expr(cond)
+                if cval is None:
+                    return None
+                return self._eval_const_expr(t) if cval else self._eval_const_expr(f)
+            case _:
+                return None
+
+    def _validate_static_assert(self, cond: ast.Exp, message: str) -> ast.Exp:
+        """Type-check and evaluate a ``_Static_assert`` condition.
+
+        Type-checks the condition expression and attempts to evaluate it as a
+        compile-time constant.  Raises ``SemanticError`` with the user-supplied
+        message if the condition evaluates to zero.  Also raises if the
+        expression is not a constant expression (it cannot be evaluated at
+        compile time).
+
+        Args:
+            cond: The un-typed condition expression from the ``StaticAssert`` node.
+            message: The diagnostic string to include in the error on failure.
+
+        Returns:
+            The type-annotated condition expression.
+
+        Raises:
+            SemanticError: If the condition is not a constant expression, or if
+                it evaluates to zero.
+        """
+        typed_cond = self._type_check_exp(self.resolve_exp(cond))
+        val = self._eval_const_expr(typed_cond)
+        if val is None:
+            raise SemanticError("_Static_assert condition is not a constant expression")
+        if not val:
+            raise SemanticError(f"static assertion failed: {message}")
+        return typed_cond
+
     def _resolve_block_item(self, item: ast.BlockItem) -> ast.BlockItem:
         """Resolve a single block item (statement, variable declaration, or function declaration).
 
@@ -3364,6 +3497,9 @@ class SemanticAnalyser:
                 self._validate_params_unique(fun)
                 adjusted_fun = self._register_fun_declaration(fun)
                 return ast.D(ast.FunDecl(adjusted_fun))
+            case ast.D(declaration=ast.StaticAssert(condition=cond, message=msg)):
+                typed_cond = self._validate_static_assert(cond, msg)
+                return ast.D(ast.StaticAssert(condition=typed_cond, message=msg))
             case ast.S(statement=statement):
                 return ast.S(self._resolve_statement(statement))
             case _:
@@ -3516,6 +3652,11 @@ class SemanticAnalyser:
                     resolved.append(ast.UnionDecl(resolved_union_decl))
                 case ast.EnumDecl(enum_declaration=enum_decl):
                     resolved.append(self._resolve_enum_decl(enum_decl, file_scope=True))
+                case ast.StaticAssert(condition=cond, message=msg):
+                    self._validate_static_assert(cond, msg)
+                    # StaticAssert produces no runtime code; omit from the resolved list.
+                case ast.TypedefDecl():
+                    pass  # typedef names are resolved in the parser; no action needed here.
                 case _:
                     raise SemanticError("Unhandled top-level declaration type in semantic analyser")
         return ast.Program(declarations=tuple(resolved))

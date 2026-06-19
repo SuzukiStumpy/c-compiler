@@ -7,7 +7,7 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | `-I`/`-D`/`-U` passthrough | L | H | ✓ Done — forwarded to GCC preprocessor |
 | `inline` specifier | L | M | ✓ Done — parsed; `Function.is_inline` flag set; no inlining performed |
 | `_Noreturn` | L | L | ✓ Done — parsed; `Function.is_noreturn` flag set; no contract enforcement |
-| `_Static_assert` | L | M | Constant expr eval → error; already have const eval |
+| `_Static_assert` | L | M | ✓ Done — constant expression evaluated at semantic analysis; SemanticError on failure |
 | Inline enum `enum E { A } x;` | L | M | Parser-only change |
 | Anonymous enum `enum { A, B }` standalone | L | L | Small semantic tweak |
 | Full constant-expr enum values | L | M | Extend existing const evaluator |

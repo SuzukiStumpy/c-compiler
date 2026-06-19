@@ -25,6 +25,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | StructDecl(struct_declaration)
                          | UnionDecl(union_declaration)
                          | TypedefDecl(identifier name, type aliased_type)
+                         | StaticAssert(exp condition, string message)
     struct_declaration   = (identifier tag, member_declaration* members)
     union_declaration    = (identifier tag, member_declaration* members)
     member_declaration   = (identifier member_name, type member_type)
@@ -85,9 +86,9 @@ Nodes are organised into submodules by logical role:
                    Goto, Label, Break, Continue, While, DoWhile)
     declarations - Program structure nodes (VariableDeclaration, Declaration,
                    FunDecl, VarDecl, StructDecl, MemberDeclaration,
-                   StructDeclaration, TypedefDecl, BlockItem, S, D, Block,
-                   Compound, ForInit, InitDecl, InitExp, For, Parameter,
-                   Function, Program)
+                   StructDeclaration, TypedefDecl, StaticAssert, BlockItem,
+                   S, D, Block, Compound, ForInit, InitDecl, InitExp, For,
+                   Parameter, Function, Program)
     operators    - Operators which act upon expressions
                    (Complement, Negate, Not,
                    PreIncrement, PreDecrement, PostIncrement, PostDecrement,
@@ -152,6 +153,9 @@ from compiler.syntax.ast.declarations import (
     UnionDeclaration,
     VarDecl,
     VariableDeclaration,
+)
+from compiler.syntax.ast.declarations import (
+    StaticAssert as StaticAssert,
 )
 from compiler.syntax.ast.declarations import (
     TypedefDecl as TypedefDecl,
@@ -266,6 +270,7 @@ __all__ = [
     "BoolType",
     "EnumDecl",
     "EnumDeclaration",
+    "StaticAssert",
     "EnumeratorDeclaration",
     "EnumType",
     "MemberDeclaration",

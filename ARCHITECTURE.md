@@ -45,7 +45,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 | `types.py` | `Type` hierarchy: `IntType`, `LongType`, `UIntType`, `ULongType`, `ShortType`, `UShortType`, `Char`, `SChar`, `UChar`, `BoolType`, `FloatType`, `DoubleType`, `LongDoubleType`, `Int128Type`, `UInt128Type`, `LongLongType`, `ULongLongType`, `VoidType`, `FunType`, `Pointer`, `Array`, `Structure`, `Union`, `EnumType`, `QualifiedType` |
 | `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `Dot`, `Arrow`, `Initializer`, `SingleInit`, `CompoundInit` |
 | `statements.py` | `Statement` hierarchy: `Return`, `Expression`, `If`, `Goto`, `Label`, `Compound`, `Break`, `Continue`, `While`, `DoWhile`, `For`, `Switch`, `Case`, `Default`, `Null` |
-| `declarations.py` | `Declaration` hierarchy + `Program`, `Function`, `Block`, `BlockItem`, `VariableDeclaration`, `FunDecl`, `VarDecl`, `StructDecl`, `UnionDecl`, `EnumDecl`, `TypedefDecl`, `Parameter` |
+| `declarations.py` | `Declaration` hierarchy + `Program`, `Function`, `Block`, `BlockItem`, `VariableDeclaration`, `FunDecl`, `VarDecl`, `StructDecl`, `UnionDecl`, `EnumDecl`, `TypedefDecl`, `StaticAssert`, `Parameter` |
 | `constants.py` | `Const` hierarchy: `ConstInt`, `ConstLong`, `ConstUInt`, `ConstULong`, `ConstDouble`, `ConstFloat`, `ConstLongDouble`, `ConstChar`, `ConstUChar`, `ConstShort`, `ConstUShort`, `ConstLongLong`, `ConstULongLong`, `ConstInt128`, `ConstUInt128`, `ConstBool` |
 | `operators.py` | `UnaryOperator` and `BinaryOperator` enums |
 | `pretty_print.py` | `pretty_print(program)` — renders any AST/TAC/ASM node tree as text |
@@ -111,6 +111,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Derived types**: pointers, arrays (fixed-size), structs, unions, enums, function pointers, bitfields
 - **Type qualifiers**: `const`, `volatile`, `restrict` (parsed; restrict has no semantic effect)
 - **Function specifiers**: `inline` (parsed; stored as `Function.is_inline`; no inlining performed — flag is informational only); `_Noreturn` (parsed; stored as `Function.is_noreturn`; no contract enforcement — flag is informational only)
+- **Static assertions**: `_Static_assert(expr, msg)` at file scope and block scope; constant expression is evaluated during semantic analysis; a zero result raises a `SemanticError` with the supplied message; no runtime code is emitted
 - **Storage classes**: `auto`, `static`, `extern`, `typedef`
 - **Control flow**: `if`/`else`, `while`, `do`/`while`, `for`, `switch`/`case`/`default`, `break`, `continue`, `goto`, labels
 - **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, member access (`.` and `->`)

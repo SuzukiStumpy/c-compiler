@@ -86,6 +86,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
 - Function specifiers: `inline` — parsed and stored on the function declaration; no inlining is performed; `_Noreturn` — parsed and stored on the function declaration; no contract enforcement is performed
+- `_Static_assert(expr, msg)` at file scope and block scope — constant expression evaluated at compile time; a zero result is a compile-time error with the supplied message; no runtime code is emitted
 
 ### Semantic analysis
 
@@ -277,7 +278,6 @@ Neither is recognised.
 
 | Missing feature | C11 reference | Notes |
 |---|---|---|
-| `_Static_assert` | sec. 6.7.10 | Compile-time assertion; fails the translation if a constant expression is false. |
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>`. |
 
 ### Initialisers

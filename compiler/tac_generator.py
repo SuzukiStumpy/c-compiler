@@ -1178,6 +1178,8 @@ class _TacGenerator:
                 return []  # local struct/union type definition - no code, pure type metadata
             case ast.D(declaration=ast.UnionDecl()):
                 return []
+            case ast.D(declaration=ast.StaticAssert()):
+                return []  # validated at compile time; no runtime code emitted
             case _:
                 raise CodeGenerationError(f"unsupported block item type: {type(item).__name__}")
 

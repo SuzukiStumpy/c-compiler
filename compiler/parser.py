@@ -179,6 +179,7 @@ from compiler.syntax.ast import (
     SizeOf,
     SizeOfT,
     Statement,
+    StaticAssert,
     StorageClass,
     String,
     StructDecl,
@@ -290,6 +291,7 @@ _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | f
         TokenType.TYPEDEF,
         TokenType.INLINE,
         TokenType.NORETURN,
+        TokenType.STATIC_ASSERT,
     }
 )
 
@@ -1266,6 +1268,9 @@ class Parser:
             self._register_typedef(alias_name, full_typedef_type)
             return TypedefDecl(name=alias_name, aliased_type=full_typedef_type)
 
+        if self._match(TokenType.STATIC_ASSERT):
+            return self._parse_static_assert()
+
         first_token = self._peek()
         base_type, storage, is_inline, is_noreturn = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
@@ -1438,6 +1443,39 @@ class Parser:
         self._expect(TokenType.RBRACE)
         self._expect(TokenType.SEMICOLON)
         return EnumDecl(enum_declaration=EnumDeclaration(tag=tag_token.value, members=tuple(members_list)))
+
+    def _parse_static_assert(self) -> StaticAssert:
+        """Parse a ``_Static_assert(constant-expression, string-literal);`` declaration.
+
+        Consumes the ``_Static_assert`` keyword (already matched by the caller),
+        then parses the parenthesised condition expression and string message.
+
+        Grammar::
+
+            static-assert-declaration ::= "_Static_assert" "(" constant-expression
+                                          "," string-literal ")" ";"
+
+        Returns:
+            A ``StaticAssert`` node carrying the condition expression and decoded
+            message string.
+
+        Raises:
+            ParseError: If the opening paren, comma, string literal, closing paren,
+                or semicolon are missing or the tokens are otherwise malformed.
+        """
+        self._consume()  # consume '_Static_assert'
+        self._expect(TokenType.LPAREN)
+        condition = self._parse_exp()
+        self._expect(TokenType.COMMA)
+        msg_token = self._peek()
+        if msg_token is None or msg_token.type != TokenType.STRING:
+            msg = "expected string literal as second argument to _Static_assert"
+            raise self._eof_error(msg) if msg_token is None else self._token_error(msg, msg_token)
+        self._consume()
+        message = self._unescape_string(msg_token.value).decode("latin-1")
+        self._expect(TokenType.RPAREN)
+        self._expect(TokenType.SEMICOLON)
+        return StaticAssert(condition=condition, message=message)
 
     def _parse_member_declaration(self) -> MemberDeclaration:
         """Parse a single struct or union member declaration.
