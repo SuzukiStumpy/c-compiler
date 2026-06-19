@@ -147,6 +147,7 @@ from compiler.syntax.ast import (
     GreaterOrEqual,
     GreaterThan,
     If,
+    IndexDesignatorInit,
     InitDecl,
     InitExp,
     Initializer,
@@ -159,6 +160,7 @@ from compiler.syntax.ast import (
     LongLongType,
     LongType,
     MemberDeclaration,
+    MemberDesignatorInit,
     Multiply,
     Negate,
     Not,
@@ -1601,12 +1603,42 @@ class Parser:
         self._expect(terminator)
         return exp
 
+    def _parse_designator_or_initializer(self) -> Initializer:
+        """Parse one element of a compound initialiser, with optional leading designator.
+
+        Grammar::
+
+            designator_or_initializer ::= "." IDENT "=" initializer
+                                        | "[" exp "]" "=" initializer
+                                        | initializer
+
+        Returns:
+            A ``MemberDesignatorInit`` for ``.member = init``, an
+            ``IndexDesignatorInit`` for ``[expr] = init``, or the result of
+            ``_parse_initializer`` for a non-designated element.
+
+        Raises:
+            ParseError: If the designator syntax is malformed.
+        """
+        if self._match(TokenType.PERIOD):
+            self._consume()
+            member_tok = self._expect(TokenType.IDENTIFIER)
+            self._expect(TokenType.ASSIGNMENT)
+            return MemberDesignatorInit(member=member_tok.value, init=self._parse_initializer())
+        if self._match(TokenType.LBRACKET):
+            self._consume()
+            index_exp = self._parse_exp()
+            self._expect(TokenType.RBRACKET)
+            self._expect(TokenType.ASSIGNMENT)
+            return IndexDesignatorInit(index=index_exp, init=self._parse_initializer())
+        return self._parse_initializer()
+
     def _parse_initializer(self) -> Initializer:
         """Parse a variable initialiser: either a brace-enclosed compound or a scalar expression.
 
         Grammar::
 
-            initializer ::= "{" initializer {"," initializer} [","] "}" | exp
+            initializer ::= "{" designator_or_initializer {"," designator_or_initializer} [","] "}" | exp
 
         Returns:
             A ``CompoundInit`` node for brace-enclosed initialisers, or a
@@ -1622,12 +1654,12 @@ class Parser:
                 msg = "empty initializer list is not permitted in C11"
                 raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
             initializers: list[Initializer] = []
-            initializers.append(self._parse_initializer())
+            initializers.append(self._parse_designator_or_initializer())
             while self._match(TokenType.COMMA):
                 self._consume()
                 if self._match(TokenType.RBRACE):  # trailing comma
                     break
-                initializers.append(self._parse_initializer())
+                initializers.append(self._parse_designator_or_initializer())
             self._expect(TokenType.RBRACE)
             return CompoundInit(initializers=initializers)
         return SingleInit(exp=self._parse_exp())

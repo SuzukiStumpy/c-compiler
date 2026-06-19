@@ -32,6 +32,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
     variable_declaration = (identifier name, initializer? init, type var_type, storage_class?)
     function_declaration = (identifier name, parameter* params, block? body, type fun_type, storage_class?)
     initializer          = SingleInit(exp) | CompoundInit(intializer*)
+                         | MemberDesignatorInit(str, initializer) | IndexDesignatorInit(exp, initializer)
     type                 = Int | Long | UInt | ULong | Double | Char | SChar | UChar | Void
                          | FunType(type* params, type ret)
                          | Pointer(type referenced)
@@ -174,7 +175,9 @@ from compiler.syntax.ast.expressions import (
     Dot,
     Exp,
     FunctionCall,
+    IndexDesignatorInit,
     Initializer,
+    MemberDesignatorInit,
     SingleInit,
     SizeOf,
     SizeOfT,
@@ -305,6 +308,8 @@ __all__ = [
     "Initializer",
     "SingleInit",
     "CompoundInit",
+    "MemberDesignatorInit",
+    "IndexDesignatorInit",
     "Dereference",
     "AddrOf",
     "Pointer",

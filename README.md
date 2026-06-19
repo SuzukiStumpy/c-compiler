@@ -20,8 +20,8 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `long double` | 80-bit x87 extended precision; `L`/`l` suffix on literals; passed/returned via stack (MEMORY class) |
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
-| Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; array decay |
-| `struct` | Named/anonymous structs; nested structs; compound initialisers; bit-fields (`int x : 3`) |
+| Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; designated initialisers (`{[n] = val}`); array decay |
+| `struct` | Named/anonymous structs; nested structs; compound initialisers; designated initialisers (`{.field = val}`); bit-fields (`int x : 3`) |
 | `union` | Named/anonymous unions; bit-field members |
 | `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
 | `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
@@ -77,7 +77,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 ### Declarations
 
 - Local and global variable declarations with optional initialisers
-- Compound initialisers for arrays and structs (`{ ... }`)
+- Compound initialisers for arrays and structs (`{ ... }`), including designated initialisers (`{.field = val}` for structs/unions, `{[n] = val}` for arrays)
 - Function declarations and definitions (multiple per translation unit)
 - Variadic function declarations (`int printf(char *fmt, ...)`) — calling variadic functions is fully supported; System V AMD64 ABI `%al` register is set to the number of floating-point arguments used
 - Struct and union declarations and definitions, including bit-fields (`int x : 3;`, `unsigned int : 5;`, `int : 0;`)
@@ -282,7 +282,6 @@ Neither is recognised.
 
 ### Initialisers
 
-- **Designated initialisers** (sec. 6.7.9) - `{.x = 1, .y = 2}` for structs and `{[0] = 'a', [1] = 'b'}` for arrays. Currently all initialisers must supply values in declaration order with no field selectors.
 - **Compound literals** (sec. 6.5.2.5) - `(struct Point){1, 2}` as an rvalue expression. The cast-like syntax is not parsed.
 
 ### Enum limitations

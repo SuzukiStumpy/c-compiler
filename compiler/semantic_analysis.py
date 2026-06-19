@@ -758,6 +758,10 @@ def _is_constant_init(init: ast.Initializer) -> bool:
             return False
         case ast.CompoundInit(initializers=sub_inits):
             return all(_is_constant_init(i) for i in sub_inits)
+        case ast.MemberDesignatorInit(init=sub_init):
+            return _is_constant_init(sub_init)
+        case ast.IndexDesignatorInit(init=sub_init):
+            return _is_constant_init(sub_init)
         case _:
             return False
 
@@ -2673,6 +2677,136 @@ class SemanticAnalyser:
             case _:
                 return typed_e
 
+    def _expand_struct_designated_inits(
+        self, init_list: list[ast.Initializer], struct_def: StructEntry
+    ) -> list[ast.Initializer]:
+        """Expand a struct initialiser list (with or without member designators) to positional form.
+
+        Iterates over ``init_list``, tracking the current member index.  A
+        ``MemberDesignatorInit`` jumps ``current_idx`` to the named member; a
+        plain ``Initializer`` fills ``current_idx`` then advances it by one.
+        Unspecified members are zero-initialised (C11 sec. 6.7.9p21).
+
+        Args:
+            init_list: Raw initialisers, possibly containing ``MemberDesignatorInit`` nodes.
+            struct_def: Struct layout entry from the type table, providing members and types.
+
+        Returns:
+            A positional list of exactly ``len(struct_def.members)`` initialisers.
+
+        Raises:
+            SemanticError: If a named member does not exist in the struct, an
+                ``IndexDesignatorInit`` is encountered, or a positional element
+                would overflow the member list.
+        """
+        member_by_name = {m.name: i for i, m in enumerate(struct_def.members)}
+        positional: dict[int, ast.Initializer] = {}
+        current_idx = 0
+
+        for item in init_list:
+            if isinstance(item, ast.MemberDesignatorInit):
+                if item.member not in member_by_name:
+                    raise SemanticError(f"Struct has no member named '{item.member}'.")
+                current_idx = member_by_name[item.member]
+                positional[current_idx] = item.init
+            elif isinstance(item, ast.IndexDesignatorInit):
+                raise SemanticError("Array index designator '[n] =' is not valid in a struct initialiser.")
+            else:
+                if current_idx >= len(struct_def.members):
+                    raise SemanticError(
+                        f"Too many values in struct initialiser: expected at most {len(struct_def.members)}."
+                    )
+                positional[current_idx] = item
+            current_idx += 1
+
+        return [
+            positional.get(i, _zero_initializer(struct_def.members[i].member_type, self._struct_type_table))
+            for i in range(len(struct_def.members))
+        ]
+
+    def _expand_union_designated_init(
+        self, init_list: list[ast.Initializer], union_def: StructEntry
+    ) -> tuple[int, ast.Initializer]:
+        """Extract ``(member_index, init)`` from a union initialiser list.
+
+        Supports an optional ``MemberDesignatorInit`` to select a member other
+        than the first.  Without a designator the first member (index 0) is
+        targeted, mirroring the pre-designated-init behaviour.
+
+        Args:
+            init_list: Raw initialisers (0 or 1 elements).
+            union_def: Union layout entry providing ``members`` and their types.
+
+        Returns:
+            A ``(member_idx, init)`` tuple where ``member_idx`` is the zero-based
+            index of the member to initialise and ``init`` is its raw sub-initialiser.
+
+        Raises:
+            SemanticError: If there are too many elements, an ``IndexDesignatorInit``
+                is encountered, or the named member does not exist.
+        """
+        if not init_list:
+            return 0, _zero_initializer(union_def.members[0].member_type, self._struct_type_table)
+        if len(init_list) > 1:
+            raise SemanticError(f"Too many elements in union initializer: expected at most 1, got {len(init_list)}.")
+        item = init_list[0]
+        if isinstance(item, ast.MemberDesignatorInit):
+            member_by_name = {m.name: i for i, m in enumerate(union_def.members)}
+            if item.member not in member_by_name:
+                raise SemanticError(f"Union has no member named '{item.member}'.")
+            member_idx = member_by_name[item.member]
+            return member_idx, item.init
+        if isinstance(item, ast.IndexDesignatorInit):
+            raise SemanticError("Array index designator '[n] =' is not valid in a union initialiser.")
+        return 0, item
+
+    def _expand_array_designated_inits(
+        self, init_list: list[ast.Initializer], elem_t: Type, size: int
+    ) -> list[ast.Initializer]:
+        """Expand an array initialiser list (with or without index designators) to positional form.
+
+        Iterates over ``init_list``, tracking the current element index.  An
+        ``IndexDesignatorInit`` jumps ``current_idx`` to the specified constant
+        index; a plain ``Initializer`` fills ``current_idx`` and advances it.
+        Unspecified positions are zero-initialised (C11 sec. 6.7.9p21).
+
+        Args:
+            init_list: Raw initialisers, possibly containing ``IndexDesignatorInit`` nodes.
+            elem_t: The array element type (for zero-init generation).
+            size: The declared array size.
+
+        Returns:
+            A positional list of exactly ``size`` initialisers.
+
+        Raises:
+            SemanticError: If an index designator is not an integer constant
+                expression, if an index is out of bounds, if a
+                ``MemberDesignatorInit`` is encountered, or if positional
+                elements overflow the array.
+        """
+        positional: dict[int, ast.Initializer] = {}
+        current_idx = 0
+
+        for item in init_list:
+            if isinstance(item, ast.IndexDesignatorInit):
+                resolved_idx = self._typecheck_and_convert(self.resolve_exp(item.index))
+                if not isinstance(resolved_idx, ast.Constant) or not isinstance(resolved_idx.value.val, int):
+                    raise SemanticError("Array designator index must be an integer constant expression.")
+                idx_val = int(resolved_idx.value.val)
+                if idx_val < 0 or idx_val >= size:
+                    raise SemanticError(f"Array designator index {idx_val} is out of bounds for array of size {size}.")
+                current_idx = idx_val
+                positional[current_idx] = item.init
+            elif isinstance(item, ast.MemberDesignatorInit):
+                raise SemanticError("Struct member designator '.member =' is not valid in an array initialiser.")
+            else:
+                if current_idx >= size:
+                    raise SemanticError(f"Too many values in initializer: expected at most {size}.")
+                positional[current_idx] = item
+            current_idx += 1
+
+        return [positional.get(i, _zero_initializer(elem_t, self._struct_type_table)) for i in range(size)]
+
     def _pad_to_size(self, inits: list[ast.Initializer], elem_t: Type, size: int) -> list[ast.Initializer]:
         """Pad a type-checked initializer list to ``size`` elements with zero initialisers.
 
@@ -2802,13 +2936,14 @@ class SemanticAnalyser:
                 trailing = struct_def.size - current_offset
                 if trailing > 0:
                     _append_zero_pad(result, trailing)
-            case ast.CompoundInit(initializers=sub_inits, init_type=Union(tag=tag)):
-                # First (and only) member is initialised; remainder is zero padding.
+            case ast.CompoundInit(initializers=sub_inits, init_type=Union(tag=tag), union_member_index=member_idx):
+                # The designated (or default first) member is initialised; remainder is zero padding.
                 union_def = self._struct_type_table[tag]
-                first_member_t = union_def.members[0].member_type
+                actual_idx = member_idx if member_idx is not None else 0
+                member_t = union_def.members[actual_idx].member_type
                 self._flatten_helper(sub_inits[0], result)
-                first_size = type_size(first_member_t, self._struct_type_table)
-                trailing = union_def.size - first_size
+                member_size = type_size(member_t, self._struct_type_table)
+                trailing = union_def.size - member_size
                 if trailing > 0:
                     _append_zero_pad(result, trailing)
             case ast.CompoundInit(initializers=sub_inits):
@@ -2855,47 +2990,63 @@ class SemanticAnalyser:
                 cast_exp = _convert_by_assignment(typechecked_exp, target_type)
                 return ast.SingleInit(cast_exp)
             case Array(element=elem_t, size=size), ast.CompoundInit(initializers=init_list):
-                if len(init_list) > size:
-                    raise SemanticError(
-                        f"Too many values in initializer: expected at most {size}, got {len(init_list)}."
-                    )
+                has_designators = any(
+                    isinstance(i, (ast.IndexDesignatorInit, ast.MemberDesignatorInit)) for i in init_list
+                )
+                if has_designators:
+                    expanded: list[ast.Initializer] = self._expand_array_designated_inits(init_list, elem_t, size)
+                else:
+                    if len(init_list) > size:
+                        raise SemanticError(
+                            f"Too many values in initializer: expected at most {size}, got {len(init_list)}."
+                        )
+                    expanded = list(init_list)
                 typechecked_list: list[ast.Initializer] = [
-                    self._typecheck_init(elem_t, elem_init) for elem_init in init_list
+                    self._typecheck_init(elem_t, elem_init) for elem_init in expanded
                 ]
                 return ast.CompoundInit(self._pad_to_size(typechecked_list, elem_t, size))
             case Structure(tag=tag), ast.CompoundInit(initializers=init_list):
-                struct_def = self._struct_type_table.get(tag)  #
+                struct_def = self._struct_type_table.get(tag)
                 if struct_def is None:
                     raise SemanticError("Cannot initialize an incomplete struct type.")
-                if len(init_list) > len(struct_def.members):  #
-                    raise SemanticError(
-                        f"Too many elements in struct initializer: "
-                        f"expected at most {len(struct_def.members)}, got {len(init_list)}."
-                    )
-                typechecked_list = [  #
-                    self._typecheck_init(struct_def.members[i].member_type, elem) for i, elem in enumerate(init_list)
-                ]
-                for i in range(len(init_list), len(struct_def.members)):  #
-                    typechecked_list.append(
-                        _zero_initializer(struct_def.members[i].member_type, self._struct_type_table)
-                    )
+                has_struct_designators = any(
+                    isinstance(i, (ast.MemberDesignatorInit, ast.IndexDesignatorInit)) for i in init_list
+                )
+                if has_struct_designators:
+                    positional = self._expand_struct_designated_inits(init_list, struct_def)
+                    typechecked_list = [
+                        self._typecheck_init(struct_def.members[i].member_type, elem)
+                        for i, elem in enumerate(positional)
+                    ]
+                else:
+                    if len(init_list) > len(struct_def.members):
+                        raise SemanticError(
+                            f"Too many elements in struct initializer: "
+                            f"expected at most {len(struct_def.members)}, got {len(init_list)}."
+                        )
+                    typechecked_list = [
+                        self._typecheck_init(struct_def.members[i].member_type, elem)
+                        for i, elem in enumerate(init_list)
+                    ]
+                    for i in range(len(init_list), len(struct_def.members)):
+                        typechecked_list.append(
+                            _zero_initializer(struct_def.members[i].member_type, self._struct_type_table)
+                        )
                 return ast.CompoundInit(typechecked_list, init_type=target_type)
             case Union(tag=tag), ast.CompoundInit(initializers=init_list):
-                # C11 sec. 6.7.9p16: union initializer initialises the first named member only.
+                # C11 sec. 6.7.9p16: union initializer initialises the first named member only,
+                # unless a member designator selects another member.
                 union_def = self._struct_type_table.get(tag)
                 if union_def is None:
                     raise SemanticError("Cannot initialize an incomplete union type.")
-                if len(init_list) > 1:
-                    raise SemanticError(
-                        f"Too many elements in union initializer: expected at most 1, got {len(init_list)}."
-                    )
-                first_member_t = union_def.members[0].member_type
-                typechecked_list = (
-                    [self._typecheck_init(first_member_t, init_list[0])]
-                    if init_list
-                    else [_zero_initializer(first_member_t, self._struct_type_table)]
+                member_idx, raw_init = self._expand_union_designated_init(init_list, union_def)
+                member_t = union_def.members[member_idx].member_type
+                typechecked_union_init = self._typecheck_init(member_t, raw_init)
+                return ast.CompoundInit(
+                    [typechecked_union_init],
+                    init_type=target_type,
+                    union_member_index=member_idx,
                 )
-                return ast.CompoundInit(typechecked_list, init_type=target_type)
             case _:
                 raise SemanticError("Cannot initialize a scalar object with a compound initializer.")
 

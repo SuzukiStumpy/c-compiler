@@ -265,10 +265,47 @@ class CompoundInit(Initializer):
             array initializers.  Set to ``Structure(tag)`` by ``_typecheck_init``
             when the target type is a struct so that ``_flatten_helper`` can emit
             inter-member and trailing padding when building the static-init list.
+        union_member_index: For union ``CompoundInit`` nodes produced by a designated
+            initialiser (e.g. ``{.f = 3.14}``), the zero-based index of the union
+            member being initialised.  ``None`` means the first member (index 0),
+            which preserves backward compatibility with non-designated union inits.
     """
 
     initializers: list[Initializer]
     init_type: Type | None = None
+    union_member_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemberDesignatorInit(Initializer):
+    """A designated initialiser targeting a struct or union member by name: ``.member = init``.
+
+    Produced by the parser for ``{ .member = value }`` syntax and expanded by
+    semantic analysis into a positional ``CompoundInit`` before type-checking.
+
+    Attributes:
+        member: The name of the struct or union member being initialised.
+        init: The sub-initialiser for that member's value.
+    """
+
+    member: str
+    init: Initializer
+
+
+@dataclass(frozen=True, slots=True)
+class IndexDesignatorInit(Initializer):
+    """A designated initialiser targeting an array element by index: ``[expr] = init``.
+
+    Produced by the parser for ``{ [constant] = value }`` syntax and expanded by
+    semantic analysis into a positional ``CompoundInit`` before type-checking.
+
+    Attributes:
+        index: The constant expression giving the target array index.
+        init: The sub-initialiser for that element's value.
+    """
+
+    index: Exp
+    init: Initializer
 
 
 @dataclass(frozen=True, slots=True)

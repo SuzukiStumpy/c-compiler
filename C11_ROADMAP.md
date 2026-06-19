@@ -13,7 +13,7 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | Full constant-expr enum values | L | M | Extend existing const evaluator |
 | `_Alignof` | M | M | New operator; type-size lookup |
 | `_Alignas` | M | M | Parse + emit `.align`; affects struct layout |
-| Designated initialisers `{.x=1}` | M | H | Common in real code; need field-order tracking |
+| Designated initialisers `{.x=1}` | M | H | ✓ Done — struct member (`.field = val`) and array index (`[n] = val`) designators; mixed positional/designated supported |
 | Compound literals `(T){...}` | M | M | Parse as temp + existing init machinery |
 | Flexible array members | M | M | Incomplete-type size calc |
 | Anonymous struct/union members | M | H | Field promotion; common in Linux-style code |
