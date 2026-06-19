@@ -287,11 +287,14 @@ Neither is recognised.
 
 ### Enum limitations
 
-`enum` is supported at both file scope and block scope. The following are not yet implemented:
+`enum` is supported at both file scope and block scope, including:
+
+- **Inline definitions** — `enum Color { RED } x;` declares the enum and a variable in one statement.
+- **Anonymous enums** — `enum { A, B };` (no tag) registers enumerators without requiring a tag name.
+
+The following are not yet implemented:
 
 - **Full constant-expression enumerator values** — enumerator values must be integer literals, unary-negated literals, or references to a previously-declared enumerator in the same definition. Expressions involving `sizeof`, bitwise shifts, or cross-enum references are not evaluated.
-- **Inline enum definitions as part of a variable declaration** — `enum Color { RED } x;` is not yet supported. The enum must be declared separately (`enum Color { RED }; enum Color x;`).
-- **Anonymous enum type specifiers** — `enum { A, B }` as a standalone type (without a tag and without a trailing variable name) is parsed but the resulting anonymous type cannot be used in subsequent declarations.
 
 ### Struct and union features
 

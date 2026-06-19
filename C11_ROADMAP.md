@@ -8,8 +8,8 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | `inline` specifier | L | M | ✓ Done — parsed; `Function.is_inline` flag set; no inlining performed |
 | `_Noreturn` | L | L | ✓ Done — parsed; `Function.is_noreturn` flag set; no contract enforcement |
 | `_Static_assert` | L | M | ✓ Done — constant expression evaluated at semantic analysis; SemanticError on failure |
-| Inline enum `enum E { A } x;` | L | M | Parser-only change |
-| Anonymous enum `enum { A, B }` standalone | L | L | Small semantic tweak |
+| Inline enum `enum E { A } x;` | L | M | ✓ Done — `_parse_enum_declaration` emits `[EnumDecl, VarDecl]`; callers use `extend` |
+| Anonymous enum `enum { A, B }` standalone | L | L | ✓ Done — tag is optional; `None` → unique internal tag via `_make_enum_tag("")` |
 | Full constant-expr enum values | L | M | Extend existing const evaluator |
 | `_Alignof` | M | M | New operator; type-size lookup |
 | `_Alignas` | M | M | Parse + emit `.align`; affects struct layout |

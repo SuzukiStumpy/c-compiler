@@ -108,7 +108,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 
 - **Integer types**: `char`, `signed char`, `unsigned char`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `unsigned long`, `long long`, `unsigned long long`, `__int128`, `unsigned __int128`, `_Bool`
 - **Floating-point**: `float`, `double`, `long double` (x87 80-bit, stored as 16 bytes on Linux)
-- **Derived types**: pointers, arrays (fixed-size), structs, unions, enums, function pointers, bitfields
+- **Derived types**: pointers, arrays (fixed-size), structs, unions, enums (named, anonymous `enum { … }`, inline `enum E { … } var`), function pointers, bitfields
 - **Type qualifiers**: `const`, `volatile`, `restrict` (parsed; restrict has no semantic effect)
 - **Function specifiers**: `inline` (parsed; stored as `Function.is_inline`; no inlining performed — flag is informational only); `_Noreturn` (parsed; stored as `Function.is_noreturn`; no contract enforcement — flag is informational only)
 - **Static assertions**: `_Static_assert(expr, msg)` at file scope and block scope; constant expression is evaluated during semantic analysis; a zero result raises a `SemanticError` with the supplied message; no runtime code is emitted

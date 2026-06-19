@@ -3,7 +3,7 @@
 import pytest
 
 from compiler.parser import parse
-from compiler.syntax.ast import EnumDecl, EnumType, Program, VarDecl
+from compiler.syntax.ast import EnumDecl, EnumType, Pointer, Program, VarDecl
 from compiler.types.tokens import Token, TokenType
 from compiler.utils.exceptions import ParseError
 
@@ -202,6 +202,79 @@ class TestEnumAsTypeSpecifier:
         var_decl = prog.declarations[1]
         assert isinstance(var_decl, VarDecl)
         assert isinstance(var_decl.variable_declaration.var_type, EnumType)
+
+
+class TestAnonymousEnum:
+    """``enum { enumerator-list };`` without a tag name."""
+
+    def test_anonymous_enum_produces_enum_decl_with_none_tag(self) -> None:
+        """``enum { A };`` parses to a single ``EnumDecl`` whose tag is ``None``."""
+        prog = _parse_top(_ENUM, _LBRACE, _ident("A"), _RBRACE, _SEMICOLON)
+        assert len(prog.declarations) == 1
+        decl = prog.declarations[0]
+        assert isinstance(decl, EnumDecl)
+        assert decl.enum_declaration.tag is None
+        assert decl.enum_declaration.members[0].name == "A"
+        assert decl.enum_declaration.members[0].value == 0
+
+    def test_anonymous_enum_multiple_members(self) -> None:
+        """``enum { A, B, C };`` assigns values 0, 1, 2."""
+        prog = _parse_top(_ENUM, _LBRACE, _ident("A"), _COMMA, _ident("B"), _COMMA, _ident("C"), _RBRACE, _SEMICOLON)
+        decl = prog.declarations[0]
+        assert isinstance(decl, EnumDecl)
+        members = decl.enum_declaration.members
+        assert len(members) == 3
+        assert members[0].value == 0
+        assert members[1].value == 1
+        assert members[2].value == 2
+
+    def test_anonymous_enum_explicit_value(self) -> None:
+        """``enum { A = 5, B };`` assigns 5 and 6."""
+        prog = _parse_top(
+            _ENUM, _LBRACE, _ident("A"), _ASSIGNMENT, _number("5"), _COMMA, _ident("B"), _RBRACE, _SEMICOLON
+        )
+        decl = prog.declarations[0]
+        assert isinstance(decl, EnumDecl)
+        members = decl.enum_declaration.members
+        assert members[0].value == 5
+        assert members[1].value == 6
+
+    def test_anonymous_enum_empty_body_fails(self) -> None:
+        """``enum {};`` raises ``ParseError`` — body must not be empty."""
+        with pytest.raises(ParseError):
+            _parse_top(_ENUM, _LBRACE, _RBRACE, _SEMICOLON)
+
+
+class TestInlineEnum:
+    """``enum E { enumerator-list } declarator;`` defines the enum and a variable."""
+
+    def test_inline_enum_produces_two_declarations(self) -> None:
+        """``enum E { A } x;`` emits ``EnumDecl`` followed by ``VarDecl``."""
+        prog = _parse_top(_ENUM, _ident("E"), _LBRACE, _ident("A"), _RBRACE, _ident("x"), _SEMICOLON)
+        assert len(prog.declarations) == 2
+        enum_decl = prog.declarations[0]
+        var_decl = prog.declarations[1]
+        assert isinstance(enum_decl, EnumDecl)
+        assert enum_decl.enum_declaration.tag == "E"
+        assert isinstance(var_decl, VarDecl)
+        assert isinstance(var_decl.variable_declaration.var_type, EnumType)
+        assert var_decl.variable_declaration.var_type.tag == "E"
+        assert var_decl.variable_declaration.name == "x"
+
+    def test_inline_enum_pointer_declarator(self) -> None:
+        """``enum E { A } *p;`` produces a ``VarDecl`` with a pointer-to-enum type."""
+        _ASTERISK = _tok(TokenType.ASTERISK, "*")
+        prog = _parse_top(_ENUM, _ident("E"), _LBRACE, _ident("A"), _RBRACE, _ASTERISK, _ident("p"), _SEMICOLON)
+        assert len(prog.declarations) == 2
+        var_decl = prog.declarations[1]
+        assert isinstance(var_decl, VarDecl)
+        assert isinstance(var_decl.variable_declaration.var_type, Pointer)
+
+    def test_inline_enum_standalone_semicolon_still_works(self) -> None:
+        """``enum E { A };`` (no variable) is still a single ``EnumDecl``."""
+        prog = _parse_top(_ENUM, _ident("E"), _LBRACE, _ident("A"), _RBRACE, _SEMICOLON)
+        assert len(prog.declarations) == 1
+        assert isinstance(prog.declarations[0], EnumDecl)
 
 
 class TestEnumParseErrors:

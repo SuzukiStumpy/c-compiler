@@ -14,11 +14,11 @@ from test.semantic_analysis.helpers import _prog_with_decls
 # ---------------------------------------------------------------------------
 
 
-def _enum_decl(tag: str, *members: tuple[str, int]) -> ast.EnumDecl:
+def _enum_decl(tag: str | None, *members: tuple[str, int]) -> ast.EnumDecl:
     """Return an ``EnumDecl`` AST node for testing.
 
     Args:
-        tag: The source-level enum tag name.
+        tag: The source-level enum tag name, or ``None`` for an anonymous enum.
         *members: Zero or more ``(name, value)`` pairs forming the enumerator list.
 
     Returns:
@@ -218,3 +218,88 @@ class TestEnumTagConflicts:
         prog = _prog_with_decls(_enum_decl("E", ("A", 0), ("A", 1)))
         with pytest.raises(SemanticError):
             resolve(prog)
+
+
+# ---------------------------------------------------------------------------
+# Anonymous enums
+# ---------------------------------------------------------------------------
+
+
+class TestAnonymousEnum:
+    """Anonymous enums (tag=None) register enumerators without requiring a tag."""
+
+    def test_anonymous_enum_registers_enumerators(self) -> None:
+        """An anonymous enum's members appear in the symbol table."""
+        prog = _prog_with_decls(_enum_decl(None, ("X", 0), ("Y", 1)))
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert "X" in sym_table
+        assert sym_table["X"].attrs == EnumConstAttr(0)
+        assert "Y" in sym_table
+        assert sym_table["Y"].attrs == EnumConstAttr(1)
+
+    def test_anonymous_enum_produces_unique_internal_tag(self) -> None:
+        """The resolved ``EnumDecl`` for an anonymous enum has a non-None internal tag."""
+        prog = _prog_with_decls(_enum_decl(None, ("A", 0)))
+        resolved = resolve(prog)
+        decl = resolved.declarations[0]
+        assert isinstance(decl, ast.EnumDecl)
+        assert decl.enum_declaration.tag is not None
+        assert decl.enum_declaration.tag.startswith(".E")
+
+    def test_anonymous_enum_enumerators_foldable(self) -> None:
+        """References to enumerators defined in an anonymous enum fold to constants."""
+        prog = ast.Program(
+            declarations=(
+                _enum_decl(None, ("ANON_A", 42)),
+                ast.FunDecl(
+                    ast.Function(
+                        name="main",
+                        params=(),
+                        body=(ast.S(ast.Return(exp=ast.Var(name="ANON_A"))),),
+                        fun_type=ast.FunType(params=(), ret=ast.IntType()),
+                    )
+                ),
+            )
+        )
+        resolved = resolve(prog)
+        fn = next(d.function_declaration for d in resolved.declarations if isinstance(d, ast.FunDecl))
+        assert fn.body is not None
+        folded = fn.body[0].statement.exp  # type: ignore[union-attr]
+        assert isinstance(folded, ast.Constant)
+        assert folded.value == ast.ConstInt(42)
+
+
+# ---------------------------------------------------------------------------
+# Inline enum declarations
+# ---------------------------------------------------------------------------
+
+
+class TestInlineEnum:
+    """``enum E { A } x;`` produces an ``EnumDecl`` + ``VarDecl`` pair."""
+
+    def test_inline_enum_both_decls_resolve(self) -> None:
+        """An inline enum emitting ``[EnumDecl, VarDecl]`` resolves without error."""
+        enum = _enum_decl("Status", ("OK", 0), ("ERR", 1))
+        var = ast.VarDecl(ast.VariableDeclaration("s", None, ast.EnumType("Status")))
+        prog = _prog_with_decls(enum, var)
+        resolve(prog)  # must not raise
+
+    def test_inline_enum_variable_has_resolved_enum_type(self) -> None:
+        """The ``VarDecl`` from an inline enum carries a uniquified internal tag."""
+        enum = _enum_decl("Status", ("OK", 0))
+        var = ast.VarDecl(ast.VariableDeclaration("s", None, ast.EnumType("Status")))
+        prog = _prog_with_decls(enum, var)
+        resolved = resolve(prog)
+        var_decl = next(d for d in resolved.declarations if isinstance(d, ast.VarDecl))
+        assert isinstance(var_decl.variable_declaration.var_type, ast.EnumType)
+        assert var_decl.variable_declaration.var_type.tag is not None
+        assert var_decl.variable_declaration.var_type.tag.startswith(".E")
+
+    def test_inline_enum_enumerators_registered(self) -> None:
+        """Enumerators from an inline enum are in the symbol table."""
+        enum = _enum_decl("Status", ("OK", 0), ("ERR", 1))
+        var = ast.VarDecl(ast.VariableDeclaration("s", None, ast.EnumType("Status")))
+        prog = _prog_with_decls(enum, var)
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert sym_table["OK"].attrs == EnumConstAttr(0)
+        assert sym_table["ERR"].attrs == EnumConstAttr(1)

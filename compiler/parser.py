@@ -4,8 +4,10 @@ The parser uses recursive descent for all constructs except binary expressions,
 which are handled by precedence climbing.  The grammar is:
 
     program              ::= {declaration}
-    declaration          ::= variable-declaration | function-declaration | struct-declaration
+    declaration          ::= variable-declaration | function-declaration | struct-declaration | enum-declaration
     struct-declaration   ::= "struct" identifier ["{" member-declaration}+ "}"]
+    enum-declaration     ::= "enum" [identifier] "{" enumerator {"," enumerator} [","] "}"
+                           | [declarator ["=" initializer]] ";"
     member-declaration   ::= {type-specifier}+ declarator ";"
     function-declaration ::= {specifier}+ declarator "(" param-list ")" (block | ";")
     variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
@@ -815,7 +817,7 @@ class Parser:
         """
         declarations: list[Declaration] = []
         while not self._at_end():
-            declarations.append(self._parse_declaration())
+            declarations.extend(self._parse_declaration())
         if not declarations:
             raise self._eof_error("expected a declaration, got empty input")
         return Program(declarations=tuple(declarations))
@@ -1169,22 +1171,24 @@ class Parser:
                     raise self._eof_error("expected '}', got end of input")
                 if token.type == TokenType.RBRACE:
                     break
-                items.append(self._parse_block_item())
+                items.extend(self._parse_block_item())
             # Eat the final RBRACE before we return
             self._consume()
         finally:
             self._typedef_scopes.pop()
         return tuple(items)
 
-    def _parse_block_item(self) -> BlockItem:
-        """Parse a single block item: either a declaration or a statement.
+    def _parse_block_item(self) -> list[BlockItem]:
+        """Parse one or more block items starting at the current position.
 
         A declaration begins with a declaration-specifier keyword; everything
-        else is treated as a statement.
+        else is treated as a statement.  An inline enum definition (e.g.
+        ``enum E { A } x;``) expands to two ``D`` items — ``EnumDecl`` then
+        ``VarDecl``.
 
         Returns:
-            A ``D`` node wrapping a ``VarDecl`` or ``FunDecl``, or an ``S``
-            node wrapping a ``Statement``.
+            A list of ``BlockItem`` nodes: either ``[S(...)]`` for a statement,
+            or ``[D(decl), ...]`` for one or more declarations.
 
         Raises:
             ParseError: If the item is malformed.
@@ -1195,17 +1199,19 @@ class Parser:
             or token.type in _TYPE_QUALIFIER_TOKENS
             or (token.type == TokenType.IDENTIFIER and self._is_typedef_name(token.value))
         ):
-            return D(declaration=self._parse_declaration())
-        return S(statement=self._parse_statement())
+            return [D(declaration=decl) for decl in self._parse_declaration()]
+        return [S(statement=self._parse_statement())]
 
-    def _parse_declaration(self) -> Declaration:
-        """Parse a variable, function, or struct declaration.
+    def _parse_declaration(self) -> list[Declaration]:
+        """Parse a variable, function, struct, union, or enum declaration.
 
         Grammar::
 
             declaration          ::= variable-declaration | function-declaration
-                                   | struct-declaration
+                                   | struct-declaration | union-declaration | enum-declaration
             struct-declaration   ::= "struct" identifier ["{" member-declaration}+ "}"] ";"
+            union-declaration    ::= "union" identifier ["{" member-declaration}+ "}"] ";"
+            enum-declaration     ::= "enum" [identifier] "{" enumerator-list "}" [declarator] ";"
             function-declaration ::= {specifier}+ declarator (block | ";")
             variable-declaration ::= {specifier}+ declarator ["=" initializer] ";"
             declarator           ::= "*" declarator | direct-declarator
@@ -1219,8 +1225,13 @@ class Parser:
         and ``struct Tag {`` are struct declarations; ``struct Tag *``, ``struct Tag
         identifier``, and similar are variable/function declarations.
 
+        Enum declarations with a brace-enclosed body are always dispatched here
+        regardless of whether a tag is present (anonymous enum) or a declarator
+        follows the closing brace (inline enum).
+
         Returns:
-            A ``VarDecl``, ``FunDecl``, or ``StructDecl`` node.
+            A list of ``Declaration`` nodes — usually one, but two for inline enums
+            where an ``EnumDecl`` is followed by a ``VarDecl``.
 
         Raises:
             ParseError: If no type specifier is present, the declarator is malformed,
@@ -1237,7 +1248,7 @@ class Parser:
                 and next2 is not None
                 and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
             ):
-                return self._parse_struct_declaration()
+                return [self._parse_struct_declaration()]
         if self._match(TokenType.UNION):
             next1 = self._peek(1)
             next2 = self._peek(2)
@@ -1247,10 +1258,14 @@ class Parser:
                 and next2 is not None
                 and next2.type in {TokenType.LBRACE, TokenType.SEMICOLON}
             ):
-                return self._parse_union_declaration()
+                return [self._parse_union_declaration()]
         if self._match(TokenType.ENUM):
             next1 = self._peek(1)
             next2 = self._peek(2)
+            # Anonymous enum: "enum {" — no tag
+            if next1 is not None and next1.type == TokenType.LBRACE:
+                return self._parse_enum_declaration()
+            # Named enum with body: "enum Tag {"
             if (
                 next1 is not None
                 and next1.type == TokenType.IDENTIFIER
@@ -1259,17 +1274,17 @@ class Parser:
             ):
                 return self._parse_enum_declaration()
 
+        if self._match(TokenType.STATIC_ASSERT):
+            return [self._parse_static_assert()]
+
         if self._match(TokenType.TYPEDEF):
             self._consume()  # consume 'typedef'
-            base_type = self._parse_type()
-            alias_name, transform, _ = self._parse_declarator()
+            base_type_td = self._parse_type()
+            alias_name, transform_td, _ = self._parse_declarator()
             self._expect(TokenType.SEMICOLON)
-            full_typedef_type = transform(base_type)
+            full_typedef_type = transform_td(base_type_td)
             self._register_typedef(alias_name, full_typedef_type)
-            return TypedefDecl(name=alias_name, aliased_type=full_typedef_type)
-
-        if self._match(TokenType.STATIC_ASSERT):
-            return self._parse_static_assert()
+            return [TypedefDecl(name=alias_name, aliased_type=full_typedef_type)]
 
         first_token = self._peek()
         base_type, storage, is_inline, is_noreturn = self._parse_specifiers()
@@ -1286,27 +1301,33 @@ class Parser:
             else:
                 body = self._parse_block()
             assert params is not None
-            return FunDecl(
-                function_declaration=Function(
-                    name=name,
-                    params=params,
-                    body=body,
-                    fun_type=full_type,
-                    storage_class=storage,
-                    source_file=first_token.filename if first_token is not None else "",
-                    source_line=first_token.line if first_token is not None else 0,
-                    is_inline=is_inline,
-                    is_noreturn=is_noreturn,
+            return [
+                FunDecl(
+                    function_declaration=Function(
+                        name=name,
+                        params=params,
+                        body=body,
+                        fun_type=full_type,
+                        storage_class=storage,
+                        source_file=first_token.filename if first_token is not None else "",
+                        source_line=first_token.line if first_token is not None else 0,
+                        is_inline=is_inline,
+                        is_noreturn=is_noreturn,
+                    )
                 )
-            )
+            ]
         init: Initializer | None = None
         if self._match(TokenType.ASSIGNMENT):
             self._consume()
             init = self._parse_initializer()
         self._expect(TokenType.SEMICOLON)
-        return VarDecl(
-            variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=storage)
-        )
+        return [
+            VarDecl(
+                variable_declaration=VariableDeclaration(
+                    name=name, init=init, var_type=full_type, storage_class=storage
+                )
+            )
+        ]
 
     def _parse_struct_declaration(self) -> StructDecl:
         """Parse a struct type declaration or definition.
@@ -1384,30 +1405,38 @@ class Parser:
         self._expect(TokenType.SEMICOLON)
         return UnionDecl(union_declaration=UnionDeclaration(tag=tag_token.value, members=members))
 
-    def _parse_enum_declaration(self) -> EnumDecl:
-        """Parse an enum type declaration or definition.
+    def _parse_enum_declaration(self) -> list[Declaration]:
+        """Parse an enum type declaration or definition, with optional inline declarator.
 
         Grammar::
 
-            enum-declaration ::= "enum" identifier "{" enumerator {"," enumerator} [","] "}" ";"
+            enum-declaration  ::= "enum" [identifier] "{" enumerator {"," enumerator} [","] "}"
+                                  [declarator ["=" initializer]] ";"
             enumerator        ::= identifier ["=" integer-literal]
 
-        The tag is required (anonymous enums are not supported at file or block scope
-        via this dispatch path).  A body enclosed in braces is mandatory — enum forward
-        declarations are not permitted.  At least one enumerator must appear inside the
-        braces.  Enumerator values are computed at parse time: starting from 0, each
-        enumerator without an explicit value takes the previous value plus one.
+        The tag identifier is optional (anonymous enums are supported).  A brace-enclosed
+        body is mandatory — enum forward declarations are not permitted.  At least one
+        enumerator must appear inside the braces.  Enumerator values are computed at parse
+        time: starting from 0, each enumerator without an explicit value takes the previous
+        value plus one.
+
+        When a declarator follows the closing brace (e.g. ``enum E { A } x;``), the method
+        emits two declarations: the ``EnumDecl`` first, then a ``VarDecl`` whose type is
+        ``EnumType(tag)``.
 
         Returns:
-            An ``EnumDecl`` node wrapping the ``EnumDeclaration``.
+            A list of one or two ``Declaration`` nodes.  The list contains a single
+            ``EnumDecl`` for a standalone definition, or ``[EnumDecl, VarDecl]`` when an
+            inline declarator is present.
 
         Raises:
-            ParseError: If the tag identifier or opening brace is missing, if the
-                brace-enclosed enumerator list is empty, or if the trailing semicolon
-                is absent.
+            ParseError: If the opening brace is missing, if the brace-enclosed enumerator
+                list is empty, or if the trailing semicolon is absent.
         """
         self._expect(TokenType.ENUM)
-        tag_token = self._expect(TokenType.IDENTIFIER)
+        tag: str | None = None
+        if self._match(TokenType.IDENTIFIER):
+            tag = self._consume().value
         self._expect(TokenType.LBRACE)
         if self._match(TokenType.RBRACE):
             tok = self._peek()
@@ -1421,7 +1450,6 @@ class Parser:
             name_tok = self._expect(TokenType.IDENTIFIER)
             if self._match(TokenType.ASSIGNMENT):
                 self._consume()  # consume '='
-                # Parse an optional unary minus followed by an integer literal.
                 negative = False
                 if self._match(TokenType.MINUS):
                     self._consume()
@@ -1441,8 +1469,22 @@ class Parser:
             else:
                 break
         self._expect(TokenType.RBRACE)
+        members = tuple(members_list)
+        enum_decl = EnumDecl(enum_declaration=EnumDeclaration(tag=tag, members=members))
+        if self._match(TokenType.SEMICOLON):
+            self._consume()
+            return [enum_decl]
+        name, transform, _ = self._parse_declarator()
+        init: Initializer | None = None
+        if self._match(TokenType.ASSIGNMENT):
+            self._consume()
+            init = self._parse_initializer()
         self._expect(TokenType.SEMICOLON)
-        return EnumDecl(enum_declaration=EnumDeclaration(tag=tag_token.value, members=tuple(members_list)))
+        full_type = transform(EnumType(tag=tag))
+        var_decl = VarDecl(
+            variable_declaration=VariableDeclaration(name=name, init=init, var_type=full_type, storage_class=None)
+        )
+        return [enum_decl, var_decl]
 
     def _parse_static_assert(self) -> StaticAssert:
         """Parse a ``_Static_assert(constant-expression, string-literal);`` declaration.
