@@ -255,46 +255,85 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Integer types
 
-`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above.
+`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above; full multi-word arithmetic is not implemented.
 
 ### Floating-point types
 
-| Missing type | Notes |
-|---|---|
-| `_Complex` / `_Imaginary` | Complex and imaginary arithmetic (sec. 6.2.5 p11) |
+`float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported. The following are missing:
 
-`float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported. All arithmetic, relational, and conversion operations between `float`, `double`, `long double`, and integer types are implemented, including the SysV AMD64 ABI calling conventions (XMM registers for `float`/`double`; stack (MEMORY class) for `long double`).
+| Missing feature | C11 reference | Notes |
+|---|---|---|
+| Hex floating-point literals (`0x1.8p10`) | sec. 6.4.4.2 | Exact FP representation via hex mantissa and binary exponent; used in numerical libraries |
+| `_Complex` / `_Imaginary` | sec. 6.2.5 p11 | Complex and imaginary arithmetic; full ABI support required |
 
-### Atomic types and thread-local storage
+### Storage-class specifiers
 
-C11 introduced a concurrency model alongside `<stdatomic.h>`:
+`static`, `extern`, and `typedef` are fully supported.
 
-- **`_Atomic`** type qualifier and type specifier (sec. 6.7.2.4) - lock-free atomic reads, writes, and RMW operations.
-- **`_Thread_local`** storage-class specifier (sec. 6.7.1) - per-thread static storage.
-
-Neither is recognised.
+| Missing specifier | C11 reference | Notes |
+|---|---|---|
+| `auto` | sec. 6.7.1 | Explicit automatic storage; a no-op in C99/C11; not yet parsed |
+| `register` | sec. 6.7.1 | Deprecated in C11; a no-op; not yet parsed; causes a parse error on real code that uses it |
+| `_Thread_local` | sec. 6.7.1 | Per-thread static storage via the TLS segment |
 
 ### Declarations and specifiers
 
 | Missing feature | C11 reference | Notes |
 |---|---|---|
-| `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>`. |
+| `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>` |
+| `_Pragma` operator | sec. 6.10.9 | Turns a string token into a `#pragma`; used in macros that conditionally emit pragmas |
+| Static array parameters `int foo(int a[static 10])` | sec. 6.7.6.3 | Minimum-size hint in array parameter declarators; currently causes a parse error |
+| `__func__` predefined identifier | sec. 6.4.2.2 | Magic `const char[]` containing the enclosing function name; used in assert macros and debug logging |
+
+### String and character literals
+
+| Missing feature | C11 reference | Notes |
+|---|---|---|
+| Wide char/string literals (`L'x'`, `L"..."`) | sec. 6.4.4.4, 6.4.5 | `wchar_t`-typed; used in platform and i18n code |
+| Unicode literals (`u'x'`, `U'x'`, `u"..."`, `U"..."`, `u8"..."`) | sec. 6.4.4.4, 6.4.5 | C11 `char16_t`/`char32_t`/UTF-8 string support |
+
+### Types
+
+| Missing type | C11 reference | Notes |
+|---|---|---|
+| `char16_t` / `char32_t` | sec. 6.7.2 via `<uchar.h>` | Natural companions to the Unicode literal prefixes above |
+
+### Atomic types and concurrency
+
+C11 introduced a concurrency model alongside `<stdatomic.h>`:
+
+- **`_Atomic`** type qualifier and type specifier (sec. 6.7.2.4) — lock-free atomic reads, writes, and read-modify-write operations with memory ordering.
+- **`_Thread_local`** storage-class specifier (sec. 6.7.1) — per-thread static storage (listed above).
+
+Neither is recognised.
 
 ### Variable-length arrays
 
-VLAs (sec. 6.7.6.2) - arrays whose size is a runtime expression - were mandatory in C99, made optional in C11 (Annex J.2), and removed from C17. This compiler does not implement them; all array sizes must be compile-time integer constant expressions.
+VLAs (sec. 6.7.6.2) — arrays whose size is a runtime expression — were mandatory in C99, made optional in C11 (Annex J.2), and removed from C17. This compiler does not implement them; all array sizes must be compile-time integer constant expressions.
+
+### GCC built-in functions
+
+Several built-in functions used heavily in Linux and glibc headers are not yet recognised:
+
+| Built-in | Notes |
+|---|---|
+| `__builtin_expect(expr, likely)` | Branch-prediction hint; should lower to a no-op pass-through of `expr` |
+| `__builtin_unreachable()` | Marks a code path as unreachable; should lower to a trap or be elided |
+| `__builtin_offsetof(type, member)` | Computes member offset at compile time; equivalent to the `offsetof` macro |
+
+### Inline function linkage
+
+`inline` is parsed and stored on the function declaration, but the C99/C11 §6.7.4 linkage rules for `inline` functions with external linkage are not enforced. In practice most `inline` definitions are also `static`, so this gap rarely surfaces.
 
 ### Multi-file compilation
 
-The compiler accepts exactly one source file per invocation (`nargs=1`). There is no support for:
-
-- Compiling multiple `.c` files in a single invocation
+The compiler accepts exactly one source file per invocation (`nargs=1`). There is no support for compiling multiple `.c` files in a single invocation.
 
 `-I`, `-D`, and `-U` are supported and forwarded directly to the GCC preprocessor. Separate compilation of individual files followed by linking with a system linker does work, because each `.c` file is compiled to a standard ELF object file.
 
 ### Standard library
 
-No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are now recognised. Variadic functions are fully supported, so `<stdarg.h>` parses and links correctly.
+No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are recognised. Variadic functions are fully supported, so `<stdarg.h>` parses and links correctly.
 
 ---
 
