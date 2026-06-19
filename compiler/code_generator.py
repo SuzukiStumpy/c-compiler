@@ -1866,8 +1866,84 @@ def _translate_instruction(
                 symbol_table,
                 constants,
             )
+        case tac.VaStart(ap=ap_name, gp_offset=gp_offset, fp_offset=fp_offset, reg_save_area=rsa_name):
+            return _translate_va_start(ap_name, gp_offset, fp_offset, rsa_name)
         case _:
             raise CodeGenerationError(f"unsupported TAC instruction: {type(instr).__name__}")
+
+
+def _translate_va_start(
+    ap_name: str,
+    gp_offset: int,
+    fp_offset: int,
+    rsa_name: str,
+) -> list[asm.Instruction]:
+    """Expand a ``tac.VaStart`` to assembly: save GP/XMM regs and set ``__va_list_tag`` fields.
+
+    Saves all six GP argument registers (rdi..r9) and all eight XMM argument
+    registers (xmm0..xmm7) to ``rsa_name`` (the 176-byte register save area).
+    Then writes the four fields of the ``__va_list_tag`` struct at ``ap_name``.
+
+    Args:
+        ap_name: Name of the ``__va_list_tag`` pseudo variable.
+        gp_offset: Initial ``gp_offset`` value to write (= named GP params * 8).
+        fp_offset: Initial ``fp_offset`` value to write (= 48 + named XMM params * 16).
+        rsa_name: Name of the 176-byte register save area pseudo variable.
+
+    Returns:
+        A list of assembly instructions implementing the va_start expansion.
+    """
+    instrs: list[asm.Instruction] = []
+    r10 = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+
+    # Save GP argument registers to reg_save_area offsets 0..40.
+    for i, gp_reg in enumerate(_ABI_REGS):
+        instrs.append(
+            asm.Mov(
+                src=asm.Register(gp_reg, asm.Width.QWORD),
+                dst=asm.PseudoMem(rsa_name, i * 8),
+                assembly_type=asm.Quadword(),
+            )
+        )
+
+    # Save XMM argument registers to reg_save_area offsets 48..160.
+    for i, xmm_reg in enumerate(_XMM_REGS):
+        instrs.append(
+            asm.Mov(
+                src=asm.Register(xmm_reg, asm.Width.QWORD),
+                dst=asm.PseudoMem(rsa_name, 48 + i * 16),
+                assembly_type=asm.Double(),
+            )
+        )
+
+    # ap.gp_offset (uint at offset 0)
+    instrs.append(
+        asm.Mov(
+            src=asm.Imm(gp_offset),
+            dst=asm.PseudoMem(ap_name, 0),
+            assembly_type=asm.Longword(),
+        )
+    )
+
+    # ap.fp_offset (uint at offset 4)
+    instrs.append(
+        asm.Mov(
+            src=asm.Imm(fp_offset),
+            dst=asm.PseudoMem(ap_name, 4),
+            assembly_type=asm.Longword(),
+        )
+    )
+
+    # ap.overflow_arg_area (ptr at offset 8) = rbp + 16 (first stack argument)
+    bp = asm.Register(asm.GPRegisters.BP, asm.Width.QWORD)
+    instrs.append(asm.Lea(src=asm.Memory(reg=bp, offset=16), dst=r10))
+    instrs.append(asm.Mov(src=r10, dst=asm.PseudoMem(ap_name, 8), assembly_type=asm.Quadword()))
+
+    # ap.reg_save_area (ptr at offset 16) = address of rsa_name
+    instrs.append(asm.Lea(src=asm.PseudoMem(rsa_name, 0), dst=r10))
+    instrs.append(asm.Mov(src=r10, dst=asm.PseudoMem(ap_name, 16), assembly_type=asm.Quadword()))
+
+    return instrs
 
 
 def _translate_uint_to_double(

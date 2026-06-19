@@ -18,7 +18,7 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | Flexible array members | M | M | ✓ Done — `Array.size: int \| None`; parser emits `None` for `[]`; SA validates last-member rule; sizeof excludes FAM; `(T[])` compound literal infers size from init count |
 | Anonymous struct/union members | M | H | ✓ Done — `nested_decl` field on `MemberDeclaration`; parser handles `struct {` / `union {` without tag; SA flattens promoted fields into outer `StructEntry` |
 | `__int128` full arithmetic | H | L | Multi-word insn sequences; niche use |
-| Variadic fn definition (`va_list` etc.) | H | H | `__builtin_va_*` intrinsics + ABI stack layout |
+| Variadic fn definition (`va_list` etc.) | H | H | ✓ Done — `__builtin_va_*` intrinsics; SysV AMD64 register-save-area + overflow-area; `VaStart`/`VaArg`/`VaEnd`/`VaCopy` AST→TAC→codegen pipeline |
 | `_Generic` selection | H | L | Mainly `<tgmath.h>`; complex type dispatch |
 | VLAs | H | L | Optional in C11; dropped in C17 |
 | `_Thread_local` | H | L | TLS segment; niche |

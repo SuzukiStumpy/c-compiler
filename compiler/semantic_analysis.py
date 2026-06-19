@@ -1045,6 +1045,20 @@ class SemanticAnalyser:
             redeclaration); otherwise a fresh unique tag is generated.
     """
 
+    # Layout of the SysV AMD64 ABI __va_list_tag struct (x86-64 Linux).
+    # Pre-populated in every analyser instance so that ``__builtin_va_list``
+    # (and the ``va_list`` typedef) resolve without a source-level definition.
+    _VA_LIST_TAG_ENTRY: StructEntry = StructEntry(
+        alignment=8,
+        size=24,
+        members=(
+            MemberEntry(name="gp_offset", member_type=ast.UIntType(), offset=0),
+            MemberEntry(name="fp_offset", member_type=ast.UIntType(), offset=4),
+            MemberEntry(name="overflow_arg_area", member_type=ast.Pointer(ast.VoidType()), offset=8),
+            MemberEntry(name="reg_save_area", member_type=ast.Pointer(ast.VoidType()), offset=16),
+        ),
+    )
+
     def __init__(self) -> None:
         """Initialise the analyser with fresh counters and empty symbol tables."""
         self._counter: count[int] = count()
@@ -1206,6 +1220,14 @@ class SemanticAnalyser:
                     return Structure(binding.new_tag)
                 if tag in self._all_unique_struct_tags:
                     return t  # already resolved - idempotent
+                # Lazily register __va_list_tag (GCC's va_list internal type) on first reference.
+                if tag == "__va_list_tag":
+                    self._struct_type_table["__va_list_tag"] = self._VA_LIST_TAG_ENTRY
+                    self._all_unique_struct_tags.add("__va_list_tag")
+                    self._structure_map["__va_list_tag"] = StructureBinding(
+                        new_tag="__va_list_tag", from_current_scope=False
+                    )
+                    return t
                 raise SemanticError(f"Use of undeclared struct tag '{tag}'")
             case Union(tag=tag):
                 s_binding = self._structure_map.get(tag)
@@ -2826,6 +2848,20 @@ class SemanticAnalyser:
                         return ast.Arrow(typed_pointer, member, exp_type=member_def.member_type)
                     case _:
                         raise SemanticError("Operand of '->' is not a pointer to a struct or union.")
+            case ast.VaStart(ap=ap, last=last):
+                typed_ap = self._type_check_exp(ap)
+                typed_last = self._type_check_exp(last)
+                return ast.VaStart(ap=typed_ap, last=typed_last, exp_type=VoidType())
+            case ast.VaArg(ap=ap, arg_type=arg_type):
+                typed_ap = self._type_check_exp(ap)
+                return ast.VaArg(ap=typed_ap, arg_type=arg_type, exp_type=arg_type)
+            case ast.VaEnd(ap=ap):
+                typed_ap = self._type_check_exp(ap)
+                return ast.VaEnd(ap=typed_ap, exp_type=VoidType())
+            case ast.VaCopy(dest=dest, src=src):
+                typed_dest = self._type_check_exp(dest)
+                typed_src = self._type_check_exp(src)
+                return ast.VaCopy(dest=typed_dest, src=typed_src, exp_type=VoidType())
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -3361,6 +3397,15 @@ class SemanticAnalyser:
                     resolved_type = Array(_unq_resolved.element, len(init.initializers))
                 resolved_init = self._typecheck_init(resolved_type, init)
                 return ast.CompoundLiteral(target_type=resolved_type, init=resolved_init, exp_type=resolved_type)
+            case ast.VaStart(ap=ap, last=last):
+                return self._type_check_exp(ast.VaStart(ap=self.resolve_exp(ap), last=self.resolve_exp(last)))
+            case ast.VaArg(ap=ap, arg_type=arg_type):
+                resolved_arg_type = self._resolve_type(arg_type)
+                return self._type_check_exp(ast.VaArg(ap=self.resolve_exp(ap), arg_type=resolved_arg_type))
+            case ast.VaEnd(ap=ap):
+                return self._type_check_exp(ast.VaEnd(ap=self.resolve_exp(ap)))
+            case ast.VaCopy(dest=dest, src=src):
+                return self._type_check_exp(ast.VaCopy(dest=self.resolve_exp(dest), src=self.resolve_exp(src)))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 

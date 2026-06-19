@@ -209,9 +209,13 @@ from compiler.syntax.ast import (
     UnionDecl,
     UnionDeclaration,
     UShortType,
+    VaArg,
+    VaCopy,
+    VaEnd,
     Var,
     VarDecl,
     VariableDeclaration,
+    VaStart,
     VoidType,
     While,
 )
@@ -334,7 +338,15 @@ class Parser:
         self._tokens = tokens
         self._pos = 0
         self._last: Token | None = None
-        self._typedef_scopes: list[dict[str, Type]] = [{}]
+        self._typedef_scopes: list[dict[str, Type]] = [
+            {
+                # GCC exposes __builtin_va_list as a magic built-in type name.
+                # Pre-register it (and its common alias __gnuc_va_list) so that
+                # the typedef chain in <stdarg.h> resolves without a struct definition.
+                "__builtin_va_list": Structure("__va_list_tag"),
+                "__gnuc_va_list": Structure("__va_list_tag"),
+            }
+        ]
         self._anon_tag_counter: itertools.count[int] = itertools.count()
 
     # ------------------------------------------------------------------
@@ -2106,7 +2118,7 @@ class Parser:
                 return Cast(target_type=target_type, exp=self._parse_cast_exp())
         return self._parse_factor()
 
-    def _parse_factor(self) -> Exp:
+    def _parse_factor(self) -> Exp:  # noqa: C901
         """Parse a factor: a primary expression optionally wrapped in prefix/postfix operators.
 
         Prefix unary operators (``-``, ``~``, ``!``, ``++``, ``--``, ``*``, ``&``)
@@ -2206,6 +2218,21 @@ class Parser:
                 primary: Exp = self._parse_constant()
             case TokenType.STRING:
                 primary = self._parse_string_literal()
+            case TokenType.IDENTIFIER if token.value in (
+                "__builtin_va_start",
+                "__builtin_c23_va_start",
+            ):
+                self._consume()
+                primary = self._parse_va_start()
+            case TokenType.IDENTIFIER if token.value == "__builtin_va_arg":
+                self._consume()
+                primary = self._parse_va_arg()
+            case TokenType.IDENTIFIER if token.value == "__builtin_va_end":
+                self._consume()
+                primary = self._parse_va_end()
+            case TokenType.IDENTIFIER if token.value == "__builtin_va_copy":
+                self._consume()
+                primary = self._parse_va_copy()
             case TokenType.IDENTIFIER:
                 self._consume()
                 if self._match(TokenType.LPAREN):
@@ -2300,6 +2327,76 @@ class Parser:
                 args.append(self._parse_exp())
         self._expect(TokenType.RPAREN)
         return FunctionCall(callee=Var(name=name), args=args)
+
+    def _parse_va_start(self) -> VaStart:
+        """Parse ``__builtin_va_start(ap, last)`` after the name token was consumed.
+
+        Returns:
+            A ``VaStart`` node with the ``ap`` and ``last`` argument expressions.
+
+        Raises:
+            ParseError: If the argument list is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        ap = self._parse_exp()
+        self._expect(TokenType.COMMA)
+        last = self._parse_exp()
+        self._expect(TokenType.RPAREN)
+        return VaStart(ap=ap, last=last)
+
+    def _parse_va_arg(self) -> VaArg:
+        """Parse ``__builtin_va_arg(ap, type-name)`` after the name token was consumed.
+
+        The second argument is a type-name, not an expression. This method
+        delegates to ``_parse_type`` and ``_parse_abstract_declarator`` for
+        pointer/array suffixes.
+
+        Returns:
+            A ``VaArg`` node with the ``ap`` expression and the requested ``arg_type``.
+
+        Raises:
+            ParseError: If the argument list or type-name is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        ap = self._parse_exp()
+        self._expect(TokenType.COMMA)
+        base_type = self._parse_type()
+        if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
+            arg_type: Type = self._parse_abstract_declarator()(base_type)
+        else:
+            arg_type = base_type
+        self._expect(TokenType.RPAREN)
+        return VaArg(ap=ap, arg_type=arg_type)
+
+    def _parse_va_end(self) -> VaEnd:
+        """Parse ``__builtin_va_end(ap)`` after the name token was consumed.
+
+        Returns:
+            A ``VaEnd`` node with the ``ap`` expression.
+
+        Raises:
+            ParseError: If the argument list is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        ap = self._parse_exp()
+        self._expect(TokenType.RPAREN)
+        return VaEnd(ap=ap)
+
+    def _parse_va_copy(self) -> VaCopy:
+        """Parse ``__builtin_va_copy(dest, src)`` after the name token was consumed.
+
+        Returns:
+            A ``VaCopy`` node with the ``dest`` and ``src`` expressions.
+
+        Raises:
+            ParseError: If the argument list is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        dest = self._parse_exp()
+        self._expect(TokenType.COMMA)
+        src = self._parse_exp()
+        self._expect(TokenType.RPAREN)
+        return VaCopy(dest=dest, src=src)
 
     # Maps single-character escape letter to its ASCII value.
     _ESCAPE_VALUES: dict[str, int] = {

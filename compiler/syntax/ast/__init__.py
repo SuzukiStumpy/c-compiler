@@ -189,7 +189,11 @@ from compiler.syntax.ast.expressions import (
     String,
     Subscript,
     Unary,
+    VaArg,
+    VaCopy,
+    VaEnd,
     Var,
+    VaStart,
 )
 from compiler.syntax.ast.operators import (
     Add,
@@ -364,6 +368,10 @@ __all__ = [
     "Expression",
     "Null",
     "Var",
+    "VaStart",
+    "VaArg",
+    "VaEnd",
+    "VaCopy",
     "Assignment",
     "Type",
     "IntType",

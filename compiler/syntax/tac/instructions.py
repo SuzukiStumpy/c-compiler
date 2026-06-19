@@ -565,3 +565,26 @@ class SetBitField(Instruction):
     bit_offset: int
     bit_width: int
     unit_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class VaStart(Instruction):
+    """Initialise a ``__va_list_tag`` struct from the SysV AMD64 variadic ABI.
+
+    Emitted by the TAC generator when lowering ``__builtin_va_start(ap, last)``.
+    The code generator expands this into the register-save area setup and
+    ``__va_list_tag`` field initialisations.
+
+    Attributes:
+        ap: Name of the ``__va_list_tag`` local variable to initialise.
+        gp_offset: Initial ``gp_offset`` value (= number of named GP params * 8).
+        fp_offset: Initial ``fp_offset`` value (= 48 + number of named XMM params * 16).
+        reg_save_area: Name of the 176-byte register-save-area local variable.
+        overflow_arg_area: Name of the overflow argument area pointer pseudo.
+    """
+
+    ap: str
+    gp_offset: int
+    fp_offset: int
+    reg_save_area: str
+    overflow_arg_area: str

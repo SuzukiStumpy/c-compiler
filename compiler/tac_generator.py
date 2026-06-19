@@ -531,6 +531,22 @@ def _is_signed(t: ast.Type) -> bool:
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 
 
+def _va_is_xmm_type(t: ast.Type) -> bool:
+    """Return whether a type is passed in XMM registers under SysV AMD64 ABI.
+
+    ``float`` and ``double`` use XMM registers.  ``long double`` uses the X87
+    stack and ``struct``/array types may fall back to memory — both are treated
+    as non-XMM here.  All other types (integers, pointers) use GP registers.
+
+    Args:
+        t: The C type to classify.
+
+    Returns:
+        ``True`` for ``float`` and ``double``; ``False`` for everything else.
+    """
+    return isinstance(t, (ast.FloatType, ast.DoubleType))
+
+
 # ---------------------------------------------------------------------------
 # Abstract lvalue representation
 # ---------------------------------------------------------------------------
@@ -615,6 +631,7 @@ class _TacGenerator:
         self._function_name: str = ""
         self._symbol_table = symbol_table
         self._struct_type_table: StructTypeTable = struct_type_table or {}
+        self._current_fun_type: ast.FunType | None = None
 
     def _make_temp(self, t: ast.Type = ast.IntType()) -> tac.Var:
         """Create a fresh temporary variable, register it in the symbol table, and advance the counter.
@@ -1130,6 +1147,8 @@ class _TacGenerator:
             CodeGenerationError: If any block item in the body cannot be translated.
         """
         self._function_name = function.name
+        assert isinstance(function.fun_type, ast.FunType)
+        self._current_fun_type = function.fun_type
         assert function.body is not None
         instructions = self.translate_block(function.body)
         # Guard return for functions that don't supply a return value; omit if
@@ -1144,6 +1163,182 @@ class _TacGenerator:
             source_file=function.source_file,
             source_line=function.source_line,
         )
+
+    def _translate_va_start(self, ap_exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Lower ``__builtin_va_start(ap, last)`` to a ``tac.VaStart`` instruction.
+
+        Counts the named GP and XMM parameters in the current function to compute the
+        initial ``gp_offset`` and ``fp_offset``, allocates pseudo-variables for the
+        register save area (176-byte array) and overflow argument area pointer, and
+        emits a single ``tac.VaStart`` instruction.
+
+        Args:
+            ap_exp: The ``ap`` lvalue expression (resolves to a ``__va_list_tag`` local).
+
+        Returns:
+            A ``(Constant(0), [tac.VaStart(...)])`` pair — ``va_start`` is void.
+
+        Raises:
+            CodeGenerationError: If ``ap_exp`` is not a plain variable.
+        """
+        ap_obj, ap_instrs = self._eval_exp(ap_exp)
+        if not isinstance(ap_obj, _PlainOperand) or not isinstance(ap_obj.val, tac.Var):
+            raise CodeGenerationError("__builtin_va_start: ap must be a local variable")
+        ap_name = ap_obj.val.value
+
+        fun_type = self._current_fun_type
+        named_gp = sum(1 for p in (fun_type.params if fun_type else ()) if not _va_is_xmm_type(p))
+        named_xmm = sum(1 for p in (fun_type.params if fun_type else ()) if _va_is_xmm_type(p))
+        gp_offset = named_gp * 8
+        fp_offset = 48 + named_xmm * 16
+
+        rsa = self._make_temp(ast.Array(ast.UChar(), 176))
+        oaa = self._make_temp(ast.Pointer(ast.VoidType()))
+
+        return tac.Constant(ast.ConstInt(0)), [
+            *ap_instrs,
+            tac.VaStart(
+                ap=ap_name,
+                gp_offset=gp_offset,
+                fp_offset=fp_offset,
+                reg_save_area=rsa.value,
+                overflow_arg_area=oaa.value,
+            ),
+        ]
+
+    def _translate_va_arg(self, ap_exp: ast.Exp, arg_type: ast.Type) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Lower ``__builtin_va_arg(ap, T)`` to a TAC conditional fetch sequence.
+
+        For GP types (integer, pointer), fetches from the register save area when
+        ``ap.gp_offset < 48``; otherwise fetches from the overflow argument area.
+        For XMM types (float, double), uses ``ap.fp_offset`` with limit 176 and step 16.
+
+        Args:
+            ap_exp: The ``ap`` lvalue expression.
+            arg_type: The C type of the argument to retrieve.
+
+        Returns:
+            A ``(result_var, instructions)`` pair where ``result_var`` holds the fetched value.
+
+        Raises:
+            CodeGenerationError: If ``ap_exp`` is not a plain variable.
+        """
+        ap_obj, ap_instrs = self._eval_exp(ap_exp)
+        if not isinstance(ap_obj, _PlainOperand) or not isinstance(ap_obj.val, tac.Var):
+            raise CodeGenerationError("__builtin_va_arg: ap must be a local variable")
+        ap_name = ap_obj.val.value
+
+        is_xmm = _va_is_xmm_type(arg_type)
+        if is_xmm:
+            offset_field = 4  # fp_offset is at struct offset 4
+            max_offset = 176
+            step = 16
+        else:
+            offset_field = 0  # gp_offset is at struct offset 0
+            max_offset = 48
+            step = 8
+
+        rsa_field_offset = 16  # reg_save_area pointer is at struct offset 16
+        oa_field_offset = 8  # overflow_arg_area pointer is at struct offset 8
+
+        label_overflow = self._make_label("va_arg_overflow")
+        label_done = self._make_label("va_arg_done")
+
+        cur_off = self._make_temp(ast.UIntType())
+        cur_off_long = self._make_temp(ast.ULongType())
+        cond = self._make_temp(ast.IntType())
+        rsa_ptr = self._make_temp(ast.Pointer(ast.VoidType()))
+        arg_ptr = self._make_temp(ast.Pointer(arg_type))
+        result = self._make_temp(arg_type)
+        new_off = self._make_temp(ast.ULongType())
+        new_off_u = self._make_temp(ast.UIntType())
+        oa_ptr = self._make_temp(ast.Pointer(ast.VoidType()))
+        new_oa_ptr = self._make_temp(ast.Pointer(ast.VoidType()))
+
+        instrs: list[tac.Instruction] = [
+            *ap_instrs,
+            # Load current offset from ap struct
+            tac.CopyFromOffset(src=ap_name, offset=offset_field, dst=cur_off),
+            tac.ZeroExtend(src=cur_off, dst=cur_off_long),
+            # if cur_off >= max_offset, go to overflow
+            tac.Binary(
+                operator=tac.GreaterOrEqual(),
+                src1=cur_off_long,
+                src2=tac.Constant(ast.ConstULong(max_offset)),
+                dst=cond,
+            ),
+            tac.JumpIfNotZero(condition=cond, target=label_overflow.name),
+            # ---- register path ----
+            tac.CopyFromOffset(src=ap_name, offset=rsa_field_offset, dst=rsa_ptr),
+            tac.AddPtr(ptr=rsa_ptr, index=cur_off_long, scale=1, dst=arg_ptr),
+            tac.Load(src_ptr=arg_ptr, dst=result),
+            tac.Binary(
+                operator=tac.Add(),
+                src1=cur_off_long,
+                src2=tac.Constant(ast.ConstULong(step)),
+                dst=new_off,
+            ),
+            tac.Truncate(src=new_off, dst=new_off_u),
+            tac.CopyToOffset(src=new_off_u, dst=ap_name, offset=offset_field),
+            tac.Jump(target=label_done.name),
+            # ---- overflow path ----
+            label_overflow,
+            tac.CopyFromOffset(src=ap_name, offset=oa_field_offset, dst=oa_ptr),
+            tac.Load(src_ptr=oa_ptr, dst=result),
+            tac.AddPtr(
+                ptr=oa_ptr,
+                index=tac.Constant(ast.ConstLong(step)),
+                scale=1,
+                dst=new_oa_ptr,
+            ),
+            tac.CopyToOffset(src=new_oa_ptr, dst=ap_name, offset=oa_field_offset),
+            label_done,
+        ]
+        return result, instrs
+
+    def _translate_va_copy(self, dest_exp: ast.Exp, src_exp: ast.Exp) -> tuple[tac.Val, list[tac.Instruction]]:
+        """Lower ``__builtin_va_copy(dest, src)`` to field-by-field copies.
+
+        Copies all four fields of the ``__va_list_tag`` struct from ``src`` to ``dest``.
+
+        Args:
+            dest_exp: The destination ``ap`` lvalue.
+            src_exp: The source ``ap`` expression.
+
+        Returns:
+            A ``(Constant(0), instructions)`` pair — ``va_copy`` is void.
+
+        Raises:
+            CodeGenerationError: If either operand is not a plain variable.
+        """
+        dest_obj, dest_instrs = self._eval_exp(dest_exp)
+        src_obj, src_instrs = self._eval_exp(src_exp)
+        if not isinstance(dest_obj, _PlainOperand) or not isinstance(dest_obj.val, tac.Var):
+            raise CodeGenerationError("__builtin_va_copy: dest must be a local variable")
+        if not isinstance(src_obj, _PlainOperand) or not isinstance(src_obj.val, tac.Var):
+            raise CodeGenerationError("__builtin_va_copy: src must be a local variable")
+        dest_name = dest_obj.val.value
+        src_name = src_obj.val.value
+
+        # Copy gp_offset (uint, offset 0), fp_offset (uint, offset 4),
+        # overflow_arg_area (ptr, offset 8), reg_save_area (ptr, offset 16).
+        gp_off = self._make_temp(ast.UIntType())
+        fp_off = self._make_temp(ast.UIntType())
+        oa_ptr = self._make_temp(ast.Pointer(ast.VoidType()))
+        rsa_ptr = self._make_temp(ast.Pointer(ast.VoidType()))
+
+        return tac.Constant(ast.ConstInt(0)), [
+            *dest_instrs,
+            *src_instrs,
+            tac.CopyFromOffset(src=src_name, offset=0, dst=gp_off),
+            tac.CopyToOffset(src=gp_off, dst=dest_name, offset=0),
+            tac.CopyFromOffset(src=src_name, offset=4, dst=fp_off),
+            tac.CopyToOffset(src=fp_off, dst=dest_name, offset=4),
+            tac.CopyFromOffset(src=src_name, offset=8, dst=oa_ptr),
+            tac.CopyToOffset(src=oa_ptr, dst=dest_name, offset=8),
+            tac.CopyFromOffset(src=src_name, offset=16, dst=rsa_ptr),
+            tac.CopyToOffset(src=rsa_ptr, dst=dest_name, offset=16),
+        ]
 
     def translate_block(self, block: ast.Block) -> list[tac.Instruction]:
         """Translate a sequence of block items into a flat list of TAC instructions.
@@ -2027,5 +2222,13 @@ class _TacGenerator:
                         return dst, self._translate_compound_init(dst.value, init)
                     case _:
                         raise CodeGenerationError(f"unsupported compound literal init: {type(init).__name__}")
+            case ast.VaStart(ap=ap_exp):
+                return self._translate_va_start(ap_exp)
+            case ast.VaArg(ap=ap_exp, arg_type=arg_type):
+                return self._translate_va_arg(ap_exp, arg_type)
+            case ast.VaEnd():
+                return tac.Constant(ast.ConstInt(0)), []
+            case ast.VaCopy(dest=dest_exp, src=src_exp):
+                return self._translate_va_copy(dest_exp, src_exp)
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

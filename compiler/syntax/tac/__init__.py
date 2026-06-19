@@ -112,6 +112,7 @@ from compiler.syntax.tac.instructions import (
     UIntToFloat,
     UIntToLongDouble,
     Unary,
+    VaStart,
     ZeroExtend,
 )
 from compiler.syntax.tac.operators import (
@@ -162,6 +163,7 @@ __all__ = [
     "CopyFromOffset",
     "GetBitField",
     "SetBitField",
+    "VaStart",
     "StaticConstant",
     "AddPtr",
     "CopyToOffset",

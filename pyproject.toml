@@ -61,3 +61,4 @@ module-name = "compiler"
 testpaths     = ["test"]
 norecursedirs = ["compiler", ".venv", "**/__pycache__"]
 addopts       = "--ignore=compiler --import-mode=importlib"
+markers       = ["integration: full compile-and-run tests (require a system assembler/linker)"]

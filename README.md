@@ -82,6 +82,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Compound initialisers for arrays and structs (`{ ... }`), including designated initialisers (`{.field = val}` for structs/unions, `{[n] = val}` for arrays)
 - Function declarations and definitions (multiple per translation unit)
 - Variadic function declarations (`int printf(char *fmt, ...)`) — calling variadic functions is fully supported; System V AMD64 ABI `%al` register is set to the number of floating-point arguments used
+- Variadic function definitions — `va_list`, `va_start(ap, last)`, `va_arg(ap, T)`, `va_end(ap)`, `va_copy(dest, src)` via `<stdarg.h>`; the compiler emits the SysV AMD64 register-save area (176 bytes, 16-byte aligned) and handles both the GP register path (`gp_offset < 48`) and the overflow argument area path
 - Struct and union declarations and definitions, including bit-fields (`int x : 3;`, `unsigned int : 5;`, `int : 0;`)
 - `enum` declarations and definitions at file and block scope; inline definitions (`enum Color { RED } x;`); anonymous enums (`enum { A, B };`); enumerator constants are `int`-typed values evaluated at semantic analysis time; enumerator values may be arbitrary constant expressions including binary operators, `sizeof`, and cross-enumerator references
 - Storage classes: `static` and `extern`
@@ -99,7 +100,8 @@ The semantic analysis phase performs full name resolution and type checking:
 - C11 usual arithmetic conversions and pointer-compatibility rules
 - Linkage resolution for `static` and `extern` identifiers
 - `switch` validation: integer-only controlling expressions; no duplicate `case` values; no floating-point case labels
-- Variadic call sites: extra arguments beyond the declared parameters are type-checked individually; `va_list`/`va_start`/`va_arg`/`va_end` are not yet supported (Tier 2)
+- Variadic call sites: extra arguments beyond the declared parameters are type-checked individually
+- Variadic function bodies: `__va_list_tag` is pre-registered in the struct type table; `VaStart`/`VaArg`/`VaEnd`/`VaCopy` expressions are type-checked and lower to TAC and assembly
 - Type qualifier enforcement: assignment to `const`-qualified lvalues raises `SemanticError`; `restrict` on non-pointer types raises `SemanticError`
 
 ### Type qualifiers
@@ -278,10 +280,6 @@ Neither is recognised.
 |---|---|---|
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>`. |
 
-### Variadic functions
-
-`...` in a parameter list (sec. 6.7.6), `<stdarg.h>` (`va_list`, `va_start`, `va_arg`, `va_end`, `va_copy`) and the `__builtin_va_*` intrinsics are all absent. Variadic functions cannot be declared or called.
-
 ### Variable-length arrays
 
 VLAs (sec. 6.7.6.2) - arrays whose size is a runtime expression - were mandatory in C99, made optional in C11 (Annex J.2), and removed from C17. This compiler does not implement them; all array sizes must be compile-time integer constant expressions.
@@ -296,7 +294,7 @@ The compiler accepts exactly one source file per invocation (`nargs=1`). There i
 
 ### Standard library
 
-No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are now recognised, though other missing features (variadic functions) may still prevent some headers from parsing cleanly.
+No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are now recognised. Variadic functions are fully supported, so `<stdarg.h>` parses and links correctly.
 
 ---
 

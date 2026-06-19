@@ -378,3 +378,63 @@ class CompoundLiteral(Exp):
 
     target_type: Type
     init: Initializer
+
+
+@dataclass(frozen=True, slots=True)
+class VaStart(Exp):
+    """``__builtin_va_start(ap, last)`` — initialise a ``va_list``.
+
+    Lowers to a ``tac.VaStart`` instruction that populates the
+    ``__va_list_tag`` struct from the calling-convention register counts.
+
+    Attributes:
+        ap: Lvalue expression of type ``__va_list_tag`` (the ``va_list`` object).
+        last: The last named parameter expression; not used after semantic
+            analysis but retained for error-reporting.
+    """
+
+    ap: Exp
+    last: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class VaArg(Exp):
+    """``__builtin_va_arg(ap, T)`` — fetch the next variadic argument of type ``T``.
+
+    Attributes:
+        ap: Lvalue expression of type ``__va_list_tag`` (the ``va_list`` object).
+        arg_type: The C type of the argument to retrieve.
+    """
+
+    ap: Exp
+    arg_type: Type
+
+
+@dataclass(frozen=True, slots=True)
+class VaEnd(Exp):
+    """``__builtin_va_end(ap)`` — mark end of variadic argument traversal.
+
+    On x86-64 Linux this is a no-op; the node is retained for completeness
+    and to allow future implementations to insert cleanup code.
+
+    Attributes:
+        ap: Lvalue expression of type ``__va_list_tag`` (the ``va_list`` object).
+    """
+
+    ap: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class VaCopy(Exp):
+    """``__builtin_va_copy(dest, src)`` — copy one ``va_list`` to another.
+
+    Copies the state of ``src`` into ``dest`` so that ``dest`` can traverse
+    the same variadic arguments independently.
+
+    Attributes:
+        dest: Lvalue expression of type ``__va_list_tag`` — the destination.
+        src: Expression of type ``__va_list_tag`` — the source.
+    """
+
+    dest: Exp
+    src: Exp
