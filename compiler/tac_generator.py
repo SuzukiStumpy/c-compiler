@@ -497,7 +497,7 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
         return 8
     if isinstance(t, (ast.Int128Type, ast.UInt128Type, ast.LongDoubleType)):
         return 16
-    if isinstance(t, ast.Array):
+    if isinstance(t, ast.Array) and t.size is not None:
         return t.size * _type_size(t.element, struct_type_table)
     if isinstance(t, (ast.Structure, ast.Union)):
         if struct_type_table is None:
@@ -1192,6 +1192,7 @@ class _TacGenerator:
                     return []
                 match init:
                     case ast.SingleInit(exp=ast.String(string=s, exp_type=ast.Array(size=array_size))):
+                        assert array_size is not None  # string-init arrays always have concrete size
                         return self._translate_string_init(name, s, array_size)
                     case ast.SingleInit(exp=e):
                         val, instrs = self.translate_exp(e)
@@ -1266,6 +1267,7 @@ class _TacGenerator:
         """
         match init:
             case ast.SingleInit(exp=ast.String(string=s, exp_type=ast.Array(size=array_size))):
+                assert array_size is not None  # string-init arrays always have concrete size
                 instructions.extend(self._translate_string_init(var_name, s, array_size, base_offset=byte_offset))
             case ast.SingleInit(exp=e):
                 val, elem_instrs = self.translate_exp(e)
@@ -2015,5 +2017,15 @@ class _TacGenerator:
                 obj, obj_instrs = self._eval_exp(exp)
                 val, force_instrs = self._force_val(obj, exp.exp_type or ast.IntType())
                 return val, [*obj_instrs, *force_instrs]
+            case ast.CompoundLiteral(target_type=target_type, init=init):
+                dst = self._make_temp(target_type)
+                match init:
+                    case ast.SingleInit(exp=inner):
+                        inner_val, inner_instrs = self.translate_exp(inner)
+                        return dst, [*inner_instrs, tac.Copy(src=inner_val, dst=dst)]
+                    case ast.CompoundInit():
+                        return dst, self._translate_compound_init(dst.value, init)
+                    case _:
+                        raise CodeGenerationError(f"unsupported compound literal init: {type(init).__name__}")
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

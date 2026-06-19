@@ -260,8 +260,10 @@ def type_size(t: Type, struct_type_table: StructTypeTable) -> int:
             return 2
         case Int128Type() | UInt128Type():
             return 16
+        case Array(element=_, size=None):
+            raise SemanticError("Cannot determine size of incomplete array type (flexible array member)")
         case Array(element=elem_t, size=n):
-            return type_size(elem_t, struct_type_table) * n
+            return type_size(elem_t, struct_type_table) * n  # type: ignore[operator]
         case Structure(tag=tag) | Union(tag=tag):
             entry = struct_type_table.get(tag)
             if entry is None:
@@ -716,7 +718,7 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
         case Pointer():
             null = ast.Constant(ast.ConstULong(0), exp_type=ULongType())
             return ast.SingleInit(ast.Cast(t, null, exp_type=t))
-        case Array(element=elem_t, size=size):
+        case Array(element=elem_t, size=size) if size is not None:
             return ast.CompoundInit([_zero_initializer(elem_t, struct_type_table) for _ in range(size)])
         case Structure(tag=tag):
             struct_def = struct_type_table[tag]
@@ -1348,11 +1350,29 @@ class SemanticAnalyser:
                 violates the type or width constraints.
         """
         seen: set[str] = set()
-        for member in struct_decl.members:
+        members = struct_decl.members
+        for idx, member in enumerate(members):
+            is_last = idx == len(members) - 1
+            _unq = unqualify(member.member_type)
+            is_fam = isinstance(_unq, Array) and _unq.size is None
             if member.member_name is not None:
                 if member.member_name in seen:
                     raise SemanticError(f"Duplicate member '{member.member_name}' in struct '{struct_decl.tag}'")
                 seen.add(member.member_name)
+            if is_fam:
+                # C11 §6.7.2.1p18: FAM must be the last member.
+                if not is_last:
+                    raise SemanticError(
+                        f"Flexible array member '{member.member_name}' in struct '{struct_decl.tag}' "
+                        "must be the last member"
+                    )
+                # C11 §6.7.2.1p18: struct must have at least one other named member.
+                if idx == 0:
+                    raise SemanticError(
+                        f"Flexible array member '{member.member_name}' in struct '{struct_decl.tag}' "
+                        "requires at least one preceding named member"
+                    )
+                continue
             if member.bit_width is not None:
                 if not _is_valid_bit_field_type(member.member_type):
                     raise SemanticError(
@@ -1423,12 +1443,19 @@ class SemanticAnalyser:
             bits_used = 0
 
         for member in struct_decl.members:
+            _unq_m = unqualify(member.member_type)
+            is_fam = isinstance(_unq_m, Array) and _unq_m.size is None
             if member.bit_width is None:
                 # Regular member: close any active bit-field unit first.
                 _flush_bit_unit()
                 member_align = type_alignment(member.member_type, self._struct_type_table)
                 member_offset = _round_up(struct_size, member_align)
                 struct_alignment = max(struct_alignment, member_align)
+                if is_fam:
+                    # C11 §6.7.2.1p18: FAM contributes zero bytes to struct size.
+                    if member.member_name is not None:
+                        member_entries.append(MemberEntry(member.member_name, member.member_type, member_offset))
+                    continue
                 struct_size = member_offset + type_size(member.member_type, self._struct_type_table)
                 if member.member_name is None and member.nested_decl is not None:
                     # Anonymous struct/union member: promote inner fields (C11 §6.7.2.1p13).
@@ -1830,6 +1857,7 @@ class SemanticAnalyser:
                         static_init = _static_pointer_init(raw_init_exp, self._variable_map)
                 elif isinstance(var_decl.var_type, Array):
                     if isinstance(init, ast.SingleInit) and isinstance(init.exp, ast.String):
+                        assert var_decl.var_type.size is not None  # string-init arrays have concrete size
                         static_init = Initial(tuple(_string_array_static_init(init.exp.string, var_decl.var_type.size)))
                     else:
                         assert isinstance(init, ast.CompoundInit)
@@ -1983,6 +2011,7 @@ class SemanticAnalyser:
             elif isinstance(var_decl.var_type, Array):
                 file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
                 if isinstance(file_typed_init, ast.SingleInit) and isinstance(file_typed_init.exp, ast.String):
+                    assert var_decl.var_type.size is not None  # string-init arrays have concrete size
                     file_init = Initial(
                         tuple(_string_array_static_init(file_typed_init.exp.string, var_decl.var_type.size))
                     )
@@ -3066,7 +3095,7 @@ class SemanticAnalyser:
             result: Accumulator list modified in place.
         """
         match init:
-            case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))):
+            case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))) if size is not None:
                 for elem in _string_array_static_init(s, size):
                     if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
                         result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
@@ -3130,7 +3159,7 @@ class SemanticAnalyser:
                 sub-expression fails type-checking or assignment conversion.
         """
         match target_type, init:
-            case Array(element=elem_t, size=size), ast.SingleInit(exp=ast.String(string=s)):
+            case Array(element=elem_t, size=size), ast.SingleInit(exp=ast.String(string=s)) if size is not None:
                 if not isinstance(elem_t, _CHAR_TYPES):
                     raise SemanticError("Cannot initialize a non-character array with a string literal.")
                 if len(s) > size:
@@ -3142,7 +3171,11 @@ class SemanticAnalyser:
                 typechecked_exp = self._typecheck_and_convert(self.resolve_exp(e))
                 cast_exp = _convert_by_assignment(typechecked_exp, target_type)
                 return ast.SingleInit(cast_exp)
-            case Array(element=elem_t, size=size), ast.CompoundInit(initializers=init_list):
+            case Array(element=elem_t, size=None), ast.CompoundInit(initializers=init_list):
+                # Incomplete array type — infer size from initializer count (C11 §6.7.9p22).
+                inferred_size = len(init_list)
+                return self._typecheck_init(Array(elem_t, inferred_size), init)
+            case Array(element=elem_t, size=size), ast.CompoundInit(initializers=init_list) if size is not None:
                 has_designators = any(
                     isinstance(i, (ast.IndexDesignatorInit, ast.MemberDesignatorInit)) for i in init_list
                 )
@@ -3200,6 +3233,11 @@ class SemanticAnalyser:
                     init_type=target_type,
                     union_member_index=member_idx,
                 )
+            case _, ast.CompoundInit(initializers=[single_init]) if not isinstance(
+                target_type, (Array, Structure, Union)
+            ):
+                # C11 §6.7.9p11 — scalar may be optionally enclosed in braces: ``int x = {42};``
+                return self._typecheck_init(target_type, single_init)
             case _:
                 raise SemanticError("Cannot initialize a scalar object with a compound initializer.")
 
@@ -3311,6 +3349,18 @@ class SemanticAnalyser:
                 return self._type_check_exp(ast.Dot(self.resolve_exp(structure), member))
             case ast.Arrow(pointer=pointer, member=member):
                 return self._type_check_exp(ast.Arrow(self.resolve_exp(pointer), member))
+            case ast.CompoundLiteral(target_type=target_type, init=init):
+                resolved_type = self._resolve_type(target_type)
+                # For (T[]){...}: infer concrete size before typecheck so exp_type is complete.
+                _unq_resolved = unqualify(resolved_type)
+                if (
+                    isinstance(_unq_resolved, Array)
+                    and _unq_resolved.size is None
+                    and isinstance(init, ast.CompoundInit)
+                ):
+                    resolved_type = Array(_unq_resolved.element, len(init.initializers))
+                resolved_init = self._typecheck_init(resolved_type, init)
+                return ast.CompoundLiteral(target_type=resolved_type, init=resolved_init, exp_type=resolved_type)
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -3546,14 +3596,16 @@ class SemanticAnalyser:
 
         Assigns a unique internal tag to the enum, validates that the tag does not
         conflict with an existing struct or union tag in the current scope, checks
-        that no two enumerator names are duplicated, and registers each enumerator
-        in the symbol table with an ``EnumConstAttr`` carrying its integer value.
-        The resolved enum tag is stored in ``_enum_type_table``.
+        that no two enumerator names are duplicated, evaluates each enumerator's
+        optional initialiser expression (auto-incrementing otherwise), and registers
+        each enumerator in the symbol table with an ``EnumConstAttr`` carrying its
+        integer value.  The resolved enum tag is stored in ``_enum_type_table``.
 
         Args:
             enum_decl: The ``EnumDeclaration`` AST node produced by the parser.
                 ``enum_decl.tag`` is the source-level tag; ``enum_decl.members``
-                is the ordered tuple of ``EnumeratorDeclaration`` nodes.
+                is the ordered tuple of ``EnumeratorDeclaration`` nodes carrying
+                optional ``value_exp`` initialiser expressions.
             file_scope: When ``True``, the enum is being declared at file scope
                 and conflict detection does not use ``from_current_scope`` (all
                 file-scope tags coexist in the same global namespace).
@@ -3594,11 +3646,19 @@ class SemanticAnalyser:
         else:
             unique_tag = self._make_enum_tag("")
         seen_names: set[str] = set()
+        counter = 0
         for member in enum_decl.members:
             if member.name in seen_names:
                 raise SemanticError(f"Duplicate enumerator '{member.name}' in enum '{tag}'.")
             seen_names.add(member.name)
-            self._symbol_table[member.name] = SymbolTableEntry(t=IntType(), attrs=EnumConstAttr(value=member.value))
+            if member.value_exp is not None:
+                resolved = self.resolve_exp(member.value_exp)
+                val = self._eval_const_expr(resolved)
+                if val is None or not isinstance(val, int):
+                    raise SemanticError(f"Enumerator '{member.name}' value is not an integer constant expression.")
+                counter = val
+            self._symbol_table[member.name] = SymbolTableEntry(t=IntType(), attrs=EnumConstAttr(value=counter))
+            counter += 1
         self._enum_type_table[unique_tag] = EnumEntry(members=tuple(m.name for m in enum_decl.members))
         resolved_decl = EnumDeclaration(tag=unique_tag, members=enum_decl.members)
         return ast.EnumDecl(resolved_decl)

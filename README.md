@@ -20,10 +20,10 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `long double` | 80-bit x87 extended precision; `L`/`l` suffix on literals; passed/returned via stack (MEMORY class) |
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
-| Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; designated initialisers (`{[n] = val}`); array decay |
-| `struct` | Named/anonymous structs; nested structs; anonymous struct/union members (field promotion, C11 §6.7.2.1); compound initialisers; designated initialisers (`{.field = val}`); bit-fields (`int x : 3`) |
+| Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; designated initialisers (`{[n] = val}`); array decay; `(T[]){...}` compound literals with inferred size |
+| `struct` | Named/anonymous structs; nested structs; anonymous struct/union members (field promotion, C11 §6.7.2.1); compound initialisers; designated initialisers (`{.field = val}`); bit-fields (`int x : 3`); flexible array members (`T arr[]` as last member) |
 | `union` | Named/anonymous unions; anonymous struct/union members (field promotion); bit-field members |
-| `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values |
+| `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values; values may be full constant expressions (binary ops, `sizeof`, cross-enumerator refs) |
 | `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
 | Function pointers | `int (*fp)(int, int)` style; call via `fp(args)` or `(*fp)(args)`; pass/return by value |
 
@@ -60,6 +60,7 @@ All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to eve
 - Array subscript `arr[i]`
 - Struct and union member access: `.` and `->`
 - Function calls (direct and through function pointers)
+- Compound literals `(T){...}` — synthesise a temporary with automatic storage duration; `(T[]){...}` infers array size from the initialiser count
 
 Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 
@@ -82,7 +83,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Function declarations and definitions (multiple per translation unit)
 - Variadic function declarations (`int printf(char *fmt, ...)`) — calling variadic functions is fully supported; System V AMD64 ABI `%al` register is set to the number of floating-point arguments used
 - Struct and union declarations and definitions, including bit-fields (`int x : 3;`, `unsigned int : 5;`, `int : 0;`)
-- `enum` declarations and definitions; enumerator constants fold to `int` values at semantic analysis time; enumerator values may be integer literals, unary-negated literals, or references to previously-declared enumerators in the same definition
+- `enum` declarations and definitions at file and block scope; inline definitions (`enum Color { RED } x;`); anonymous enums (`enum { A, B };`); enumerator constants are `int`-typed values evaluated at semantic analysis time; enumerator values may be arbitrary constant expressions including binary operators, `sizeof`, and cross-enumerator references
 - Storage classes: `static` and `extern`
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
@@ -276,25 +277,6 @@ Neither is recognised.
 | Missing feature | C11 reference | Notes |
 |---|---|---|
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>`. |
-
-### Initialisers
-
-- **Compound literals** (sec. 6.5.2.5) - `(struct Point){1, 2}` as an rvalue expression. The cast-like syntax is not parsed.
-
-### Enum limitations
-
-`enum` is supported at both file scope and block scope, including:
-
-- **Inline definitions** — `enum Color { RED } x;` declares the enum and a variable in one statement.
-- **Anonymous enums** — `enum { A, B };` (no tag) registers enumerators without requiring a tag name.
-
-The following are not yet implemented:
-
-- **Full constant-expression enumerator values** — enumerator values must be integer literals, unary-negated literals, or references to a previously-declared enumerator in the same definition. Expressions involving `sizeof`, bitwise shifts, or cross-enum references are not evaluated.
-
-### Struct and union features
-
-- **Flexible array members** (sec. 6.7.2.1 p18) - `struct S { int n; char buf[]; };`. The trailing incomplete-array member pattern is not parsed.
 
 ### Variadic functions
 

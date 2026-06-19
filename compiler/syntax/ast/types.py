@@ -223,15 +223,16 @@ class FunType(Type):
 
 @dataclass(frozen=True, slots=True)
 class Array(Type):
-    """Represents an array within the C code
+    """Represents an array within the C code.
 
     Attributes:
-        element: The type of element within the array
-        size: The size of each element within the array
+        element: The type of element within the array.
+        size: The number of elements, or ``None`` for an incomplete array
+            (flexible array member or ``T[]`` before size inference).
     """
 
     element: Type
-    size: int
+    size: int | None
 
 
 @dataclass(frozen=True, slots=True)

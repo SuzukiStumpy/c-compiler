@@ -10,12 +10,12 @@ Effort: L/M/H/XH. Effectiveness for C11 compat: H/M/L.
 | `_Static_assert` | L | M | ✓ Done — constant expression evaluated at semantic analysis; SemanticError on failure |
 | Inline enum `enum E { A } x;` | L | M | ✓ Done — `_parse_enum_declaration` emits `[EnumDecl, VarDecl]`; callers use `extend` |
 | Anonymous enum `enum { A, B }` standalone | L | L | ✓ Done — tag is optional; `None` → unique internal tag via `_make_enum_tag("")` |
-| Full constant-expr enum values | L | M | Extend existing const evaluator |
+| Full constant-expr enum values | L | M | ✓ Done — `value_exp: Exp \| None` in AST; SA evaluates via `_eval_const_expr`; cross-enumerator refs fold via `EnumConstAttr` lookup |
 | `_Alignof` | M | M | ✓ Done — `AlignOf(exp)` / `AlignOfT(type)` AST nodes; evaluates at SA to `unsigned long` alignment; TAC constant-folds to natural alignment |
 | `_Alignas` | M | M | ✓ Done — `VariableDeclaration.align_as_exp` parsed; SA evaluates to `align_as: int`; static `.balign` and local stack-slot alignment override |
 | Designated initialisers `{.x=1}` | M | H | ✓ Done — struct member (`.field = val`) and array index (`[n] = val`) designators; mixed positional/designated supported |
-| Compound literals `(T){...}` | M | M | Parse as temp + existing init machinery |
-| Flexible array members | M | M | Incomplete-type size calc |
+| Compound literals `(T){...}` | M | M | ✓ Done — `CompoundLiteral(Exp)` AST node; parser detects `(T){` after cast; SA typechecks init; TAC emits temp or aggregate init; `(T[]){...}` infers array size |
+| Flexible array members | M | M | ✓ Done — `Array.size: int \| None`; parser emits `None` for `[]`; SA validates last-member rule; sizeof excludes FAM; `(T[])` compound literal infers size from init count |
 | Anonymous struct/union members | M | H | ✓ Done — `nested_decl` field on `MemberDeclaration`; parser handles `struct {` / `union {` without tag; SA flattens promoted fields into outer `StructEntry` |
 | `__int128` full arithmetic | H | L | Multi-word insn sequences; niche use |
 | Variadic fn definition (`va_list` etc.) | H | H | `__builtin_va_*` intrinsics + ABI stack layout |

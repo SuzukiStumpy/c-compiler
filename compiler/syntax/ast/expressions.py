@@ -356,3 +356,25 @@ class Arrow(Exp):
 
     pointer: Exp
     member: str
+
+
+@dataclass(frozen=True, slots=True)
+class CompoundLiteral(Exp):
+    """A compound literal expression: ``(Type){initializer-list}``.
+
+    Compound literals (C11 §6.5.2.5) produce an lvalue of the given type
+    initialised with the supplied initialiser list.  At block scope the object
+    has automatic storage duration; at file scope it has static storage duration.
+
+    The parser creates this node whenever a cast-like ``(type)`` prefix is
+    immediately followed by ``{``; semantic analysis validates the target type
+    and type-checks the initialiser, then the TAC generator allocates a fresh
+    temporary variable and emits the corresponding initialisation code.
+
+    Attributes:
+        target_type: The declared C type of the compound-literal object.
+        init: The ``SingleInit`` or ``CompoundInit`` initialiser.
+    """
+
+    target_type: Type
+    init: Initializer

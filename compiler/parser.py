@@ -112,6 +112,7 @@ from compiler.syntax.ast import (
     Compound,
     CompoundAssignment,
     CompoundInit,
+    CompoundLiteral,
     Conditional,
     Constant,
     ConstDouble,
@@ -1104,13 +1105,13 @@ class Parser:
         name, simple_transform, simple_params = self._parse_param_simple_declarator()
 
         if self._match(TokenType.LBRACKET):
-            sizes: list[int] = []
+            sizes: list[int | None] = []
             while self._match(TokenType.LBRACKET):
                 self._consume()  # consume "["
                 sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 
-            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int] = sizes) -> Type:
+            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int | None] = sizes) -> Type:
                 for size in reversed(_sizes):
                     t = Array(t, size)
                 return _st(t)
@@ -1456,13 +1457,13 @@ class Parser:
 
             enum-declaration  ::= "enum" [identifier] "{" enumerator {"," enumerator} [","] "}"
                                   [declarator ["=" initializer]] ";"
-            enumerator        ::= identifier ["=" integer-literal]
+            enumerator        ::= identifier ["=" constant-expression]
 
         The tag identifier is optional (anonymous enums are supported).  A brace-enclosed
         body is mandatory — enum forward declarations are not permitted.  At least one
-        enumerator must appear inside the braces.  Enumerator values are computed at parse
-        time: starting from 0, each enumerator without an explicit value takes the previous
-        value plus one.
+        enumerator must appear inside the braces.  Enumerator values are stored as optional
+        expressions; semantic analysis evaluates them and tracks the running auto-increment
+        counter.  Any integer constant expression is valid after ``=``.
 
         When a declarator follows the closing brace (e.g. ``enum E { A } x;``), the method
         emits two declarations: the ``EnumDecl`` first, then a ``VarDecl`` whose type is
@@ -1487,25 +1488,15 @@ class Parser:
             msg = "enum definition must contain at least one enumerator"
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
         members_list: list[EnumeratorDeclaration] = []
-        counter = 0
         while True:
             if self._peek() is None:
                 raise self._eof_error("expected '}', got end of input")
             name_tok = self._expect(TokenType.IDENTIFIER)
+            value_exp: Exp | None = None
             if self._match(TokenType.ASSIGNMENT):
                 self._consume()  # consume '='
-                negative = False
-                if self._match(TokenType.MINUS):
-                    self._consume()
-                    negative = True
-                val_tok = self._peek()
-                if val_tok is None or val_tok.type != TokenType.NUMBER:
-                    msg = "expected integer constant after '=' in enumerator"
-                    raise self._eof_error(msg) if val_tok is None else self._token_error(msg, val_tok)
-                self._consume()
-                counter = -self._parse_int_value(val_tok.value) if negative else self._parse_int_value(val_tok.value)
-            members_list.append(EnumeratorDeclaration(name=name_tok.value, value=counter))
-            counter += 1
+                value_exp = self._parse_exp()
+            members_list.append(EnumeratorDeclaration(name=name_tok.value, value_exp=value_exp))
             if self._match(TokenType.COMMA):
                 self._consume()
                 if self._match(TokenType.RBRACE):  # trailing comma
@@ -2110,6 +2101,8 @@ class Parser:
                 else:
                     target_type = base_cast_type
                 self._expect(TokenType.RPAREN)
+                if self._match(TokenType.LBRACE):
+                    return CompoundLiteral(target_type=target_type, init=self._parse_initializer())
                 return Cast(target_type=target_type, exp=self._parse_cast_exp())
         return self._parse_factor()
 
@@ -2603,20 +2596,22 @@ class Parser:
             self._expect(TokenType.RPAREN)
             if not self._match(TokenType.LBRACKET):
                 return inner
-            suffix_sizes: list[int] = []
+            suffix_sizes: list[int | None] = []
             while self._match(TokenType.LBRACKET):
                 self._consume()
                 suffix_sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 
-            def _parens_arr(t: Type, _i: Callable[[Type], Type] = inner, _sizes: list[int] = suffix_sizes) -> Type:
+            def _parens_arr(
+                t: Type, _i: Callable[[Type], Type] = inner, _sizes: list[int | None] = suffix_sizes
+            ) -> Type:
                 for size in reversed(_sizes):
                     t = Array(t, size)
                 return _i(t)
 
             return _parens_arr
 
-        bare_sizes: list[int] = []
+        bare_sizes: list[int | None] = []
         while self._match(TokenType.LBRACKET):
             self._consume()
             bare_sizes.append(self._parse_array_dimension())
@@ -2627,7 +2622,7 @@ class Parser:
             msg = "expected abstract declarator ('*', '(', or '[')"
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
 
-        def _bare_arr(t: Type, _sizes: list[int] = bare_sizes) -> Type:
+        def _bare_arr(t: Type, _sizes: list[int | None] = bare_sizes) -> Type:
             for size in reversed(_sizes):
                 t = Array(t, size)
             return t
@@ -2660,27 +2655,31 @@ class Parser:
         name_token = self._expect(TokenType.IDENTIFIER)
         return name_token.value, lambda t: t, None
 
-    def _parse_array_dimension(self) -> int:
+    def _parse_array_dimension(self) -> int | None:
         """Parse a single array dimension from a ``[`` ``]`` declarator suffix.
 
-        Expects the opening ``[`` to have been consumed already.  Reads an
-        integer constant (plain, ``l``/``L``, ``u``/``U``, ``ul``/``UL``
-        suffix, or a character literal) and leaves the stream positioned at
-        the closing ``]``, which
-        the caller must consume via ``_expect``.
+        Expects the opening ``[`` to have been consumed already.  If the next
+        token is ``]`` the dimension is absent (flexible array member or
+        ``(T[])`` compound-literal type); returns ``None`` in that case.
+        Otherwise reads an integer constant (plain, ``l``/``L``, ``u``/``U``,
+        ``ul``/``UL`` suffix, or a character literal) and leaves the stream
+        positioned at the closing ``]``.
 
         Returns:
-            The dimension size as a Python ``int``.
+            The dimension size as a Python ``int``, or ``None`` for an empty
+            ``[]`` (incomplete array type).
 
         Raises:
-            ParseError: If the dimension is missing or is not an integer constant.
+            ParseError: If the dimension token is present but not an integer constant.
         """
         tok = self._peek()
         if tok is None:
-            raise self._eof_error("Expected array size")
+            raise self._eof_error("Expected array size or ']'")
+        if tok.type == TokenType.RBRACKET:
+            return None  # empty [] — incomplete/flexible array
         match tok.type:
             case TokenType.NUMBER:
-                val = int(tok.value)
+                val: int = int(tok.value)
             case TokenType.LONGINT:
                 val = int(tok.value.rstrip("lL"))
             case TokenType.UINT:
@@ -2719,13 +2718,13 @@ class Parser:
         name, simple_transform, simple_params = self._parse_simple_declarator()
 
         if self._match(TokenType.LBRACKET):
-            sizes: list[int] = []
+            sizes: list[int | None] = []
             while self._match(TokenType.LBRACKET):
                 self._consume()  # consume "["
                 sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 
-            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int] = sizes) -> Type:
+            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int | None] = sizes) -> Type:
                 for size in reversed(_sizes):
                     t = Array(t, size)
                 return _st(t)

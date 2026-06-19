@@ -283,20 +283,22 @@ class UnionDecl(Declaration):
 
 @dataclass(frozen=True, slots=True)
 class EnumeratorDeclaration:
-    """A single enumerator within an enum body, with its computed integer value.
+    """A single enumerator within an enum body.
 
-    The parser computes enumerator values at parse time using a running counter
-    that starts at 0 and increments by 1 for each enumerator without an explicit
-    value.  An explicit ``= constant`` resets the running counter.
+    The parser stores an optional explicit initialiser expression; ``None``
+    means the enumerator takes the next auto-increment value (previous + 1,
+    or 0 for the first member).  Semantic analysis evaluates ``value_exp``
+    and registers the computed integer in the symbol table.
 
     Attributes:
         name: The enumerator identifier as it appears in the source.
-        value: The integer value assigned to this enumerator, computed by the
-            parser at parse time.
+        value_exp: The explicit initialiser expression, or ``None`` if the
+            enumerator value is determined by auto-increment.  Any integer
+            constant expression is accepted; semantic analysis evaluates it.
     """
 
     name: str
-    value: int
+    value_exp: Exp | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,7 +309,8 @@ class EnumDeclaration:
         tag: The enum tag name as it appears after the ``enum`` keyword, or
             ``None`` for an anonymous enum.
         members: The ordered sequence of enumerator declarations.  Each member
-            carries its computed integer value as resolved by the parser.
+            carries an optional explicit initialiser; semantic analysis computes
+            and registers the integer value.
     """
 
     tag: str | None

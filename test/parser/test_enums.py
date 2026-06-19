@@ -74,7 +74,7 @@ class TestEnumDefinition:
     """``enum Tag { enumerator-list };`` produces an ``EnumDecl`` node."""
 
     def test_single_enumerator_default_value(self) -> None:
-        """The first enumerator in an enum has value 0 by default."""
+        """The first enumerator with no explicit value has value_exp=None (auto-increment)."""
         prog = _parse_top(_ENUM, _ident("Color"), _LBRACE, _ident("RED"), _RBRACE, _SEMICOLON)
         assert len(prog.declarations) == 1
         decl = prog.declarations[0]
@@ -82,10 +82,10 @@ class TestEnumDefinition:
         assert decl.enum_declaration.tag == "Color"
         assert len(decl.enum_declaration.members) == 1
         assert decl.enum_declaration.members[0].name == "RED"
-        assert decl.enum_declaration.members[0].value == 0
+        assert decl.enum_declaration.members[0].value_exp is None
 
     def test_three_enumerators_increment_by_one(self) -> None:
-        """Three enumerators without explicit values get 0, 1, 2."""
+        """Three enumerators without explicit values all have value_exp=None."""
         prog = _parse_top(
             _ENUM,
             _ident("Color"),
@@ -102,12 +102,14 @@ class TestEnumDefinition:
         assert isinstance(decl, EnumDecl)
         members = decl.enum_declaration.members
         assert len(members) == 3
-        assert members[0].name == "RED" and members[0].value == 0
-        assert members[1].name == "GREEN" and members[1].value == 1
-        assert members[2].name == "BLUE" and members[2].value == 2
+        assert members[0].name == "RED" and members[0].value_exp is None
+        assert members[1].name == "GREEN" and members[1].value_exp is None
+        assert members[2].name == "BLUE" and members[2].value_exp is None
 
     def test_explicit_value_on_first_enumerator(self) -> None:
-        """An explicit value overrides the running counter."""
+        """An explicit integer literal is stored as a Constant expression."""
+        from compiler.syntax.ast import Constant, ConstInt
+
         prog = _parse_top(
             _ENUM,
             _ident("Direction"),
@@ -123,11 +125,14 @@ class TestEnumDefinition:
         decl = prog.declarations[0]
         assert isinstance(decl, EnumDecl)
         members = decl.enum_declaration.members
-        assert members[0].value == 10
-        assert members[1].value == 11  # auto-incremented from 10
+        assert isinstance(members[0].value_exp, Constant)
+        assert members[0].value_exp.value == ConstInt(10)
+        assert members[1].value_exp is None  # SOUTH auto-increments
 
     def test_negative_explicit_value(self) -> None:
-        """Explicit values may be negative using a unary minus."""
+        """Explicit negative value is stored as a Unary(Negate, Constant) expression."""
+        from compiler.syntax.ast import Constant, ConstInt, Negate, Unary
+
         prog = _parse_top(
             _ENUM,
             _ident("E"),
@@ -144,8 +149,10 @@ class TestEnumDefinition:
         decl = prog.declarations[0]
         assert isinstance(decl, EnumDecl)
         members = decl.enum_declaration.members
-        assert members[0].value == -1
-        assert members[1].value == 0  # -1 + 1
+        assert isinstance(members[0].value_exp, Unary)
+        assert isinstance(members[0].value_exp.operator, Negate)
+        assert members[0].value_exp.exp == Constant(ConstInt(1))
+        assert members[1].value_exp is None  # B auto-increments
 
     def test_trailing_comma_is_permitted(self) -> None:
         """A trailing comma after the last enumerator is accepted."""
@@ -215,29 +222,32 @@ class TestAnonymousEnum:
         assert isinstance(decl, EnumDecl)
         assert decl.enum_declaration.tag is None
         assert decl.enum_declaration.members[0].name == "A"
-        assert decl.enum_declaration.members[0].value == 0
+        assert decl.enum_declaration.members[0].value_exp is None
 
     def test_anonymous_enum_multiple_members(self) -> None:
-        """``enum { A, B, C };`` assigns values 0, 1, 2."""
+        """``enum { A, B, C };`` all members have value_exp=None (auto-increment)."""
         prog = _parse_top(_ENUM, _LBRACE, _ident("A"), _COMMA, _ident("B"), _COMMA, _ident("C"), _RBRACE, _SEMICOLON)
         decl = prog.declarations[0]
         assert isinstance(decl, EnumDecl)
         members = decl.enum_declaration.members
         assert len(members) == 3
-        assert members[0].value == 0
-        assert members[1].value == 1
-        assert members[2].value == 2
+        assert members[0].value_exp is None
+        assert members[1].value_exp is None
+        assert members[2].value_exp is None
 
     def test_anonymous_enum_explicit_value(self) -> None:
-        """``enum { A = 5, B };`` assigns 5 and 6."""
+        """``enum { A = 5, B };`` — A has Constant(5) expression, B has None."""
+        from compiler.syntax.ast import Constant, ConstInt
+
         prog = _parse_top(
             _ENUM, _LBRACE, _ident("A"), _ASSIGNMENT, _number("5"), _COMMA, _ident("B"), _RBRACE, _SEMICOLON
         )
         decl = prog.declarations[0]
         assert isinstance(decl, EnumDecl)
         members = decl.enum_declaration.members
-        assert members[0].value == 5
-        assert members[1].value == 6
+        assert isinstance(members[0].value_exp, Constant)
+        assert members[0].value_exp.value == ConstInt(5)
+        assert members[1].value_exp is None
 
     def test_anonymous_enum_empty_body_fails(self) -> None:
         """``enum {};`` raises ``ParseError`` — body must not be empty."""
@@ -275,6 +285,71 @@ class TestInlineEnum:
         prog = _parse_top(_ENUM, _ident("E"), _LBRACE, _ident("A"), _RBRACE, _SEMICOLON)
         assert len(prog.declarations) == 1
         assert isinstance(prog.declarations[0], EnumDecl)
+
+
+class TestEnumConstantExpressionValues:
+    """Enumerator values may be arbitrary integer constant expressions."""
+
+    def test_binary_add_expression(self) -> None:
+        """``enum { A = 1 + 2 }`` stores a Binary(Add, ...) as value_exp."""
+        from compiler.syntax.ast import Add, Binary, Constant, ConstInt
+
+        _PLUS = _tok(TokenType.PLUS, "+")
+        prog = _parse_top(
+            _ENUM, _LBRACE, _ident("A"), _ASSIGNMENT, _number("1"), _PLUS, _number("2"), _RBRACE, _SEMICOLON
+        )
+        decl = prog.declarations[0]
+        assert isinstance(decl, EnumDecl)
+        member = decl.enum_declaration.members[0]
+        assert isinstance(member.value_exp, Binary)
+        assert isinstance(member.value_exp.operator, Add)
+        assert member.value_exp.left == Constant(ConstInt(1))
+        assert member.value_exp.right == Constant(ConstInt(2))
+
+    def test_enumerator_reference_in_value(self) -> None:
+        """``enum { A = 1, B = A + 1 }`` — B's value_exp references A as a Var."""
+        from compiler.syntax.ast import Add, Binary, Constant, ConstInt, Var
+
+        _PLUS = _tok(TokenType.PLUS, "+")
+        prog = _parse_top(
+            _ENUM,
+            _LBRACE,
+            _ident("A"),
+            _ASSIGNMENT,
+            _number("1"),
+            _COMMA,
+            _ident("B"),
+            _ASSIGNMENT,
+            _ident("A"),
+            _PLUS,
+            _number("1"),
+            _RBRACE,
+            _SEMICOLON,
+        )
+        decl = prog.declarations[0]
+        assert isinstance(decl, EnumDecl)
+        members = decl.enum_declaration.members
+        assert isinstance(members[1].value_exp, Binary)
+        assert isinstance(members[1].value_exp.left, Var)
+        assert members[1].value_exp.left.name == "A"
+        assert isinstance(members[1].value_exp.operator, Add)
+        assert members[1].value_exp.right == Constant(ConstInt(1))
+
+    def test_multiply_expression(self) -> None:
+        """``enum { A = 2 * 4 }`` stores a Binary(Multiply, ...) as value_exp."""
+        from compiler.syntax.ast import Binary, Constant, ConstInt, Multiply
+
+        _MUL = _tok(TokenType.ASTERISK, "*")
+        prog = _parse_top(
+            _ENUM, _LBRACE, _ident("A"), _ASSIGNMENT, _number("2"), _MUL, _number("4"), _RBRACE, _SEMICOLON
+        )
+        decl = prog.declarations[0]
+        assert isinstance(decl, EnumDecl)
+        member = decl.enum_declaration.members[0]
+        assert isinstance(member.value_exp, Binary)
+        assert isinstance(member.value_exp.operator, Multiply)
+        assert member.value_exp.left == Constant(ConstInt(2))
+        assert member.value_exp.right == Constant(ConstInt(4))
 
 
 class TestEnumParseErrors:

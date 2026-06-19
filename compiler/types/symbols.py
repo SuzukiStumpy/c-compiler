@@ -438,7 +438,7 @@ class EnumConstAttr(SymbolAttrs):
     by the semantic analyser.
 
     Attributes:
-        value: The integer value of this enumerator, as computed at parse time.
+        value: The integer value of this enumerator, as computed by semantic analysis.
     """
 
     value: int

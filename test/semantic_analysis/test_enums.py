@@ -14,6 +14,21 @@ from test.semantic_analysis.helpers import _prog_with_decls
 # ---------------------------------------------------------------------------
 
 
+def _enum_member(name: str, value: int | None = None) -> EnumeratorDeclaration:
+    """Return an ``EnumeratorDeclaration`` for testing.
+
+    Args:
+        name: The enumerator identifier.
+        value: Optional explicit integer value; ``None`` means auto-increment.
+
+    Returns:
+        An ``EnumeratorDeclaration`` with ``value_exp`` set appropriately.
+    """
+    if value is None:
+        return EnumeratorDeclaration(name=name, value_exp=None)
+    return EnumeratorDeclaration(name=name, value_exp=ast.Constant(ast.ConstInt(value)))
+
+
 def _enum_decl(tag: str | None, *members: tuple[str, int]) -> ast.EnumDecl:
     """Return an ``EnumDecl`` AST node for testing.
 
@@ -24,7 +39,7 @@ def _enum_decl(tag: str | None, *members: tuple[str, int]) -> ast.EnumDecl:
     Returns:
         An ``ast.EnumDecl`` node.
     """
-    enumerators = tuple(EnumeratorDeclaration(name=n, value=v) for n, v in members)
+    enumerators = tuple(_enum_member(n, v) for n, v in members)
     return ast.EnumDecl(EnumDeclaration(tag=tag, members=enumerators))
 
 
@@ -303,3 +318,126 @@ class TestInlineEnum:
         _, sym_table, _, _ = resolve_with_symbols(prog)
         assert sym_table["OK"].attrs == EnumConstAttr(0)
         assert sym_table["ERR"].attrs == EnumConstAttr(1)
+
+
+# ---------------------------------------------------------------------------
+# Constant-expression enum values
+# ---------------------------------------------------------------------------
+
+
+class TestConstantExpressionEnumValues:
+    """Enumerator values may be arbitrary integer constant expressions."""
+
+    def test_auto_increment_from_zero(self) -> None:
+        """Members without explicit values get 0, 1, 2 via auto-increment."""
+        prog = _prog_with_decls(
+            ast.EnumDecl(
+                ast.EnumDeclaration(
+                    tag="E",
+                    members=(
+                        ast.EnumeratorDeclaration(name="A", value_exp=None),
+                        ast.EnumeratorDeclaration(name="B", value_exp=None),
+                        ast.EnumeratorDeclaration(name="C", value_exp=None),
+                    ),
+                )
+            )
+        )
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert sym_table["A"].attrs == EnumConstAttr(0)
+        assert sym_table["B"].attrs == EnumConstAttr(1)
+        assert sym_table["C"].attrs == EnumConstAttr(2)
+
+    def test_binary_expr_value_evaluated(self) -> None:
+        """``enum { A = 1 + 2 }`` evaluates to A=3."""
+        prog = _prog_with_decls(
+            ast.EnumDecl(
+                ast.EnumDeclaration(
+                    tag="E",
+                    members=(
+                        ast.EnumeratorDeclaration(
+                            name="A",
+                            value_exp=ast.Binary(
+                                ast.Add(), ast.Constant(ast.ConstInt(1)), ast.Constant(ast.ConstInt(2))
+                            ),
+                        ),
+                    ),
+                )
+            )
+        )
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert sym_table["A"].attrs == EnumConstAttr(3)
+
+    def test_cross_enumerator_reference(self) -> None:
+        """``enum { A = 1, B = A + 1 }`` evaluates B using A's registered value."""
+        prog = _prog_with_decls(
+            ast.EnumDecl(
+                ast.EnumDeclaration(
+                    tag="E",
+                    members=(
+                        ast.EnumeratorDeclaration(name="A", value_exp=ast.Constant(ast.ConstInt(1))),
+                        ast.EnumeratorDeclaration(
+                            name="B",
+                            value_exp=ast.Binary(ast.Add(), ast.Var("A"), ast.Constant(ast.ConstInt(1))),
+                        ),
+                    ),
+                )
+            )
+        )
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert sym_table["A"].attrs == EnumConstAttr(1)
+        assert sym_table["B"].attrs == EnumConstAttr(2)
+
+    def test_explicit_value_resets_auto_increment_counter(self) -> None:
+        """``enum { A, B = 10, C }`` → A=0, B=10, C=11."""
+        prog = _prog_with_decls(
+            ast.EnumDecl(
+                ast.EnumDeclaration(
+                    tag="E",
+                    members=(
+                        ast.EnumeratorDeclaration(name="A", value_exp=None),
+                        ast.EnumeratorDeclaration(name="B", value_exp=ast.Constant(ast.ConstInt(10))),
+                        ast.EnumeratorDeclaration(name="C", value_exp=None),
+                    ),
+                )
+            )
+        )
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert sym_table["A"].attrs == EnumConstAttr(0)
+        assert sym_table["B"].attrs == EnumConstAttr(10)
+        assert sym_table["C"].attrs == EnumConstAttr(11)
+
+    def test_negative_value_expression(self) -> None:
+        """``enum { A = -1, B }`` → A=-1, B=0."""
+        prog = _prog_with_decls(
+            ast.EnumDecl(
+                ast.EnumDeclaration(
+                    tag="E",
+                    members=(
+                        ast.EnumeratorDeclaration(
+                            name="A",
+                            value_exp=ast.Unary(ast.Negate(), ast.Constant(ast.ConstInt(1))),
+                        ),
+                        ast.EnumeratorDeclaration(name="B", value_exp=None),
+                    ),
+                )
+            )
+        )
+        _, sym_table, _, _ = resolve_with_symbols(prog)
+        assert sym_table["A"].attrs == EnumConstAttr(-1)
+        assert sym_table["B"].attrs == EnumConstAttr(0)
+
+    def test_non_constant_expression_raises(self) -> None:
+        """A non-constant expression (e.g., a regular variable) raises SemanticError."""
+        prog = ast.Program(
+            declarations=(
+                ast.VarDecl(ast.VariableDeclaration("x", ast.SingleInit(ast.Constant(ast.ConstInt(5))), ast.IntType())),
+                ast.EnumDecl(
+                    ast.EnumDeclaration(
+                        tag="E",
+                        members=(ast.EnumeratorDeclaration(name="A", value_exp=ast.Var("x")),),
+                    )
+                ),
+            )
+        )
+        with pytest.raises(SemanticError):
+            resolve(prog)

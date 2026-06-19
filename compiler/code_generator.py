@@ -331,7 +331,7 @@ def _classify_type_at_offset(
             | Pointer()
         ):
             eightbytes[eb] = _merge_class(eightbytes[eb], EightbyteClass.INTEGER)
-        case ArrayType(element=elem_t, size=n):
+        case ArrayType(element=elem_t, size=n) if n is not None:
             elem_size = type_size(elem_t, struct_type_table)
             for i in range(n):
                 _classify_type_at_offset(elem_t, byte_offset + i * elem_size, eightbytes, struct_type_table)
@@ -629,7 +629,7 @@ def _type_size(t: Type, struct_type_table: StructTypeTable | None = None) -> int
         return 16
     if isinstance(t, (LongType, ULongType, LongLongType, ULongLongType, DoubleType, Pointer)):
         return 8
-    if isinstance(t, ArrayType):
+    if isinstance(t, ArrayType) and t.size is not None:
         return t.size * _type_size(t.element, struct_type_table)
     if isinstance(t, (Structure, Union)) and struct_type_table and t.tag in struct_type_table:
         return struct_type_table[t.tag].size
