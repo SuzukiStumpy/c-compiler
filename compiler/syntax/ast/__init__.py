@@ -61,6 +61,8 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | AlignOfT(type)
                          | Dot(exp structure, identifier member)
                          | Arrow(exp pointer, identifier member)
+                         | BuiltinUnreachable
+                         | OffsetOf(type, identifier member)
     unary_operator       = Complement | Negate | Not
                          | PreIncrement | PreDecrement
                          | PostIncrement | PostDecrement
@@ -84,7 +86,8 @@ Nodes are organised into submodules by logical role:
 
     types        - C type nodes (Type, IntType, VoidType, ...)
     expressions  - Expression nodes (Exp, Constant, Unary, Binary, Assignment,
-                   Conditional, FunctionCall, SizeOf, SizeOfT, AlignOf, AlignOfT, Dot, Arrow)
+                   Conditional, FunctionCall, SizeOf, SizeOfT, AlignOf, AlignOfT, Dot, Arrow,
+                   BuiltinUnreachable, OffsetOf)
     statements   - Statement nodes (Statement, Return, Expression, If, Null,
                    Goto, Label, Break, Continue, While, DoWhile)
     declarations - Program structure nodes (VariableDeclaration, Declaration,
@@ -170,6 +173,7 @@ from compiler.syntax.ast.expressions import (
     Arrow,
     Assignment,
     Binary,
+    BuiltinUnreachable,
     Cast,
     CompoundAssignment,
     CompoundInit,
@@ -183,6 +187,7 @@ from compiler.syntax.ast.expressions import (
     IndexDesignatorInit,
     Initializer,
     MemberDesignatorInit,
+    OffsetOf,
     SingleInit,
     SizeOf,
     SizeOfT,
@@ -294,6 +299,8 @@ __all__ = [
     "UnionDeclaration",
     "AlignOf",
     "AlignOfT",
+    "BuiltinUnreachable",
+    "OffsetOf",
     "SizeOf",
     "SizeOfT",
     "VoidType",

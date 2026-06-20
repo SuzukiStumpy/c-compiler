@@ -1174,3 +1174,16 @@ class Fstps(Instruction):
     def emit(self) -> str:
         """Return a ``fstps`` instruction in AT&T syntax."""
         return _asm_line("fstps", self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Ud2(Instruction):
+    """The ``ud2`` instruction — guaranteed to raise ``SIGILL`` when executed.
+
+    Emitted for ``__builtin_unreachable()`` to trap if control reaches a
+    path the programmer declared unreachable.
+    """
+
+    def emit(self) -> str:
+        """Return a ``ud2`` instruction."""
+        return "  ud2"

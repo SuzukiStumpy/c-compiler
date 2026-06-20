@@ -105,6 +105,7 @@ from compiler.syntax.ast import (
     Block,
     BlockItem,
     Break,
+    BuiltinUnreachable,
     Case,
     Cast,
     Char,
@@ -170,6 +171,7 @@ from compiler.syntax.ast import (
     Not,
     NotEqual,
     Null,
+    OffsetOf,
     Or,
     Parameter,
     Pointer,
@@ -2245,6 +2247,15 @@ class Parser:
             case TokenType.IDENTIFIER if token.value == "__builtin_va_copy":
                 self._consume()
                 primary = self._parse_va_copy()
+            case TokenType.IDENTIFIER if token.value == "__builtin_expect":
+                self._consume()
+                primary = self._parse_builtin_expect()
+            case TokenType.IDENTIFIER if token.value == "__builtin_unreachable":
+                self._consume()
+                primary = self._parse_builtin_unreachable()
+            case TokenType.IDENTIFIER if token.value == "__builtin_offsetof":
+                self._consume()
+                primary = self._parse_builtin_offsetof()
             case TokenType.IDENTIFIER:
                 self._consume()
                 if self._match(TokenType.LPAREN):
@@ -2409,6 +2420,62 @@ class Parser:
         src = self._parse_exp()
         self._expect(TokenType.RPAREN)
         return VaCopy(dest=dest, src=src)
+
+    def _parse_builtin_expect(self) -> Exp:
+        """Parse ``__builtin_expect(expr, hint)`` after the name token was consumed.
+
+        The hint argument is a branch-probability constant; it is parsed and
+        discarded.  The expression ``expr`` is returned unchanged, so the
+        built-in has no semantic effect on the compiled output.
+
+        Returns:
+            The inner expression ``expr`` — no new AST node is created.
+
+        Raises:
+            ParseError: If the argument list is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        expr = self._parse_exp()
+        self._expect(TokenType.COMMA)
+        self._parse_exp()  # hint — evaluated at parse time and discarded
+        self._expect(TokenType.RPAREN)
+        return expr
+
+    def _parse_builtin_unreachable(self) -> BuiltinUnreachable:
+        """Parse ``__builtin_unreachable()`` after the name token was consumed.
+
+        Returns:
+            A ``BuiltinUnreachable`` node with void type (assigned during semantic analysis).
+
+        Raises:
+            ParseError: If the empty argument list is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        self._expect(TokenType.RPAREN)
+        return BuiltinUnreachable()
+
+    def _parse_builtin_offsetof(self) -> OffsetOf:
+        """Parse ``__builtin_offsetof(type-name, member-designator)`` after the name token.
+
+        Only simple member names are supported as the designator.  Nested
+        designators (e.g. ``.a.b`` or ``.a[0]``) are not yet handled.
+
+        Returns:
+            An ``OffsetOf`` node carrying the struct/union type and the member name.
+
+        Raises:
+            ParseError: If the argument list or type-name is malformed.
+        """
+        self._expect(TokenType.LPAREN)
+        base_type = self._parse_type()
+        if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
+            t: Type = self._parse_abstract_declarator()(base_type)
+        else:
+            t = base_type
+        self._expect(TokenType.COMMA)
+        member_tok = self._expect(TokenType.IDENTIFIER)
+        self._expect(TokenType.RPAREN)
+        return OffsetOf(t=t, member=member_tok.value)
 
     # Maps single-character escape letter to its ASCII value.
     _ESCAPE_VALUES: dict[str, int] = {

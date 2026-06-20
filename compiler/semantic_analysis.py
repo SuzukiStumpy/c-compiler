@@ -2863,6 +2863,21 @@ class SemanticAnalyser:
                 typed_dest = self._type_check_exp(dest)
                 typed_src = self._type_check_exp(src)
                 return ast.VaCopy(dest=typed_dest, src=typed_src, exp_type=VoidType())
+            case ast.BuiltinUnreachable():
+                return ast.BuiltinUnreachable(exp_type=VoidType())
+            case ast.OffsetOf(t=t, member=member):
+                resolved_t = self._resolve_type(t)
+                match unqualify(resolved_t):
+                    case Structure(tag=tag) | Union(tag=tag):
+                        entry = self._struct_type_table.get(tag)
+                        if entry is None:
+                            raise SemanticError(f"Cannot apply __builtin_offsetof to incomplete struct/union '{tag}'")
+                        member_entry = next((m for m in entry.members if m.name == member), None)
+                        if member_entry is None:
+                            raise SemanticError(f"struct/union '{tag}' has no member named '{member}'")
+                        return ast.OffsetOf(t=resolved_t, member=member, exp_type=ULongType())
+                    case _:
+                        raise SemanticError("__builtin_offsetof requires a struct or union type")
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
@@ -3412,6 +3427,11 @@ class SemanticAnalyser:
                 return self._type_check_exp(ast.VaEnd(ap=self.resolve_exp(ap)))
             case ast.VaCopy(dest=dest, src=src):
                 return self._type_check_exp(ast.VaCopy(dest=self.resolve_exp(dest), src=self.resolve_exp(src)))
+            case ast.BuiltinUnreachable():
+                return self._type_check_exp(e)
+            case ast.OffsetOf(t=t, member=member):
+                resolved_t = self._resolve_type(t)
+                return self._type_check_exp(ast.OffsetOf(t=resolved_t, member=member))
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 
@@ -3756,6 +3776,21 @@ class SemanticAnalyser:
                     return None
                 try:
                     return type_alignment(inner.exp_type, self._struct_type_table)
+                except SemanticError:
+                    return None
+            case ast.OffsetOf(t=t, member=member):
+                try:
+                    match unqualify(t):
+                        case Structure(tag=tag) | Union(tag=tag):
+                            entry = self._struct_type_table.get(tag)
+                            if entry is None:
+                                return None
+                            member_entry = next((m for m in entry.members if m.name == member), None)
+                            if member_entry is None:
+                                return None
+                            return member_entry.offset
+                        case _:
+                            return None
                 except SemanticError:
                     return None
             case ast.Cast(exp=inner):

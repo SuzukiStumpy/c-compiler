@@ -568,6 +568,15 @@ class SetBitField(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class Unreachable(Instruction):
+    """Mark a code path as unreachable.
+
+    Lowered from ``__builtin_unreachable()``.  The code generator emits a ``ud2``
+    instruction which raises ``SIGILL`` if control ever reaches it.
+    """
+
+
+@dataclass(frozen=True, slots=True)
 class VaStart(Instruction):
     """Initialise a ``__va_list_tag`` struct from the SysV AMD64 variadic ABI.
 

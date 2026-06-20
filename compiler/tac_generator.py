@@ -698,6 +698,26 @@ class _TacGenerator:
         """
         return type_alignment(t, self._struct_type_table)
 
+    def _offset_of(self, t: ast.Type, member: str) -> int:
+        """Return the byte offset of ``member`` within struct/union type ``t``.
+
+        Args:
+            t: The struct or union type (must be complete and in the struct type table).
+            member: The name of the member whose offset is requested.
+
+        Returns:
+            The byte offset of ``member`` from the start of ``t``.
+
+        Raises:
+            CodeGenerationError: If ``t`` is not a struct/union, the tag is not in
+                the table, or ``member`` is not declared on ``t``.
+        """
+        match ast.unqualify(t):
+            case ast.Structure(tag=tag) | ast.Union(tag=tag):
+                return self._get_member(tag, member).offset
+            case _:
+                raise CodeGenerationError("__builtin_offsetof: type is not a struct or union")
+
     def _get_member(self, tag: str, member_name: str) -> MemberEntry:
         """Return the layout entry for a named member within a struct.
 
@@ -2230,5 +2250,10 @@ class _TacGenerator:
                 return tac.Constant(ast.ConstInt(0)), []
             case ast.VaCopy(dest=dest_exp, src=src_exp):
                 return self._translate_va_copy(dest_exp, src_exp)
+            case ast.BuiltinUnreachable():
+                return tac.Constant(ast.ConstInt(0)), [tac.Unreachable()]
+            case ast.OffsetOf(t=t, member=member):
+                offset = self._offset_of(t, member)
+                return tac.Constant(ast.ConstULong(offset)), []
             case _:
                 raise CodeGenerationError(f"unsupported expression type: {type(exp).__name__}")

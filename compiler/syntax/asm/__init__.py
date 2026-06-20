@@ -122,6 +122,7 @@ from compiler.syntax.asm.instructions import (
     SetCC,
     Shl,
     Shr,
+    Ud2,
     Unary,
 )
 from compiler.syntax.asm.operands import (
@@ -237,6 +238,7 @@ __all__ = [
     "SetCC",
     "Shl",
     "Shr",
+    "Ud2",
     "Unary",
     "CondCodes",
     # operators

@@ -112,6 +112,7 @@ from compiler.syntax.tac.instructions import (
     UIntToFloat,
     UIntToLongDouble,
     Unary,
+    Unreachable,
     VaStart,
     ZeroExtend,
 )
@@ -163,6 +164,7 @@ __all__ = [
     "CopyFromOffset",
     "GetBitField",
     "SetBitField",
+    "Unreachable",
     "VaStart",
     "StaticConstant",
     "AddPtr",

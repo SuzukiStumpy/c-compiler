@@ -43,7 +43,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 | Submodule | Contents |
 |---|---|
 | `types.py` | `Type` hierarchy: `IntType`, `LongType`, `UIntType`, `ULongType`, `ShortType`, `UShortType`, `Char`, `SChar`, `UChar`, `BoolType`, `FloatType`, `DoubleType`, `LongDoubleType`, `Int128Type`, `UInt128Type`, `LongLongType`, `ULongLongType`, `VoidType`, `FunType`, `Pointer`, `Array`, `Structure`, `Union`, `EnumType`, `QualifiedType`; `Array.size: int | None` where `None` denotes an incomplete/flexible array |
-| `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `AlignOf`, `AlignOfT`, `Dot`, `Arrow`, `CompoundLiteral`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit`, `VaStart`, `VaArg`, `VaEnd`, `VaCopy` |
+| `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `AlignOf`, `AlignOfT`, `Dot`, `Arrow`, `CompoundLiteral`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit`, `VaStart`, `VaArg`, `VaEnd`, `VaCopy`, `BuiltinUnreachable`, `OffsetOf` |
 | `statements.py` | `Statement` hierarchy: `Return`, `Expression`, `If`, `Goto`, `Label`, `Compound`, `Break`, `Continue`, `While`, `DoWhile`, `For`, `Switch`, `Case`, `Default`, `Null` |
 | `declarations.py` | `Declaration` hierarchy + `Program`, `Function`, `Block`, `BlockItem`, `VariableDeclaration`, `FunDecl`, `VarDecl`, `StructDecl`, `UnionDecl`, `EnumDecl`, `TypedefDecl`, `StaticAssert`, `Parameter`; `MemberDeclaration` carries optional `nested_decl: StructDecl | UnionDecl | None` for anonymous struct/union members; `EnumeratorDeclaration.value_exp: Exp | None` (constant expression or `None` for auto-increment) |
 | `constants.py` | `Const` hierarchy: `ConstInt`, `ConstLong`, `ConstUInt`, `ConstULong`, `ConstDouble`, `ConstFloat`, `ConstLongDouble`, `ConstChar`, `ConstUChar`, `ConstShort`, `ConstUShort`, `ConstLongLong`, `ConstULongLong`, `ConstInt128`, `ConstUInt128`, `ConstBool` |
@@ -54,7 +54,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 
 | Submodule | Contents |
 |---|---|
-| `instructions.py` | TAC instruction nodes (including `VaStart` for variadic register-save-area setup) |
+| `instructions.py` | TAC instruction nodes (including `VaStart` for variadic register-save-area setup; `Unreachable` for `__builtin_unreachable`) |
 | `values.py` | `Val` variants (`Constant`, `Var`) |
 | `operators.py` | TAC operator enums |
 | `declarations.py` | `Program`, `Function`, `StaticVariable`, `StaticConstant` |
@@ -63,7 +63,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 
 | Submodule | Contents |
 |---|---|
-| `instructions.py` | Assembly instruction nodes (`Mov`, `Binary`, `Unary`, `Idiv`, `Div`, `Cdq`, `Cmp`, `Jmp`, `JmpCC`, `SetCC`, `Label`, `Ret`, `Call`, `IndirectCall`, `Lea`, `Push`, `Pop`, `Movsx`, `MoveZeroExtend`, `AllocateStack`, `DeallocateStack`, `Cvttsd2si`, `Cvtsi2sd`, `Cvttss2si`, `Cvtsi2ss`, `Cvtss2sd`, `Cvtsd2ss`) |
+| `instructions.py` | Assembly instruction nodes (`Mov`, `Binary`, `Unary`, `Idiv`, `Div`, `Cdq`, `Cmp`, `Jmp`, `JmpCC`, `SetCC`, `Label`, `Ret`, `Call`, `IndirectCall`, `Lea`, `Push`, `Pop`, `Movsx`, `MoveZeroExtend`, `AllocateStack`, `DeallocateStack`, `Cvttsd2si`, `Cvtsi2sd`, `Cvttss2si`, `Cvtsi2ss`, `Cvtss2sd`, `Cvtsd2ss`, `Ud2`) |
 | `operands.py` | `Operand` hierarchy: `Imm`, `Register`, `Pseudo`, `Memory`, `Indexed`, `Data`, `PseudoMem`; `GPRegisters`/`FPRegisters` enums; `Width` enum; `ALLOCATABLE_GP`/`ALLOCATABLE_FP` |
 | `values.py` | `AssemblyType` variants: `Byte`, `Longword`, `Quadword`, `Double` |
 | `operators.py` | Assembly operator enums |
@@ -115,8 +115,9 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Storage classes**: `static`, `extern`, `typedef`; `auto` and `register` are lexed and silently ignored (C11 §6.7.1 no-ops)
 - **Static array parameters**: `int foo(int a[static 10])` — `static` and type-qualifiers inside a parameter array declarator are parsed and discarded (C99/C11 §6.7.6.3 minimum-size hint)
 - **Control flow**: `if`/`else`, `while`, `do`/`while`, `for`, `switch`/`case`/`default`, `break`, `continue`, `goto`, labels
-- **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, `_Alignof`, member access (`.` and `->`)
+- **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, `_Alignof`, member access (`.` and `->`), `__builtin_offsetof`
 - **Variadic functions**: `va_list`, `va_start`, `va_arg`, `va_end`, `va_copy` via `<stdarg.h>`; SysV AMD64 ABI register-save-area (176 bytes, 16-byte aligned) and overflow argument area; GP and XMM register paths in `va_arg`
+- **GCC builtins**: `__builtin_expect(expr, hint)` — folds to `expr` at parse time; `__builtin_unreachable()` — emits `ud2` (SIGILL trap); `__builtin_offsetof(type, member)` — compile-time struct member offset, type `unsigned long`
 - **Alignment specifiers**: `_Alignas(expr)` and `_Alignas(type)` on variable declarations; SA evaluates to `VariableDeclaration.align_as: int`; overrides `.balign` for static variables and stack-slot alignment for locals; `_Alignof(type)` / `_Alignof expr` returns `unsigned long` alignment at compile time
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
 - **String literals** (stored as hidden static objects in `.rodata`)

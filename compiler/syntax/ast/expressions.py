@@ -438,3 +438,27 @@ class VaCopy(Exp):
 
     dest: Exp
     src: Exp
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltinUnreachable(Exp):
+    """``__builtin_unreachable()`` — marks a code path as unreachable.
+
+    Has void type.  The code generator emits a ``ud2`` instruction, which
+    raises ``SIGILL`` if control ever reaches it.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class OffsetOf(Exp):
+    """``__builtin_offsetof(type, member)`` — byte offset of a struct member.
+
+    Resolved to a ``ULongType`` constant during semantic analysis.
+
+    Attributes:
+        t: The struct or union type whose layout is queried.
+        member: The name of the member whose offset is requested.
+    """
+
+    t: Type
+    member: str

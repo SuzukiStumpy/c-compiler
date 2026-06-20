@@ -1868,6 +1868,8 @@ def _translate_instruction(
             )
         case tac.VaStart(ap=ap_name, gp_offset=gp_offset, fp_offset=fp_offset, reg_save_area=rsa_name):
             return _translate_va_start(ap_name, gp_offset, fp_offset, rsa_name)
+        case tac.Unreachable():
+            return [asm.Ud2()]
         case _:
             raise CodeGenerationError(f"unsupported TAC instruction: {type(instr).__name__}")
 

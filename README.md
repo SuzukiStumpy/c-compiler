@@ -57,6 +57,9 @@ All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to eve
 - Explicit type casts
 - `sizeof` on expressions and on type names
 - `_Alignof` on expressions and on type names — returns `unsigned long` alignment of the type at compile time
+- `__builtin_expect(expr, hint)` — GCC branch-prediction hint; evaluates and returns `expr`; hint is discarded
+- `__builtin_unreachable()` — marks a code path as unreachable; emits `ud2` (raises `SIGILL` if reached)
+- `__builtin_offsetof(type, member)` — returns the byte offset of `member` within `type` as `unsigned long`; equivalent to the `offsetof` macro in `<stddef.h>`
 - Address-of `&` and pointer dereference `*`
 - Array subscript `arr[i]`
 - Struct and union member access: `.` and `->`
@@ -104,6 +107,7 @@ The semantic analysis phase performs full name resolution and type checking:
 - `switch` validation: integer-only controlling expressions; no duplicate `case` values; no floating-point case labels
 - Variadic call sites: extra arguments beyond the declared parameters are type-checked individually
 - Variadic function bodies: `__va_list_tag` is pre-registered in the struct type table; `VaStart`/`VaArg`/`VaEnd`/`VaCopy` expressions are type-checked and lower to TAC and assembly
+- GCC built-ins: `__builtin_unreachable()` is given `VoidType`; `__builtin_offsetof(type, member)` resolves to `ULongType` using the struct layout table
 - Type qualifier enforcement: assignment to `const`-qualified lvalues raises `SemanticError`; `restrict` on non-pointer types raises `SemanticError`
 
 ### Type qualifiers
@@ -325,16 +329,6 @@ Neither is recognised.
 ### Variable-length arrays
 
 VLAs (sec. 6.7.6.2) — arrays whose size is a runtime expression — were mandatory in C99, made optional in C11 (Annex J.2), and removed from C17. This compiler does not implement them; all array sizes must be compile-time integer constant expressions.
-
-### GCC built-in functions
-
-Several built-in functions used heavily in Linux and glibc headers are not yet recognised:
-
-| Built-in | Notes |
-|---|---|
-| `__builtin_expect(expr, likely)` | Branch-prediction hint; should lower to a no-op pass-through of `expr` |
-| `__builtin_unreachable()` | Marks a code path as unreachable; should lower to a trap or be elided |
-| `__builtin_offsetof(type, member)` | Computes member offset at compile time; equivalent to the `offsetof` macro |
 
 ### Inline function linkage
 
