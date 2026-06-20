@@ -119,6 +119,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Alignment specifiers**: `_Alignas(expr)` and `_Alignas(type)` on variable declarations; SA evaluates to `VariableDeclaration.align_as: int`; overrides `.balign` for static variables and stack-slot alignment for locals; `_Alignof(type)` / `_Alignof expr` returns `unsigned long` alignment at compile time
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
 - **String literals** (stored as hidden static objects in `.rodata`)
+- **`__func__` predefined identifier** (C99/C11 §6.4.2.2): resolved by semantic analysis to a `String` node containing the enclosing function's name; behaves like `static const char __func__[] = "fn_name";`
 
 ## Target
 

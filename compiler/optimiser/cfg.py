@@ -17,7 +17,7 @@ relying on successor data.
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Final, Generic, Protocol, TypeAlias, TypeVar
+from typing import Any, Final, Generic, Protocol, TypeAlias, TypeVar, cast
 
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
@@ -702,7 +702,7 @@ class AsmAdapter:
             case asm.Call():
                 # Conservative: all GP and FP argument registers may carry arguments.
                 # Without the callee's type, we cannot know which are actually used.
-                return set(_GP_ARG_REGS) | set(_FP_ARG_REGS)
+                return cast(set[GraphNode], set(_GP_ARG_REGS) | set(_FP_ARG_REGS))
             case asm.IndirectCall(target=tgt):
                 return _use_nodes(tgt) | set(_GP_ARG_REGS) | set(_FP_ARG_REGS)
             case asm.Cvttsd2si(src=src) | asm.Cvtsi2sd(src=src):

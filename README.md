@@ -46,6 +46,7 @@ All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to eve
 
 - Integer, floating-point, and character constants
 - String literals (decay to `char *`; embedded in read-only data)
+- `__func__` predefined identifier — expands to a `static const char[]` containing the enclosing function name (C99/C11 §6.4.2.2); decays to `const char *` in value context; resolved during semantic analysis
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
 - Bitwise: `~`, `&`, `|`, `^`, `<<`, `>>`
 - Logical (short-circuit): `!`, `&&`, `||`
@@ -283,7 +284,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>` |
 | `_Pragma` operator | sec. 6.10.9 | Turns a string token into a `#pragma`; used in macros that conditionally emit pragmas |
 | Static array parameters `int foo(int a[static 10])` | sec. 6.7.6.3 | Minimum-size hint in array parameter declarators; currently causes a parse error |
-| `__func__` predefined identifier | sec. 6.4.2.2 | Magic `const char[]` containing the enclosing function name; used in assert macros and debug logging |
 
 ### String and character literals
 

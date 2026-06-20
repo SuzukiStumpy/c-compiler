@@ -2381,7 +2381,7 @@ def _lower_get_bit_field(
     signed: bool,
     dst: tac.Val,
     symbol_table: SymbolTable | None,
-    constants: dict[str, asm.StaticConstant],
+    constants: list[asm.TopLevel] | None,
 ) -> list[asm.Instruction]:
     """Lower a ``GetBitField`` TAC instruction to assembly.
 
@@ -2450,7 +2450,7 @@ def _lower_set_bit_field(
     bit_width: int,
     unit_size: int,
     symbol_table: SymbolTable | None,
-    constants: dict[str, asm.StaticConstant],
+    constants: list[asm.TopLevel] | None,
 ) -> list[asm.Instruction]:
     """Lower a ``SetBitField`` TAC instruction to assembly.
 
@@ -3351,7 +3351,7 @@ def _translate_long_double_comparison(
     """
     uid = _fresh_uid()
     nan_label = f"nan_cmp.{uid}"
-    load = [asm.Fldt(src=src2_asm), asm.Fldt(src=src1_asm), asm.Fucomip(), asm.Fstp0()]
+    load: list[asm.Instruction] = [asm.Fldt(src=src2_asm), asm.Fldt(src=src1_asm), asm.Fucomip(), asm.Fstp0()]
     match op:
         case tac.Equal():
             return load + [

@@ -1,10 +1,33 @@
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+_ARTEFACT_SUFFIXES = frozenset({".i", ".s"})
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_compiler_artefacts() -> Generator[None, None, None]:
+    """Remove compiler-generated artefacts from fixture directories after the test session.
+
+    The compiler places ``.i`` (preprocessed), ``.s`` (assembly), and executable
+    files (no extension, same stem as the ``.c`` source) next to the source file.
+    This fixture deletes those files so the working tree stays clean between runs.
+
+    Yields:
+        Nothing; cleanup runs in the teardown phase after the session ends.
+    """
+    yield
+    for directory in (FIXTURES_DIR, FIXTURES_DIR / "valid", FIXTURES_DIR / "invalid"):
+        if not directory.is_dir():
+            continue
+        c_stems = {p.stem for p in directory.glob("*.c")}
+        for path in directory.iterdir():
+            if path.suffix in _ARTEFACT_SUFFIXES or (path.suffix == "" and path.stem in c_stems):
+                path.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="session")

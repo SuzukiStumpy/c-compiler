@@ -1079,6 +1079,7 @@ class SemanticAnalyser:
         self._file_scope_definitions: set[str] = set()
         self._current_block_funs: set[str] = set()
         self._current_return_type: Type | None = None
+        self._current_function_name: str | None = None
         self._label_set: set[str] = set()
         self._loop_stack: list[str] = []
         self._break_stack: list[str] = []
@@ -3297,10 +3298,10 @@ class SemanticAnalyser:
 
         Raises:
             SemanticError: If a ``Var`` node names a function rather than a
-                variable; if a variable reference is undeclared; if the
-                left-hand side of an assignment is not a plain ``ast.Var``; or
-                if any sub-expression contains a semantic violation detected by
-                ``_type_check_exp``.
+                variable; if a variable reference is undeclared; if ``__func__``
+                is used outside a function body; if the left-hand side of an
+                assignment is not a plain ``ast.Var``; or if any sub-expression
+                contains a semantic violation detected by ``_type_check_exp``.
         """
         match e:
             case ast.Assignment(lvalue=lvalue, rvalue=rvalue):
@@ -3311,6 +3312,11 @@ class SemanticAnalyser:
                 resolved_lvalue = self.resolve_exp(lvalue)
                 resolved_rvalue = self.resolve_exp(rvalue)
                 return self._type_check_exp(ast.CompoundAssignment(resolved_lvalue, op, resolved_rvalue))
+            case ast.Var(name="__func__"):
+                if self._current_function_name is None:
+                    raise SemanticError("'__func__' used outside a function body")
+                s = self._current_function_name.encode("ascii")
+                return self._type_check_exp(ast.String(s))
             case ast.Var(name=name):
                 if name in self._current_block_funs:
                     raise SemanticError(f"Function name '{name}' used as a variable.")
@@ -3977,6 +3983,7 @@ class SemanticAnalyser:
             resolved_params.append(ast.Parameter(param_type=param.param_type, name=resolved_var.name))
 
         self._current_return_type = function.fun_type.ret if isinstance(function.fun_type, FunType) else IntType()
+        self._current_function_name = function.name
         self._collect_labels(function.body)
         binding = self._function_map.get(function.name)
         globl = binding.linkage == Linkage.EXTERNAL if binding is not None else True
@@ -4033,6 +4040,7 @@ class SemanticAnalyser:
                     self._variable_map = file_scope_state
                     self._structure_map = file_scope_struct_state
                     self._current_block_funs = set()
+                    self._current_function_name = None
                 case ast.VarDecl(variable_declaration=var_decl):
                     resolved.append(ast.VarDecl(self._resolve_file_scope_variable_declaration(var_decl)))
                 case ast.StructDecl(struct_declaration=struct_decl):
