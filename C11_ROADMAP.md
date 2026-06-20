@@ -24,10 +24,10 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 ## Priority grouping
 
-**Quick wins** (L effort, low risk): ~~static array params~~ — done.
+**Quick wins** (L effort, low risk): ~~static array params~~, ~~`register`/`auto`~~, ~~`_Pragma`~~ — all done.
 
-**Medium payoff**: ~~GCC builtins~~ — done. ~~Wide/Unicode string literals~~ — done. Next highest remaining impact: `_Generic`.
+**Medium payoff**: ~~GCC builtins~~, ~~Wide/Unicode string literals~~, ~~multi-file compilation~~, ~~`_Generic`~~ — all done. Remaining medium item: `inline` external linkage rules, hex floating-point literals.
 
-**Deferred**: `__int128`, VLAs are self-contained but high effort for niche benefit.
+**Deferred**: `__int128`, VLAs — self-contained but high effort for niche benefit.
 
 **Skip for now**: `_Thread_local`, `_Atomic`, `_Complex`/`_Imaginary` — effort-to-benefit ratio is unfavourable for a C11-subset compiler.
