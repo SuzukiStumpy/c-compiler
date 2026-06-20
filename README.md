@@ -280,7 +280,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 | Missing feature | C11 reference | Notes |
 |---|---|---|
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>` |
-| `_Pragma` operator | sec. 6.10.9 | Turns a string token into a `#pragma`; used in macros that conditionally emit pragmas |
 | Static array parameters `int foo(int a[static 10])` | sec. 6.7.6.3 | Minimum-size hint in array parameter declarators; currently causes a parse error |
 
 ### String and character literals
