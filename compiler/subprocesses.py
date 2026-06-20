@@ -110,3 +110,46 @@ def assemble_and_link(source: Path, exe_out: bool = True, libs: tuple[str, ...] 
         return (r.returncode, r.stdout)
     else:
         return output
+
+
+@run_or_raise(
+    lambda result: SubprocessError(result[0], "gcc", result[1]),
+    ok=lambda result: isinstance(result, Path),
+)
+def link_object_files(
+    objects: list[Path],
+    output: Path,
+    libs: tuple[str, ...] = (),
+) -> tuple[int, str] | Path:
+    """Link multiple object files into a single executable.
+
+    Invokes ``gcc`` on the supplied ``.o`` files, producing a native executable
+    at ``output``.
+
+    Args:
+        objects: Paths to the ``.o`` object files to link.
+        output: Desired path for the linked executable.
+        libs: Library names to append as ``-l<name>`` arguments.
+
+    Returns:
+        The path to the linked executable on success.
+
+    Raises:
+        SubprocessError: If GCC exits with a non-zero return code.
+    """
+    print(f"Linking {[o.as_posix() for o in objects]} -> {output.as_posix()}...")
+
+    gcc_args = ["gcc"] + [o.as_posix() for o in objects] + ["-o", output.as_posix()]
+    for lib in libs:
+        gcc_args.append(f"-l{lib}")
+
+    r = subprocess.run(
+        gcc_args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    if r.returncode != 0:
+        return (r.returncode, r.stdout)
+    return output

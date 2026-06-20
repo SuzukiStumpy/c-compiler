@@ -14,7 +14,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 | Wide / Unicode string and char literals | M | L | C11 §6.4.4.4, §6.4.5 — `L'x'`, `L"..."`, `u'x'`, `u"..."`, `U'x'`, `U"..."`, `u8"..."` prefixes; needed to parse i18n and platform code without errors |
 | `char16_t` / `char32_t` types | M | L | C11 §6.7.2 via `<uchar.h>`; natural companion to Unicode string literals; effectively `uint16_t`/`uint32_t` aliases |
 | GCC builtins (`__builtin_expect`, `__builtin_unreachable`, `__builtin_offsetof`) | M | M | Widely used in Linux/glibc headers; `__builtin_expect` is a branch-hint no-op, `__builtin_unreachable` marks dead paths, `__builtin_offsetof` computes member offsets; required to parse real-world system headers without errors |
-| Multi-file compilation (multiple `.c` per invocation) | M | M | Tool feature — `compiler a.c b.c` in a single call; separate compilation of individual files and linking already works |
+| ~~Multi-file compilation (multiple `.c` per invocation)~~ | ~~M~~ | ~~M~~ | **Done.** `compiler a.c b.c` compiles each file independently to a `.o`, then links all objects into a single executable. Stage flags (`--lex` etc.) still require a single source file. |
 | Inline function external linkage rules | M | L | C99/C11 §6.7.4 p6–7 — `inline` without `static` or `extern` has complex one-definition-rule implications; currently `inline` is stored but no linkage enforcement is performed |
 | `_Generic` selection | H | L | C11 §6.5.1.1 — type-generic macro dispatch used by `<tgmath.h>`; requires type-matching at parse/SA time; complex to implement correctly |
 | VLAs | H | L | C99 mandatory, optional in C11 (Annex J.2), removed in C17; requires runtime stack allocation; low priority given C17 trajectory |
@@ -26,7 +26,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 **Quick wins** (L effort, low risk): ~~static array params~~ — done.
 
-**Medium payoff**: GCC builtins and multi-file compilation have the highest practical impact — they unblock parsing real system headers and building multi-file projects.
+**Medium payoff**: GCC builtins have the highest remaining practical impact — they unblock parsing real system headers.
 
 **Deferred**: `__int128`, `_Generic`, VLAs are each self-contained but high effort for niche benefit.
 

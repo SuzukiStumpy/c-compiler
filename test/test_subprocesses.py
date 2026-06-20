@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from compiler.subprocesses import assemble_and_link, preprocess
+from compiler.subprocesses import assemble_and_link, link_object_files, preprocess
 from compiler.utils.exceptions import SubprocessError
 
 
@@ -332,3 +332,80 @@ class TestAssembleAndLink:
 
         args = mock_run.call_args[0][0]
         assert not any(a.startswith("-l") for a in args)
+
+
+class TestLinkObjectFiles:
+    """Tests for ``link_object_files``."""
+
+    def test_calls_gcc_with_all_object_files(self, tmp_path: Path) -> None:
+        """All object file paths must appear in the gcc argument list."""
+        obj_a = tmp_path / "a.o"
+        obj_b = tmp_path / "b.o"
+        output = tmp_path / "prog"
+        mock_run = _make_run(0)
+
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            link_object_files([obj_a, obj_b], output)
+
+        args = mock_run.call_args[0][0]
+        assert obj_a.as_posix() in args
+        assert obj_b.as_posix() in args
+
+    def test_output_path_follows_dash_o(self, tmp_path: Path) -> None:
+        """The output path must appear immediately after ``-o``."""
+        obj = tmp_path / "a.o"
+        output = tmp_path / "prog"
+        mock_run = _make_run(0)
+
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            link_object_files([obj], output)
+
+        args = mock_run.call_args[0][0]
+        idx = args.index("-o")
+        assert args[idx + 1] == output.as_posix()
+
+    def test_libs_produce_dash_l_args(self, tmp_path: Path) -> None:
+        """Each entry in ``libs`` must produce a ``-l<name>`` argument."""
+        obj = tmp_path / "a.o"
+        output = tmp_path / "prog"
+        mock_run = _make_run(0)
+
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            link_object_files([obj], output, libs=("m", "pthread"))
+
+        args = mock_run.call_args[0][0]
+        assert "-lm" in args
+        assert "-lpthread" in args
+
+    def test_no_libs_produces_no_dash_l_args(self, tmp_path: Path) -> None:
+        """With no libs, no ``-l`` argument must appear in the gcc call."""
+        obj = tmp_path / "a.o"
+        output = tmp_path / "prog"
+        mock_run = _make_run(0)
+
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            link_object_files([obj], output)
+
+        args = mock_run.call_args[0][0]
+        assert not any(a.startswith("-l") for a in args)
+
+    def test_returns_output_path_on_success(self, tmp_path: Path) -> None:
+        """On success, the returned path must equal ``output``."""
+        obj = tmp_path / "a.o"
+        output = tmp_path / "prog"
+        mock_run = _make_run(0)
+
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            result = link_object_files([obj], output)
+
+        assert result == output
+
+    def test_gcc_failure_raises_subprocess_error(self, tmp_path: Path) -> None:
+        """A non-zero gcc exit code must raise ``SubprocessError``."""
+        obj = tmp_path / "a.o"
+        output = tmp_path / "prog"
+        mock_run = _make_run(1, stdout="error: undefined reference to 'foo'")
+
+        with patch("compiler.subprocesses.subprocess.run", mock_run):
+            with pytest.raises(SubprocessError):
+                link_object_files([obj], output)

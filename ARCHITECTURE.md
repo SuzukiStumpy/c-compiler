@@ -11,8 +11,8 @@ Each stage is gated by a `Stage` bitmask flag. Passing `--lex`/`--parse`/`--vali
 Preprocessor passthrough flags (`-I`, `-D`, `-U`) are forwarded directly to the GCC `-E` invocation; no pipeline stages are affected.
 
 ```
-compiler/compiler.py      CLI (click) + pipeline orchestrator
-compiler/subprocesses.py  GCC preprocessing + assembler/linker invocation
+compiler/compiler.py      CLI (click) + pipeline orchestrator; accepts one or more source files
+compiler/subprocesses.py  GCC preprocessing + assembler/linker invocation; ``link_object_files`` links multiple ``.o``s
 compiler/lexer.py         Preprocessed .i file → token stream
 compiler/parser.py        Token stream → AST (Program)
 compiler/semantic_analysis.py  AST → resolved AST + symbol table + struct/enum tables

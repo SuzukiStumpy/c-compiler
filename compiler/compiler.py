@@ -16,7 +16,7 @@ from compiler.lexer import lexer
 from compiler.optimiser import do_optimization
 from compiler.parser import parse
 from compiler.semantic_analysis import resolve_with_symbols
-from compiler.subprocesses import assemble_and_link, preprocess
+from compiler.subprocesses import assemble_and_link, link_object_files, preprocess
 from compiler.syntax.ast import pretty_print
 from compiler.tac_generator import generate as tac_generate
 from compiler.types.optimizations import Optimizations
@@ -158,7 +158,14 @@ def compile(
         "Compile SOURCE from C to a native executable.\n\n"
         "Pass a stage flag to stop the pipeline early and inspect intermediate output. "
         "Without a flag the full pipeline runs and an executable is produced."
-    )
+    ),
+    epilog=(
+        "Stage flags (--lex/--parse/--validate/--tacky/--codegen) are mutually exclusive with each other. "
+        "-c, -S, -l, -I, -D, and -U may be combined freely.\n\n"
+        "With multiple SOURCE files, each is compiled independently to an object file (.o); "
+        "the resulting objects are linked into a single executable named after the first source file. "
+        "Stage flags require exactly one source file."
+    ),
 )
 @click.option(
     "-c",
@@ -214,9 +221,9 @@ def compile(
 @click.option("--eliminate-unreachable-code", is_flag=True, help="Optimization: Enable unreachable code elimination")
 @click.option("--eliminate-dead-stores", is_flag=True, help="Optimization: Enable dead store elimination")
 @click.option("--optimize", is_flag=True, help="Enable all optimizations")
-@click.argument("source", type=click.Path(), required=True, nargs=1)
+@click.argument("source", type=click.Path(), required=True, nargs=-1)
 def compiler(
-    source: str,
+    source: tuple[str, ...],
     c: bool,
     s: bool,
     include_dirs: tuple[str, ...],
@@ -234,27 +241,40 @@ def compiler(
     eliminate_dead_stores: bool,
     optimize: bool,
 ) -> None:
-    """Invoke the compiler pipeline for a single C source file.
+    """Invoke the compiler pipeline for one or more C source files.
+
+    When multiple source files are provided, each is compiled to an object file
+    independently; the resulting objects are then linked into a single executable.
+    Stage flags (``--lex``, ``--parse``, ``--validate``, ``--tacky``, ``--codegen``)
+    require exactly one source file.
 
     Args:
-        source: Path to the C source file to compile.
-        c: Don't link an executable file, just produce object file.
-        s: Don't assemble or link, just produce the assembly file.
+        source: Path(s) to the C source file(s) to compile.
+        c: Don't link an executable file, just produce object files.
+        s: Don't assemble or link, just produce assembly files.
         include_dirs: Directories forwarded as ``-I`` to the GCC preprocessor.
         defines: Macro definitions forwarded as ``-D`` to the GCC preprocessor.
         undefines: Macros to undefine, forwarded as ``-U`` to the GCC preprocessor.
         libraries: Libraries to link into the compiled binary.
-        lex: Stop the pipeline after lexing.
-        parse: Stop the pipeline after parsing; print the AST.
-        validate: Stop after semantic analysis; print the resolved AST.
-        tacky: Stop the pipeline after TAC generation; print the TAC AST.
-        codegen: Stop after code generation; emit assembly but do not link.
+        lex: Stop the pipeline after lexing (single file only).
+        parse: Stop the pipeline after parsing; print the AST (single file only).
+        validate: Stop after semantic analysis; print the resolved AST (single file only).
+        tacky: Stop the pipeline after TAC generation; print the TAC AST (single file only).
+        codegen: Stop after code generation; emit assembly but do not link (single file only).
         fold_constants: Enable TAC-level constant folding.
         propagate_copies: Enable TAC-level copy propagation.
         eliminate_unreachable_code: Enable TAC-level unreachable code elimination.
         eliminate_dead_stores: Enable TAC-level dead store elimination.
         optimize: Enable all optimizations.
     """
+    early_stop = any([lex, parse, validate, tacky, codegen])
+
+    if len(source) > 1 and early_stop:
+        click.echo(
+            "Error: stage flags (--lex/--parse/--validate/--tacky/--codegen) require exactly one source file.", err=True
+        )  # noqa: E501
+        sys.exit(1)
+
     if codegen:
         stages = Stage.LEX | Stage.PARSE | Stage.VALIDATE | Stage.TACKY | Stage.CODEGEN
     elif tacky:
@@ -276,8 +296,22 @@ def compiler(
     )
 
     try:
-        pre_processed = preprocess(Path(source), include_dirs=include_dirs, defines=defines, undefines=undefines)
-        compile(pre_processed, stages=stages, exe_out=not c, assembly_only=s, libs=libraries, optimize=optimisations)
+        if len(source) == 1:
+            pre_processed = preprocess(Path(source[0]), include_dirs=include_dirs, defines=defines, undefines=undefines)
+            compile(pre_processed, optimisations, stages=stages, exe_out=not c, assembly_only=s, libs=libraries)
+        else:
+            object_files: list[Path] = []
+            for src_str in source:
+                src = Path(src_str)
+                pre_processed = preprocess(src, include_dirs=include_dirs, defines=defines, undefines=undefines)
+                compile(pre_processed, optimisations, stages=stages, exe_out=False, assembly_only=s, libs=())
+                if not s:
+                    object_files.append(src.parent / f"{src.stem}.o")
+            if not c and not s:
+                first = Path(source[0])
+                output_path = first.parent / first.stem
+                executable = link_object_files(object_files, output_path, libs=libraries)
+                click.echo(f"Compilation complete. Output file is: {executable}")
     except (LexerError, ParseError, CodeGenerationError) as ex:
         click.echo(format_for_terminal(ex), err=True)
         sys.exit(1)

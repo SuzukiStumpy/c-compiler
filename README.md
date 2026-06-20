@@ -152,7 +152,7 @@ uv tool install .
 ## Usage
 
 ```
-Usage: compiler [OPTIONS] SOURCE
+Usage: compiler [OPTIONS] SOURCE...
 
   Compile SOURCE from C to a native executable.
 
@@ -160,32 +160,50 @@ Usage: compiler [OPTIONS] SOURCE
   output. Without a flag the full pipeline runs and an executable is produced.
 
 Options:
-  -c                            Don't link; produce an object file.
-  -S                            Don't assemble or link; produce the assembly file.
-  -I DIR                        Add DIR to the preprocessor include search path (repeatable).
-  -D NAME[=VALUE]               Define a preprocessor macro (repeatable).
-  -U NAME                       Undefine a preprocessor macro (repeatable).
-  -l NAME                       Link library NAME (repeatable).
+  -c                            Don't link, just produce an object file.
+  -S                            Don't assemble or link, just produce the
+                                assembly file.
+  -I TEXT                       Add a directory to the preprocessor include
+                                search path.
+  -D TEXT                       Define a preprocessor macro (NAME or
+                                NAME=VALUE).
+  -U TEXT                       Undefine a preprocessor macro.
+  -l TEXT                       Link a library into the compiled binary
   --lex                         Stop after lexing.
   --parse                       Stop after parsing; print the AST.
-  --validate                    Stop after semantic analysis; print the resolved AST.
-  --tacky                       Stop after TAC generation; print the TAC representation.
-  --codegen                     Stop after code generation; emit assembly but do not link.
-  --fold-constants              Optimisation: constant folding.
-  --propagate-copies            Optimisation: copy propagation.
-  --eliminate-unreachable-code  Optimisation: unreachable code elimination.
-  --eliminate-dead-stores       Optimisation: dead store elimination.
-  --optimize                    Enable all optimisations.
+  --validate                    Stop after performing semantic analysis; print
+                                the AST.
+  --tacky                       Stop after TAC generation; print the TAC AST.
+  --codegen                     Stop after code generation; emit assembly but
+                                do not link.
+  --fold-constants              Optimization: Enable constant folding
+  --propagate-copies            Optimization: Enable copy propagation
+  --eliminate-unreachable-code  Optimization: Enable unreachable code
+                                elimination
+  --eliminate-dead-stores       Optimization: Enable dead store elimination
+  --optimize                    Enable all optimizations
   --help                        Show this message and exit.
-```
 
-The stage flags are mutually exclusive. `-c`, `-S`, `-l`, `-I`, `-D`, and `-U` may be combined freely.
+  Stage flags (--lex/--parse/--validate/--tacky/--codegen) are mutually
+  exclusive with each other. -c, -S, -l, -I, -D, and -U may be combined
+  freely.
+
+  With multiple SOURCE files, each is compiled independently to an object file
+  (.o); the resulting objects are linked into a single executable named after
+  the first source file. Stage flags require exactly one source file.
+```
 
 ### Examples
 
 ```bash
 # Compile to an executable
 compiler hello.c
+
+# Compile multiple source files into one executable
+compiler main.c utils.c
+
+# Compile multiple files to objects (no link)
+compiler -c main.c utils.c
 
 # Link against the math library
 compiler -lm hello.c
@@ -321,12 +339,6 @@ Several built-in functions used heavily in Linux and glibc headers are not yet r
 ### Inline function linkage
 
 `inline` is parsed and stored on the function declaration, but the C99/C11 §6.7.4 linkage rules for `inline` functions with external linkage are not enforced. In practice most `inline` definitions are also `static`, so this gap rarely surfaces.
-
-### Multi-file compilation
-
-The compiler accepts exactly one source file per invocation (`nargs=1`). There is no support for compiling multiple `.c` files in a single invocation.
-
-`-I`, `-D`, and `-U` are supported and forwarded directly to the GCC preprocessor. Separate compilation of individual files followed by linking with a system linker does work, because each `.c` file is compiled to a standard ELF object file.
 
 ### Standard library
 
