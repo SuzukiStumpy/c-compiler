@@ -962,6 +962,11 @@ class FunctionBinding(NamedTuple):
             declared with ``static`` carry ``Linkage.INTERNAL``.
         variadic: ``True`` when the function accepts a variable number of
             arguments after the declared parameters (C ``...`` ellipsis).
+        all_inline_no_extern: ``True`` when every file-scope declaration of
+            this function seen so far carries the ``inline`` specifier without
+            ``extern``.  Per C11 §6.7.4 p7, such a function provides only an
+            *inline definition*, not an external definition, and must not be
+            emitted with a ``.globl`` directive.
     """
 
     has_definition: bool
@@ -969,6 +974,7 @@ class FunctionBinding(NamedTuple):
     ret_type: ast.Type
     linkage: Linkage = Linkage.EXTERNAL
     variadic: bool = False
+    all_inline_no_extern: bool = False
 
 
 class StructureBinding(NamedTuple):
@@ -2262,6 +2268,9 @@ class SemanticAnalyser:
                 ``extern`` variable at any scope level (conflicting entity kind on
                 the same external name).
         """
+        # Save before the first reconstruction drops is_inline from the node.
+        orig_is_inline = fun.is_inline
+        orig_storage_class = fun.storage_class
         fun = ast.Function(
             name=fun.name,
             params=tuple(ast.Parameter(self._resolve_type(p.param_type), p.name) for p in fun.params),
@@ -2327,6 +2336,12 @@ class SemanticAnalyser:
             new_linkage = existing.linkage  # inherit whatever linkage was already established
         else:
             new_linkage = Linkage.EXTERNAL
+        # C11 §6.7.4 p7: a function is an inline definition (not external) only when every
+        # file-scope declaration in the TU uses ``inline`` without ``extern``.
+        this_decl_inline_no_extern = orig_is_inline and orig_storage_class != StorageClass.Extern
+        new_all_inline_no_extern = this_decl_inline_no_extern and (
+            existing.all_inline_no_extern if existing is not None else True
+        )
         if existing is not None:
             self._check_function_redeclaration_conflicts(
                 fun, existing, new_param_types, ret_type, new_variadic, new_linkage
@@ -2338,7 +2353,10 @@ class SemanticAnalyser:
                     ret_type=ret_type,
                     linkage=new_linkage,
                     variadic=new_variadic,
+                    all_inline_no_extern=new_all_inline_no_extern,
                 )
+            else:
+                self._function_map[fun.name] = existing._replace(all_inline_no_extern=new_all_inline_no_extern)
         else:
             self._function_map[fun.name] = FunctionBinding(
                 has_definition=fun.body is not None,
@@ -2346,8 +2364,9 @@ class SemanticAnalyser:
                 ret_type=ret_type,
                 linkage=new_linkage,
                 variadic=new_variadic,
+                all_inline_no_extern=new_all_inline_no_extern,
             )
-        fun_globl = new_linkage == Linkage.EXTERNAL
+        fun_globl = new_linkage == Linkage.EXTERNAL and not new_all_inline_no_extern
         prior_sym = self._symbol_table.get(fun.name)
         prior_defined = (
             isinstance(prior_sym.attrs, FunAttr) and prior_sym.attrs.defined if prior_sym is not None else False
@@ -4179,7 +4198,9 @@ class SemanticAnalyser:
         self._current_function_name = function.name
         self._collect_labels(function.body)
         binding = self._function_map.get(function.name)
-        globl = binding.linkage == Linkage.EXTERNAL if binding is not None else True
+        globl = (
+            binding.linkage == Linkage.EXTERNAL and not binding.all_inline_no_extern if binding is not None else True
+        )
         return ast.Function(
             name=function.name,
             params=tuple(resolved_params),

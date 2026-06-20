@@ -92,7 +92,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Static array parameters: `int foo(int a[static 10])` — `static` and type-qualifiers inside a parameter array declarator are parsed and discarded (C99/C11 §6.7.6.3 minimum-size hint; no code-generation effect)
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
-- Function specifiers: `inline` — parsed and stored on the function declaration; no inlining is performed; `_Noreturn` — parsed and stored on the function declaration; no contract enforcement is performed
+- Function specifiers: `inline` — C11 §6.7.4 p7 external-linkage rules enforced: a function whose every file-scope declaration uses `inline` without `extern` is compiled as an *inline definition* (local to the translation unit, not exported); `extern inline` or any non-inline declaration in the same TU makes it an external definition; no actual body inlining is performed; `_Noreturn` — parsed and stored on the function declaration; no contract enforcement is performed
 - `_Static_assert(expr, msg)` at file scope and block scope — constant expression evaluated at compile time; a zero result is a compile-time error with the supplied message; no runtime code is emitted
 - `_Alignas(expr)` and `_Alignas(type)` alignment specifiers on variable declarations — evaluated at compile time; overrides `.balign` for static variables and stack-slot alignment for local variables; value must be a positive power of two
 
@@ -305,10 +305,6 @@ Neither is recognised.
 ### Variable-length arrays
 
 VLAs (sec. 6.7.6.2) — arrays whose size is a runtime expression — were mandatory in C99, made optional in C11 (Annex J.2), and removed from C17. This compiler does not implement them; all array sizes must be compile-time integer constant expressions.
-
-### Inline function linkage
-
-`inline` is parsed and stored on the function declaration, but the C99/C11 §6.7.4 linkage rules for `inline` functions with external linkage are not enforced. In practice most `inline` definitions are also `static`, so this gap rarely surfaces.
 
 ### Standard library
 
