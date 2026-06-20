@@ -1035,3 +1035,10 @@ def test_u32_char_constant_produces_u32char_token(preprocess_c_file: Preprocesso
     """``U'C'`` lexes as a single ``U32CHAR`` token."""
     tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
     assert any(t.type == TokenType.U32CHAR for t in tokens)
+
+
+def test_generic_keyword_produces_generic_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    """``_Generic`` lexes as ``GENERIC``, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/generic_basic.c"))
+    generic_token = next(t for t in tokens if t.value == "_Generic")
+    assert generic_token.type == TokenType.GENERIC

@@ -63,6 +63,7 @@ Abstract Syntax Description Language (ASDL) grammar for the supported subset of 
                          | Arrow(exp pointer, identifier member)
                          | BuiltinUnreachable
                          | OffsetOf(type, identifier member)
+                         | Generic(exp controlling_exp, (type?, exp)* associations)
     unary_operator       = Complement | Negate | Not
                          | PreIncrement | PreDecrement
                          | PostIncrement | PostDecrement
@@ -184,6 +185,7 @@ from compiler.syntax.ast.expressions import (
     Dot,
     Exp,
     FunctionCall,
+    Generic,
     IndexDesignatorInit,
     Initializer,
     MemberDesignatorInit,
@@ -301,6 +303,7 @@ __all__ = [
     "AlignOf",
     "AlignOfT",
     "BuiltinUnreachable",
+    "Generic",
     "OffsetOf",
     "SizeOf",
     "SizeOfT",

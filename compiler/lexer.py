@@ -68,6 +68,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("STATIC_ASSERT", r"_Static_assert\b"),
     ("ALIGNOF", r"_Alignof\b"),
     ("ALIGNAS", r"_Alignas\b"),
+    ("GENERIC", r"_Generic\b"),
     # Identifiers and literals — wide/unicode string/char prefixes must precede IDENTIFIER,
     # and INT128 must precede IDENTIFIER so __int128 is not classified as IDENTIFIER.
     ("INT128", r"__int128\b"),

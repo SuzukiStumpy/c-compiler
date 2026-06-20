@@ -60,6 +60,7 @@ All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to eve
 - `__builtin_expect(expr, hint)` — GCC branch-prediction hint; evaluates and returns `expr`; hint is discarded
 - `__builtin_unreachable()` — marks a code path as unreachable; emits `ud2` (raises `SIGILL` if reached)
 - `__builtin_offsetof(type, member)` — returns the byte offset of `member` within `type` as `unsigned long`; equivalent to the `offsetof` macro in `<stddef.h>`
+- `_Generic(expr, type: expr, ..., default: expr)` — type-generic selection (C11 §6.5.1.1); the controlling expression is not evaluated; lvalue conversion is applied (qualifier stripping, array-to-pointer, function-to-pointer) before type matching; the selected branch is folded at compile time during semantic analysis
 - Address-of `&` and pointer dereference `*`
 - Array subscript `arr[i]`
 - Struct and union member access: `.` and `->`
@@ -297,12 +298,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 | Missing specifier | C11 reference | Notes |
 |---|---|---|
 | `_Thread_local` | sec. 6.7.1 | Per-thread static storage via the TLS segment |
-
-### Declarations and specifiers
-
-| Missing feature | C11 reference | Notes |
-|---|---|---|
-| `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>` |
 
 ### Atomic types and concurrency
 

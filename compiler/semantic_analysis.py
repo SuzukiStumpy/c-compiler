@@ -2970,6 +2970,70 @@ class SemanticAnalyser:
             case _:
                 raise SemanticError("Unhandled expression type in type checker")
 
+    def _fold_generic(
+        self,
+        ctrl: ast.Exp,
+        assocs: tuple[tuple[ast.Type | None, ast.Exp], ...],
+    ) -> ast.Exp:
+        """Fold a ``_Generic`` selection to its selected branch (C11 §6.5.1.1).
+
+        Resolves and type-checks the controlling expression to determine its type,
+        applies lvalue conversion (array-to-pointer, function-to-pointer, qualifier
+        stripping), then selects the matching association expression and returns it
+        fully resolved and type-checked.  The ``Generic`` node is consumed here and
+        never appears in the resolved AST.
+
+        Args:
+            ctrl: The raw (pre-resolution) controlling expression.
+            assocs: Ordered sequence of ``(type, expression)`` pairs from the parser.
+                A ``None`` type denotes the ``default`` association.
+
+        Returns:
+            The fully resolved and type-checked expression of the selected branch.
+
+        Raises:
+            SemanticError: If two associations name the same type, if two ``default``
+                associations appear, or if no association matches the controlling type
+                and no ``default`` is present.
+        """
+        resolved_ctrl = self.resolve_exp(ctrl)
+        ctrl_type = resolved_ctrl.exp_type
+        assert ctrl_type is not None
+
+        # Apply lvalue conversion per C11 §6.5.1.1p2:
+        #   - strip outermost qualifiers
+        #   - array → pointer-to-element
+        #   - function → pointer-to-function
+        ctrl_type = unqualify(ctrl_type)
+        if isinstance(ctrl_type, Array):
+            ctrl_type = Pointer(ctrl_type.element)
+        elif isinstance(ctrl_type, FunType):
+            ctrl_type = Pointer(ctrl_type)
+
+        selected: ast.Exp | None = None
+        default_exp: ast.Exp | None = None
+        seen_types: list[ast.Type] = []
+
+        for assoc_type, assoc_exp in assocs:
+            if assoc_type is None:
+                if default_exp is not None:
+                    raise SemanticError("_Generic has more than one 'default' association")
+                default_exp = assoc_exp
+            else:
+                resolved_assoc_type = self._resolve_type(assoc_type)
+                if resolved_assoc_type in seen_types:
+                    raise SemanticError(f"_Generic has duplicate type in association list: {resolved_assoc_type}")
+                seen_types.append(resolved_assoc_type)
+                if resolved_assoc_type == ctrl_type:
+                    selected = assoc_exp
+
+        if selected is None:
+            selected = default_exp
+        if selected is None:
+            raise SemanticError("_Generic: no association matches the controlling expression type and no default")
+
+        return self.resolve_exp(selected)
+
     def _typecheck_and_convert(self, e: ast.Exp) -> ast.Exp:
         """Type-check an expression and convert any array result to a pointer (array decay).
 
@@ -3524,6 +3588,8 @@ class SemanticAnalyser:
             case ast.OffsetOf(t=t, member=member):
                 resolved_t = self._resolve_type(t)
                 return self._type_check_exp(ast.OffsetOf(t=resolved_t, member=member))
+            case ast.Generic(controlling_exp=ctrl, associations=assocs):
+                return self._fold_generic(ctrl, assocs)
             case _:
                 raise SemanticError("Unhandled expression type in semantic analyser")
 

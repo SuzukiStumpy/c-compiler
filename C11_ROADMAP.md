@@ -16,7 +16,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 | ~~GCC builtins (`__builtin_expect`, `__builtin_unreachable`, `__builtin_offsetof`)~~ | ~~M~~ | ~~M~~ | **Done.** `__builtin_expect(expr, hint)` folds to `expr` at parse time (hint discarded). `__builtin_unreachable()` is a new `BuiltinUnreachable` AST node; codegen emits `ud2`. `__builtin_offsetof(type, member)` is a new `OffsetOf` AST node; SA resolves to `ULongType` using the struct type table; TAC gen folds to a `ConstULong` constant. |
 | ~~Multi-file compilation (multiple `.c` per invocation)~~ | ~~M~~ | ~~M~~ | **Done.** `compiler a.c b.c` compiles each file independently to a `.o`, then links all objects into a single executable. Stage flags (`--lex` etc.) still require a single source file. |
 | Inline function external linkage rules | M | L | C99/C11 §6.7.4 p6–7 — `inline` without `static` or `extern` has complex one-definition-rule implications; currently `inline` is stored but no linkage enforcement is performed |
-| `_Generic` selection | H | L | C11 §6.5.1.1 — type-generic macro dispatch used by `<tgmath.h>`; requires type-matching at parse/SA time; complex to implement correctly |
+| ~~`_Generic` selection~~ | ~~H~~ | ~~L~~ | **Done.** Lexer recognises `_Generic` as a `GENERIC` token. Parser produces a `Generic(controlling_exp, associations)` AST node. Semantic analysis folds the node to the selected branch expression (after lvalue conversion: qualifier stripping, array-to-pointer, function-to-pointer). `Generic` never reaches TAC generation. Duplicate types and missing default/match raise `SemanticError`. |
 | VLAs | H | L | C99 mandatory, optional in C11 (Annex J.2), removed in C17; requires runtime stack allocation; low priority given C17 trajectory |
 | `_Thread_local` storage-class specifier | H | L | C11 §6.7.1 — per-thread static storage via the TLS segment; requires linker support and thread-local relocation model |
 | `_Atomic` type qualifier / specifier | XH | L | C11 §6.7.2.4 — lock-free atomic reads, writes, and read-modify-write operations; requires instruction-level memory ordering and a full concurrency model |
@@ -28,6 +28,6 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 **Medium payoff**: ~~GCC builtins~~ — done. ~~Wide/Unicode string literals~~ — done. Next highest remaining impact: `_Generic`.
 
-**Deferred**: `__int128`, `_Generic`, VLAs are each self-contained but high effort for niche benefit.
+**Deferred**: `__int128`, VLAs are self-contained but high effort for niche benefit.
 
 **Skip for now**: `_Thread_local`, `_Atomic`, `_Complex`/`_Imaginary` — effort-to-benefit ratio is unfavourable for a C11-subset compiler.

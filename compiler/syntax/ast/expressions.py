@@ -488,3 +488,22 @@ class OffsetOf(Exp):
 
     t: Type
     member: str
+
+
+@dataclass(frozen=True, slots=True)
+class Generic(Exp):
+    """``_Generic(controlling-expression, association-list)`` — type-generic selection (C11 §6.5.1.1).
+
+    Selects one expression from the association list based on the type of the
+    controlling expression.  The controlling expression is not evaluated; only
+    its type is inspected.  Folded entirely to the selected branch by semantic
+    analysis so that no ``Generic`` node ever appears in the resolved AST.
+
+    Attributes:
+        controlling_exp: The expression whose type drives the selection.
+        associations: Ordered sequence of ``(type, expression)`` pairs.  A
+            ``None`` type denotes the ``default`` association.
+    """
+
+    controlling_exp: Exp
+    associations: tuple[tuple[Type | None, Exp], ...]

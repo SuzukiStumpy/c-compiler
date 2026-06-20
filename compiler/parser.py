@@ -149,6 +149,7 @@ from compiler.syntax.ast import (
     FunctionCall,
     FunDecl,
     FunType,
+    Generic,
     Goto,
     GreaterOrEqual,
     GreaterThan,
@@ -2219,6 +2220,9 @@ class Parser:
                         self._expect(TokenType.RPAREN)
                         return AlignOfT(t=alignof_type)
                 return AlignOf(exp=self._parse_cast_exp())
+            case TokenType.GENERIC:
+                self._consume()
+                return self._parse_generic()
             case (
                 TokenType.NUMBER
                 | TokenType.LONGLONG
@@ -2481,6 +2485,56 @@ class Parser:
         member_tok = self._expect(TokenType.IDENTIFIER)
         self._expect(TokenType.RPAREN)
         return OffsetOf(t=t, member=member_tok.value)
+
+    def _parse_generic(self) -> Generic:
+        """Parse ``_Generic(controlling-expression, association-list)`` after the keyword token.
+
+        Parses a C11 ``_Generic`` selection expression (§6.5.1.1).  Each association
+        is either ``type-name : assignment-expression`` or ``default : assignment-expression``.
+        At least one association must be present.
+
+        Returns:
+            A ``Generic`` node containing the controlling expression and the full association list.
+
+        Raises:
+            ParseError: If the syntax is malformed or the association list is empty.
+        """
+        self._expect(TokenType.LPAREN)
+        ctrl = self._parse_exp()
+        self._expect(TokenType.COMMA)
+        associations: list[tuple[Type | None, Exp]] = []
+        while True:
+            tok = self._peek()
+            if tok is None:
+                raise self._eof_error("Unexpected end of input in _Generic")
+            if tok.type == TokenType.DEFAULT:
+                self._consume()
+                self._expect(TokenType.COLON)
+                assoc_exp = self._parse_exp()
+                associations.append((None, assoc_exp))
+            elif (
+                tok.type in _TYPE_SPECIFIER_TOKENS
+                or tok.type in _TYPE_QUALIFIER_TOKENS
+                or (tok.type == TokenType.IDENTIFIER and self._is_typedef_name(tok.value))
+            ):
+                base_type = self._parse_type()
+                if self._match(TokenType.ASTERISK) or self._match(TokenType.LPAREN) or self._match(TokenType.LBRACKET):
+                    assoc_type: Type = self._parse_abstract_declarator()(base_type)
+                else:
+                    assoc_type = base_type
+                self._expect(TokenType.COLON)
+                assoc_exp = self._parse_exp()
+                associations.append((assoc_type, assoc_exp))
+            else:
+                raise self._token_error("Expected type-name or 'default' in _Generic association", tok)
+            if self._match(TokenType.COMMA):
+                self._consume()
+            else:
+                break
+        if not associations:
+            raise self._eof_error("_Generic requires at least one association")
+        self._expect(TokenType.RPAREN)
+        return Generic(controlling_exp=ctrl, associations=tuple(associations))
 
     # Maps single-character escape letter to its ASCII value.
     _ESCAPE_VALUES: dict[str, int] = {
