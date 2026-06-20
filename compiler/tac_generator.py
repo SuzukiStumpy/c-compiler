@@ -142,6 +142,7 @@ from itertools import count
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
 from compiler.semantic_analysis import type_alignment
+from compiler.syntax.ast.expressions import StringEncoding
 from compiler.types.symbols import (
     BoolInit as SymBoolInit,
 )
@@ -202,6 +203,43 @@ from compiler.types.symbols import (
     ZeroInit as SymZeroInit,
 )
 from compiler.utils.exceptions import CodeGenerationError
+
+
+def _str_element_size(enc: StringEncoding) -> int:
+    """Return bytes-per-element for a string literal encoding.
+
+    Args:
+        enc: The encoding of the string literal.
+
+    Returns:
+        1 for ``CHAR``, 2 for ``UTF16``, 4 for ``WCHAR`` or ``UTF32``.
+    """
+    if enc == StringEncoding.UTF16:
+        return 2
+    if enc in (StringEncoding.WCHAR, StringEncoding.UTF32):
+        return 4
+    return 1
+
+
+def _str_element_type(enc: StringEncoding) -> ast.Type:
+    """Return the C element type for a string literal encoding.
+
+    On Linux x86-64: ``wchar_t`` = ``int``, ``char16_t`` = ``unsigned short``,
+    ``char32_t`` = ``unsigned int``.
+
+    Args:
+        enc: The encoding of the string literal.
+
+    Returns:
+        The AST type node for the element type.
+    """
+    if enc == StringEncoding.WCHAR:
+        return ast.IntType()
+    if enc == StringEncoding.UTF16:
+        return ast.UShortType()
+    if enc == StringEncoding.UTF32:
+        return ast.UIntType()
+    return ast.Char()
 
 
 def generate(
@@ -282,8 +320,8 @@ def _sym_const_init_to_tac(sym_init: SymStaticInit) -> tac.StaticInit:
             return tac.UInt128Init(v)
         case SymZeroInit(bytes=n):
             return tac.ZeroInit(n)
-        case SymStringInit(string=s, null_terminated=nt):
-            return tac.StringInit(s, nt)
+        case SymStringInit(string=s, null_terminated=nt, element_size=esz):
+            return tac.StringInit(s, nt, esz)
         case _:
             raise CodeGenerationError(f"Cannot lower symbol StaticInit {sym_init!r} to TAC.")
 
@@ -352,8 +390,8 @@ def _convert_symbols_to_tacky(  # noqa: C901 - function too complex
                                 static_inits.append(tac.LongDoubleInit(0.0))
                             else:
                                 static_inits.append(tac.ZeroInit(n))
-                        case SymStringInit(string=s, null_terminated=nt):
-                            static_inits.append(tac.StringInit(s, nt))
+                        case SymStringInit(string=s, null_terminated=nt, element_size=esz):
+                            static_inits.append(tac.StringInit(s, nt, esz))
                         case PointerInit(name=target):
                             static_inits.append(tac.PointerInit(target))
                         case _:
@@ -524,9 +562,11 @@ def _is_signed(t: ast.Type) -> bool:
     Raises:
         CodeGenerationError: If the type is not a scalar integer or pointer type.
     """
-    if isinstance(t, (ast.IntType, ast.LongType, ast.LongLongType, ast.Char, ast.SChar)):
+    if isinstance(t, (ast.IntType, ast.LongType, ast.LongLongType, ast.Char, ast.SChar, ast.ShortType)):
         return True
-    if isinstance(t, (ast.BoolType, ast.UIntType, ast.ULongType, ast.ULongLongType, ast.Pointer, ast.UChar)):
+    if isinstance(
+        t, (ast.BoolType, ast.UIntType, ast.ULongType, ast.ULongLongType, ast.Pointer, ast.UChar, ast.UShortType)
+    ):
         return False
     raise CodeGenerationError(f"unsupported type in signed check: {type(t).__name__}")
 
@@ -2190,11 +2230,14 @@ class _TacGenerator:
                 scale = self._size_of(ptr_node.exp_type.referenced)
                 dst = self._make_temp(exp.exp_type or ptr_node.exp_type)
                 return dst, [*ptr_instrs, *int_instrs, tac.AddPtr(ptr=ptr_val, index=int_val, scale=scale, dst=dst)]
-            case ast.AddrOf(exp=ast.String(string=s)):
+            case ast.AddrOf(exp=ast.String(string=s, encoding=enc)):
+                esz = _str_element_size(enc)
+                elem_t = _str_element_type(enc)
+                char_count = len(s) // esz
                 str_name = self._make_string_name()
                 self._symbol_table[str_name] = SymbolTableEntry(
-                    t=ast.Array(element=ast.Char(), size=len(s) + 1),
-                    attrs=ConstantAttr(SymStringInit(s, True)),
+                    t=ast.Array(element=elem_t, size=char_count + 1),
+                    attrs=ConstantAttr(SymStringInit(s, True, esz)),
                 )
                 dst = self._make_temp(exp.exp_type or ast.Pointer(ast.Char()))
                 return dst, [tac.GetAddress(src=tac.Var(value=str_name), dst=dst)]

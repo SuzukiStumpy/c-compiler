@@ -970,3 +970,68 @@ def test_alignas_keyword_produces_alignas_token(preprocess_c_file: Preprocessor)
     tokens = lexer(preprocess_c_file("valid/alignas_basic.c"))
     alignas_token = next(t for t in tokens if t.value == "_Alignas")
     assert alignas_token.type == TokenType.ALIGNAS
+
+
+# ---------------------------------------------------------------------------
+# Wide / Unicode string and char literals
+# ---------------------------------------------------------------------------
+
+
+def test_wide_string_literal_produces_wstring_token(preprocess_c_file: Preprocessor) -> None:
+    """``L"hello"`` lexes as a single ``WSTRING`` token, not IDENTIFIER + STRING."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    wstring_tokens = [t for t in tokens if t.type == TokenType.WSTRING]
+    assert len(wstring_tokens) >= 1
+
+
+def test_wide_string_token_value_includes_prefix(preprocess_c_file: Preprocessor) -> None:
+    """``L"hello"`` token value is the full source text ``L"hello"``."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.WSTRING and t.value == 'L"hello"' for t in tokens)
+
+
+def test_wide_string_is_not_split_into_identifier_and_string(preprocess_c_file: Preprocessor) -> None:
+    """``L"hello"`` must not tokenise as IDENTIFIER ``L`` followed by STRING ``"hello"``."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    for i, t in enumerate(tokens):
+        if t.type == TokenType.IDENTIFIER and t.value == "L":
+            next_tok = tokens[i + 1] if i + 1 < len(tokens) else None
+            assert next_tok is None or next_tok.type != TokenType.STRING, (
+                "L followed by STRING — should be a single WSTRING token"
+            )
+
+
+def test_u16_string_literal_produces_u16string_token(preprocess_c_file: Preprocessor) -> None:
+    """``u"hi"`` lexes as a single ``U16STRING`` token."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.U16STRING for t in tokens)
+
+
+def test_u32_string_literal_produces_u32string_token(preprocess_c_file: Preprocessor) -> None:
+    """``U"bye"`` lexes as a single ``U32STRING`` token."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.U32STRING for t in tokens)
+
+
+def test_u8_string_literal_produces_u8string_token(preprocess_c_file: Preprocessor) -> None:
+    """``u8"utf8"`` lexes as a single ``U8STRING`` token."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.U8STRING for t in tokens)
+
+
+def test_wide_char_constant_produces_wchar_token(preprocess_c_file: Preprocessor) -> None:
+    """``L'A'`` lexes as a single ``WCHAR`` token."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.WCHAR for t in tokens)
+
+
+def test_u16_char_constant_produces_u16char_token(preprocess_c_file: Preprocessor) -> None:
+    """``u'B'`` lexes as a single ``U16CHAR`` token."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.U16CHAR for t in tokens)
+
+
+def test_u32_char_constant_produces_u32char_token(preprocess_c_file: Preprocessor) -> None:
+    """``U'C'`` lexes as a single ``U32CHAR`` token."""
+    tokens = lexer(preprocess_c_file("valid/wide_strings.c"))
+    assert any(t.type == TokenType.U32CHAR for t in tokens)

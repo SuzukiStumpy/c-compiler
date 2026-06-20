@@ -11,6 +11,22 @@ from compiler.utils.exceptions import LexerError
 # prefixes win over the plain-decimal fallback.
 _INT_BASE: str = r"(?:0[xX][0-9a-fA-F]+|0[bB][01]+|0[0-7]+|[0-9]+)"
 
+# Matches a single escape sequence inside a string or character literal.
+# Order matters: hex/unicode/octal alternatives must precede the simple-char alternative
+# so that e.g. \x41 is consumed as one escape, not \x followed by stray 4/1.
+_ESCAPE: str = (
+    r"(?:\\x[0-9a-fA-F]+"
+    r"|\\u[0-9a-fA-F]{4}"
+    r"|\\U[0-9a-fA-F]{8}"
+    r"|\\[0-7]{1,3}"
+    r"|\\['\"\?\\abfnrtvuU])"
+)
+
+# String-body: any non-special char or an escape sequence.
+_STR_BODY: str = rf'(?:{_ESCAPE}|[^"\\\n])'
+# Char-body: any non-special char or an escape sequence (single-char variant).
+_CHAR_BODY: str = rf"(?:{_ESCAPE}|[^'\\\n])"
+
 _TOKEN_PATTERNS: list[tuple[str, str]] = [
     # Keywords - must precede IDENTIFIER
     ("INT", r"int\b"),
@@ -52,8 +68,18 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("STATIC_ASSERT", r"_Static_assert\b"),
     ("ALIGNOF", r"_Alignof\b"),
     ("ALIGNAS", r"_Alignas\b"),
-    # Identifiers and literals — INT128 must precede IDENTIFIER so __int128 is not classified as IDENTIFIER
+    # Identifiers and literals — wide/unicode string/char prefixes must precede IDENTIFIER,
+    # and INT128 must precede IDENTIFIER so __int128 is not classified as IDENTIFIER.
     ("INT128", r"__int128\b"),
+    # Wide / Unicode char constants — must precede IDENTIFIER so L/u/U before ' is not an ident.
+    ("WCHAR", rf"L'{_CHAR_BODY}'"),
+    ("U16CHAR", rf"u'{_CHAR_BODY}'"),
+    ("U32CHAR", rf"U'{_CHAR_BODY}'"),
+    # Wide / Unicode string literals — must precede IDENTIFIER so L/u/U/u8 before " is not an ident.
+    ("U8STRING", rf'u8"{_STR_BODY}*"'),
+    ("WSTRING", rf'L"{_STR_BODY}*"'),
+    ("U16STRING", rf'u"{_STR_BODY}*"'),
+    ("U32STRING", rf'U"{_STR_BODY}*"'),
     ("IDENTIFIER", r"[a-zA-Z_]\w*\b"),
     ("FPLONGDOUBLE", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[lL](?![\w.])"),
     ("FPFLOAT", r"(?:(?:[0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[fF](?![\w.])"),
@@ -64,8 +90,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("LONGINT", rf"{_INT_BASE}[lL](?![\w.])"),
     ("UINT", rf"{_INT_BASE}[uU](?![\w.])"),
     ("NUMBER", rf"{_INT_BASE}(?![\w.])"),
-    ("CONSTCHAR", r"'([^'\\\n]|\\['\"?\\abfnrtv])'"),
-    ("STRING", r"\"([^\"\\\n]|\\['\"\\?abfnrtv])*\""),
+    ("CONSTCHAR", rf"'{_CHAR_BODY}'"),
+    ("STRING", rf'"{_STR_BODY}*"'),
     # Punctuation
     ("LPAREN", r"\("),
     ("RPAREN", r"\)"),

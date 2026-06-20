@@ -3558,3 +3558,65 @@ class TestAlignAsCodeGen:
         assert mem_ops, "expected at least one Memory operand"
         for mem in mem_ops:
             assert mem.offset % 16 == 0, f"stack offset {mem.offset} not 16-byte aligned"
+
+
+class TestZeroExtendUShortCodeGen:
+    """``tac.ZeroExtend`` from ``UShortType`` generates ``MoveZeroExtend(Word, ...)``."""
+
+    def test_ushort_to_uint_generates_movze_word_longword(self) -> None:
+        """``ZeroExtend(UShort -> uint)`` generates ``MoveZeroExtend(Word, Longword)``."""
+        st = _make_symbol_table(s=UShortType, d=UIntType)
+        program = _zero_extend_program(UShortType, UIntType)
+        instrs = _fn_instructions_with_table(program, st)
+        mze = next(i for i in instrs if isinstance(i, asm.MoveZeroExtend))
+        assert mze.src_type == asm.Word()
+        assert mze.dst_type == asm.Longword()
+
+    def test_ushort_to_ulong_generates_movze_word_quadword(self) -> None:
+        """``ZeroExtend(UShort -> ulong)`` generates ``MoveZeroExtend(Word, Quadword)``."""
+        st = _make_symbol_table(s=UShortType, d=ULongType)
+        program = _zero_extend_program(UShortType, ULongType)
+        instrs = _fn_instructions_with_table(program, st)
+        mze = next(i for i in instrs if isinstance(i, asm.MoveZeroExtend))
+        assert mze.src_type == asm.Word()
+        assert mze.dst_type == asm.Quadword()
+
+    def test_movzwl_emits_32bit_destination_register(self) -> None:
+        """``MoveZeroExtend(Word, Longword)`` emits ``movzwl`` with 32-bit destination register.
+
+        ``movzwl`` requires a 32-bit (DWORD) destination register even if the logical
+        register is allocated as 64-bit (QWORD). Writing to the 32-bit alias on x86-64
+        automatically zeroes the upper 32 bits of the full 64-bit register.
+        """
+        instr = asm.MoveZeroExtend(
+            src_type=asm.Word(),
+            dst_type=asm.Longword(),
+            src=asm.Memory(reg=asm.Register(asm.GPRegisters.BP, asm.Width.QWORD), offset=-4),
+            dst=asm.Register(asm.GPRegisters.SI, asm.Width.QWORD),
+        )
+        emitted = instr.emit()
+        assert "movzwl" in emitted
+        assert "%esi" in emitted, f"expected 32-bit %%esi, got: {emitted}"
+        assert "%rsi" not in emitted, f"64-bit %%rsi invalid for movzwl: {emitted}"
+
+
+class TestTranslateStaticInitElementSize:
+    """``_translate_static_init`` preserves ``element_size`` from ``tac.StringInit``."""
+
+    def test_element_size_1_is_preserved(self) -> None:
+        """``tac.StringInit`` with ``element_size=1`` maps to ``asm.StringInit(element_size=1)``."""
+        result = _translate_static_init(tac.StringInit(string=b"hi", null_terminated=True, element_size=1))
+        assert isinstance(result, asm.StringInit)
+        assert result.element_size == 1
+
+    def test_element_size_4_is_preserved(self) -> None:
+        """``tac.StringInit`` with ``element_size=4`` (wchar_t) maps to ``asm.StringInit(element_size=4)``."""
+        result = _translate_static_init(tac.StringInit(string=b"h\x00\x00\x00", null_terminated=True, element_size=4))
+        assert isinstance(result, asm.StringInit)
+        assert result.element_size == 4
+
+    def test_element_size_2_is_preserved(self) -> None:
+        """``tac.StringInit`` with ``element_size=2`` (char16_t) maps to ``asm.StringInit(element_size=2)``."""
+        result = _translate_static_init(tac.StringInit(string=b"h\x00", null_terminated=True, element_size=2))
+        assert isinstance(result, asm.StringInit)
+        assert result.element_size == 2

@@ -231,18 +231,23 @@ class ZeroInit(StaticInit):
 class StringInit(StaticInit):
     """String content initialiser for a character array or string-literal static object.
 
-    Used both when a string literal initialises a ``char``/``signed char``/``unsigned char``
-    array and when the compiler emits a hidden static object for a string-literal constant.
+    Used both when a string literal initialises a character/wide-char array and when the
+    compiler emits a hidden static object for a string-literal constant.
 
     Attributes:
-        string: The raw byte content of the string (NUL terminator not included).
-        null_terminated: When ``True``, a NUL byte is appended after ``string`` during
-            emission; when ``False``, the bytes are written as-is (used when the array
-            is smaller than the full string or the terminator is handled separately).
+        string: The raw encoded byte content of the string (NUL terminator not included).
+            For plain strings, 1 byte per character; for wide strings (``L"..."``) 4 bytes
+            per character (LE uint32); for UTF-16 strings (``u"..."``) 2 bytes per character.
+        null_terminated: When ``True``, ``element_size`` NUL bytes are appended after
+            ``string`` during emission; when ``False``, the bytes are written as-is.
+        element_size: Number of bytes per element (1 for ``char``, 2 for ``char16_t``,
+            4 for ``wchar_t`` / ``char32_t``).  Determines the width of the appended NUL
+            terminator when ``null_terminated`` is ``True``.
     """
 
     string: bytes
     null_terminated: bool
+    element_size: int = 1
 
 
 class InitialValue(ABC):

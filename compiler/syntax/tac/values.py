@@ -216,13 +216,16 @@ class StringInit(StaticInit):
     """String content initialiser for a character array or string-literal static object.
 
     Attributes:
-        string: The raw byte content of the string (NUL terminator not included).
-        null_terminated: When ``True``, a NUL byte is appended after ``string`` during
+        string: The raw encoded byte content of the string (NUL terminator not included).
+        null_terminated: When ``True``, ``element_size`` NUL bytes are appended during
             emission; when ``False``, the bytes are written as-is.
+        element_size: Bytes per element (1 for ``char``, 2 for ``char16_t``, 4 for
+            ``wchar_t`` / ``char32_t``).  Controls the width of the NUL terminator.
     """
 
     string: bytes
     null_terminated: bool
+    element_size: int = 1
 
 
 @dataclass(frozen=True, slots=True)

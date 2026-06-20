@@ -8,10 +8,30 @@ support is extended.
 
 from abc import ABC
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 from compiler.syntax.ast.constants import Const
 from compiler.syntax.ast.operators import BinaryOperator, UnaryOperator
 from compiler.syntax.ast.types import Type
+
+
+class StringEncoding(Enum):
+    """Encoding of a string or character literal as written in C source.
+
+    Determines the element type used for the resulting array and the number
+    of bytes per character stored in :attr:`String.string`.
+
+    Attributes:
+        CHAR: Plain ``"..."`` or ``u8"..."`` — ``char`` elements, 1 byte each.
+        WCHAR: ``L"..."`` — ``wchar_t`` elements; 4 bytes each (LE int32) on Linux x86-64.
+        UTF16: ``u"..."`` — ``char16_t`` elements; 2 bytes each (LE uint16).
+        UTF32: ``U"..."`` — ``char32_t`` elements; 4 bytes each (LE uint32).
+    """
+
+    CHAR = auto()
+    WCHAR = auto()
+    UTF16 = auto()
+    UTF32 = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,17 +222,23 @@ class Subscript(Exp):
 class String(Exp):
     """Represents a string literal in C source code, e.g. ``"hello world!"``.
 
-    The value is stored as a ``bytes`` sequence so that each element is a
-    single byte - matching C's ``char``-per-element model.  Escape sequences
-    have already been resolved and adjacent string tokens have been
-    concatenated before this node is constructed.
+    For plain and ``u8``-prefixed strings the bytes are stored one byte per
+    character (ASCII / UTF-8).  For wide and Unicode-prefixed strings the bytes
+    are stored in little-endian target encoding: 4 bytes per element for
+    ``L"..."`` (wchar_t = int32 on Linux x86-64), 2 bytes per element for
+    ``u"..."`` (char16_t = uint16), 4 bytes per element for ``U"..."``
+    (char32_t = uint32).  Escape sequences have already been resolved and
+    adjacent same-encoding tokens have been concatenated.
 
     Attributes:
-        string: The unescaped byte content of the literal (NUL terminator
-            not included - the emitter is responsible for appending it).
+        string: The encoded byte content of the literal (NUL terminator not
+            included).  Element count = ``len(string) // encoding.element_size``.
+        encoding: The character encoding that determines the element type and
+            bytes-per-element of the literal.
     """
 
     string: bytes
+    encoding: StringEncoding = StringEncoding.CHAR
 
 
 @dataclass(frozen=True, slots=True)

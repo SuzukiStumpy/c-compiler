@@ -703,8 +703,8 @@ def _translate_static_init(init: tac.StaticInit) -> asm.StaticInit:
             return asm.UInt128Init(v)
         case tac.ZeroInit(bytes=n):
             return asm.ZeroInit(n)
-        case tac.StringInit(string=s, null_terminated=nt):
-            return asm.StringInit(s, nt)
+        case tac.StringInit(string=s, null_terminated=nt, element_size=esz):
+            return asm.StringInit(s, nt, esz)
         case tac.PointerInit(name=n):
             return asm.PointerInit(n)
         case _:
@@ -3879,6 +3879,22 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                     fixed.append(asm.Mov(src=r10q, dst=dst, assembly_type=dt))
                 else:
                     fixed.append(asm.Mov(src=src, dst=dst, assembly_type=asm.Longword()))
+            case asm.MoveZeroExtend(src_type=asm.Word(), dst_type=dt, src=asm.Imm() as imm, dst=dst):
+                # movzwl src must not be an immediate; load into %r10w first.
+                r10w = asm.Register(asm.GPRegisters.R10, asm.Width.WORD)
+                if _is_mem(dst):
+                    r11 = asm.Register(asm.GPRegisters.R11, _reg_width(dt))
+                    fixed.append(asm.Mov(src=imm, dst=r10w, assembly_type=asm.Word()))
+                    fixed.append(asm.MoveZeroExtend(src_type=asm.Word(), dst_type=dt, src=r10w, dst=r11))
+                    fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=dt))
+                else:
+                    fixed.append(asm.Mov(src=imm, dst=r10w, assembly_type=asm.Word()))
+                    fixed.append(asm.MoveZeroExtend(src_type=asm.Word(), dst_type=dt, src=r10w, dst=dst))
+            case asm.MoveZeroExtend(src_type=asm.Word(), dst_type=dt, src=src, dst=dst) if _is_mem(dst):
+                # movzwl dst must be a register; route through %r11 of the destination width.
+                r11 = asm.Register(asm.GPRegisters.R11, _reg_width(dt))
+                fixed.append(asm.MoveZeroExtend(src_type=asm.Word(), dst_type=dt, src=src, dst=r11))
+                fixed.append(asm.Mov(src=r11, dst=dst, assembly_type=dt))
             case asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=dt, src=asm.Imm() as imm, dst=dst):
                 # movzbl/movzbq src must not be an immediate; load into %r10b first.
                 r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)

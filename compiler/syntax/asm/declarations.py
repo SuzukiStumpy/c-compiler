@@ -246,8 +246,8 @@ class StaticVariable(TopLevel):
                     lines.append(_asm_line(".zero", "4"))
                 case FloatInit() as f:
                     lines.append(_asm_line(".long", str(f.as_bits())))
-                case StringInit(string=s, null_terminated=nt):
-                    data = list(s) + ([0] if nt else [])
+                case StringInit(string=s, null_terminated=nt, element_size=esz):
+                    data = list(s) + ([0] * esz if nt else [])
                     lines.append(_string_comment(s, nt))
                     lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
                 case PointerInit(name=n):
@@ -306,8 +306,8 @@ class StaticConstant(TopLevel):
                 lines.append(_asm_line(".long", str(v)))
             case LongInit(value=v):
                 lines.append(_asm_line(".quad", str(v)))
-            case StringInit(string=s, null_terminated=nt):
-                data = list(s) + ([0] if nt else [])
+            case StringInit(string=s, null_terminated=nt, element_size=esz):
+                data = list(s) + ([0] * esz if nt else [])
                 lines.append(_string_comment(s, nt))
                 lines.append(_asm_line(".byte", ", ".join(str(b) for b in data)))
             case LongDoubleInit(value=v) if v == 0.0:

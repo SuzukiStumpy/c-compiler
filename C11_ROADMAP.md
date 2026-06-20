@@ -11,8 +11,8 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 | ~~Static array parameters `int foo(int a[static 10])`~~ | ~~L~~ | ~~L~~ | **Done.** `static` and type-qualifiers (`const`, `restrict`, `volatile`) inside a parameter array declarator are consumed and discarded in `_parse_param_direct_declarator` (C99/C11 §6.7.6.3). |
 | `__int128` full arithmetic | H | L | Multi-word instruction sequences (`adcq`/`sbbq`), two-register SysV calling convention; niche use outside cryptography/numerics |
 | Hex floating-point literals (`0x1.8p10`) | M | L | C99/C11 §6.4.4.2 — exact FP representation via hex mantissa and binary exponent; used in some numerical libraries and standard headers |
-| Wide / Unicode string and char literals | M | L | C11 §6.4.4.4, §6.4.5 — `L'x'`, `L"..."`, `u'x'`, `u"..."`, `U'x'`, `U"..."`, `u8"..."` prefixes; needed to parse i18n and platform code without errors |
-| `char16_t` / `char32_t` types | M | L | C11 §6.7.2 via `<uchar.h>`; natural companion to Unicode string literals; effectively `uint16_t`/`uint32_t` aliases |
+| ~~Wide / Unicode string and char literals~~ | ~~M~~ | ~~L~~ | **Done.** Lexer recognises `L'x'`, `u'x'`, `U'x'`, `u8"..."`, `L"..."`, `u"..."`, `U"..."` tokens. Parser decodes escape sequences and stores pre-encoded bytes with a `StringEncoding` enum. SA assigns the correct element type (`wchar_t`=`int`, `char16_t`=`unsigned short`, `char32_t`=`unsigned int`). Codegen propagates `element_size` through to `StaticConstant`; emitter writes the correct-width NUL terminator. `movzwl` added to the `MoveZeroExtend` instruction for `Word`→`Longword` zero-extension. |
+| ~~`char16_t` / `char32_t` types~~ | ~~M~~ | ~~L~~ | **Done** (as part of Unicode literals). `char16_t` is treated as `unsigned short` (2 bytes) and `char32_t` as `unsigned int` (4 bytes) throughout the pipeline; no separate typedef handling needed. |
 | ~~GCC builtins (`__builtin_expect`, `__builtin_unreachable`, `__builtin_offsetof`)~~ | ~~M~~ | ~~M~~ | **Done.** `__builtin_expect(expr, hint)` folds to `expr` at parse time (hint discarded). `__builtin_unreachable()` is a new `BuiltinUnreachable` AST node; codegen emits `ud2`. `__builtin_offsetof(type, member)` is a new `OffsetOf` AST node; SA resolves to `ULongType` using the struct type table; TAC gen folds to a `ConstULong` constant. |
 | ~~Multi-file compilation (multiple `.c` per invocation)~~ | ~~M~~ | ~~M~~ | **Done.** `compiler a.c b.c` compiles each file independently to a `.o`, then links all objects into a single executable. Stage flags (`--lex` etc.) still require a single source file. |
 | Inline function external linkage rules | M | L | C99/C11 §6.7.4 p6–7 — `inline` without `static` or `extern` has complex one-definition-rule implications; currently `inline` is stored but no linkage enforcement is performed |
@@ -26,7 +26,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 **Quick wins** (L effort, low risk): ~~static array params~~ — done.
 
-**Medium payoff**: ~~GCC builtins~~ — done. Next highest remaining impact: wide/Unicode string literals and `_Generic`.
+**Medium payoff**: ~~GCC builtins~~ — done. ~~Wide/Unicode string literals~~ — done. Next highest remaining impact: `_Generic`.
 
 **Deferred**: `__int128`, `_Generic`, VLAs are each self-contained but high effort for niche benefit.
 

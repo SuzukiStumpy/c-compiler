@@ -212,6 +212,90 @@ def _string_tok(value: str) -> Token:
     return _tok(TokenType.STRING, value)
 
 
+def _wchar_tok(value: str) -> Token:
+    """Return a WCHAR token (e.g. ``"L'A'"``).
+
+    Args:
+        value: Raw source text including the ``L`` prefix and surrounding single quotes.
+
+    Returns:
+        A ``Token`` of type ``WCHAR``.
+    """
+    return _tok(TokenType.WCHAR, value)
+
+
+def _u16char_tok(value: str) -> Token:
+    """Return a U16CHAR token (e.g. ``"u'A'"``).
+
+    Args:
+        value: Raw source text including the ``u`` prefix and surrounding single quotes.
+
+    Returns:
+        A ``Token`` of type ``U16CHAR``.
+    """
+    return _tok(TokenType.U16CHAR, value)
+
+
+def _u32char_tok(value: str) -> Token:
+    """Return a U32CHAR token (e.g. ``"U'A'"``).
+
+    Args:
+        value: Raw source text including the ``U`` prefix and surrounding single quotes.
+
+    Returns:
+        A ``Token`` of type ``U32CHAR``.
+    """
+    return _tok(TokenType.U32CHAR, value)
+
+
+def _wstring_tok(value: str) -> Token:
+    """Return a WSTRING token (e.g. ``'L"hello"'``).
+
+    Args:
+        value: Raw source text including the ``L`` prefix and surrounding double quotes.
+
+    Returns:
+        A ``Token`` of type ``WSTRING``.
+    """
+    return _tok(TokenType.WSTRING, value)
+
+
+def _u16string_tok(value: str) -> Token:
+    """Return a U16STRING token (e.g. ``'u"hello"'``).
+
+    Args:
+        value: Raw source text including the ``u`` prefix and surrounding double quotes.
+
+    Returns:
+        A ``Token`` of type ``U16STRING``.
+    """
+    return _tok(TokenType.U16STRING, value)
+
+
+def _u32string_tok(value: str) -> Token:
+    """Return a U32STRING token (e.g. ``'U"hello"'``).
+
+    Args:
+        value: Raw source text including the ``U`` prefix and surrounding double quotes.
+
+    Returns:
+        A ``Token`` of type ``U32STRING``.
+    """
+    return _tok(TokenType.U32STRING, value)
+
+
+def _u8string_tok(value: str) -> Token:
+    """Return a U8STRING token (e.g. ``'u8"hello"'``).
+
+    Args:
+        value: Raw source text including the ``u8`` prefix and surrounding double quotes.
+
+    Returns:
+        A ``Token`` of type ``U8STRING``.
+    """
+    return _tok(TokenType.U8STRING, value)
+
+
 def _parsed_body(*body_tokens: Token) -> tuple[BlockItem, ...]:
     """Parse a minimal function from the given body tokens and return the body tuple.
 

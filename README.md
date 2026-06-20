@@ -44,8 +44,8 @@ All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to eve
 
 ### Expressions
 
-- Integer, floating-point, and character constants
-- String literals (decay to `char *`; embedded in read-only data)
+- Integer, floating-point, and character constants (including wide `L'x'`, UTF-16 `u'x'`, UTF-32 `U'x'`)
+- String literals: plain `"..."` and `u8"..."` (decay to `char *`), `L"..."` (decay to `int *`, wchar_t), `u"..."` (decay to `unsigned short *`, char16_t), `U"..."` (decay to `unsigned int *`, char32_t); all embedded in read-only data with correct-width NUL terminator
 - `__func__` predefined identifier — expands to a `static const char[]` containing the enclosing function name (C99/C11 §6.4.2.2); decays to `const char *` in value context; resolved during semantic analysis
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
 - Bitwise: `~`, `&`, `|`, `^`, `<<`, `>>`
@@ -303,19 +303,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 | Missing feature | C11 reference | Notes |
 |---|---|---|
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>` |
-
-### String and character literals
-
-| Missing feature | C11 reference | Notes |
-|---|---|---|
-| Wide char/string literals (`L'x'`, `L"..."`) | sec. 6.4.4.4, 6.4.5 | `wchar_t`-typed; used in platform and i18n code |
-| Unicode literals (`u'x'`, `U'x'`, `u"..."`, `U"..."`, `u8"..."`) | sec. 6.4.4.4, 6.4.5 | C11 `char16_t`/`char32_t`/UTF-8 string support |
-
-### Types
-
-| Missing type | C11 reference | Notes |
-|---|---|---|
-| `char16_t` / `char32_t` | sec. 6.7.2 via `<uchar.h>` | Natural companions to the Unicode literal prefixes above |
 
 ### Atomic types and concurrency
 

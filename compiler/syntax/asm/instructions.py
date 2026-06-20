@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
 
-from compiler.syntax.asm.operands import Operand, Register
+from compiler.syntax.asm.operands import Operand, Register, Width
 from compiler.syntax.asm.operators import (
     Add,
     AddDouble,
@@ -35,7 +35,7 @@ from compiler.syntax.asm.operators import (
     XorDouble,
     XorFloat,
 )
-from compiler.syntax.asm.values import AssemblyType, Byte, Double, Float, Longword
+from compiler.syntax.asm.values import AssemblyType, Byte, Double, Float, Longword, Word
 from compiler.utils.exceptions import CodeGenerationError
 
 _MNEMONIC_COL = 6
@@ -196,6 +196,8 @@ class MoveZeroExtend(Instruction):
 
         * ``Byte -> Longword`` -> ``movzbl``
         * ``Byte -> Quadword`` -> ``movzbq``
+        * ``Word -> Longword`` -> ``movzwl`` (dst forced to 32-bit register form)
+        * ``Word -> Quadword`` -> ``movzwl`` (32-bit write auto-zeroes upper 32 bits)
         * ``Longword -> Quadword`` -> ``movl`` (writing to a 32-bit register automatically
           zeroes the upper 32 bits of the 64-bit register on x86-64)
 
@@ -204,8 +206,11 @@ class MoveZeroExtend(Instruction):
         """
         if self.src_type == Byte():
             mnemonic = "movzbl" if self.dst_type == Longword() else "movzbq"
-        else:
-            mnemonic = "movl"
+            return _asm_line(mnemonic, self.src.emit(), self.dst.emit())
+        if self.src_type == Word():
+            dst = Register(self.dst.reg, Width.DWORD) if isinstance(self.dst, Register) else self.dst
+            return _asm_line("movzwl", self.src.emit(), dst.emit())
+        mnemonic = "movl"
         return _asm_line(mnemonic, self.src.emit(), self.dst.emit())
 
 

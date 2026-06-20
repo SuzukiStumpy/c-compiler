@@ -59,6 +59,7 @@ from compiler.syntax.ast.declarations import (
     StructDeclaration,
     UnionDeclaration,
 )
+from compiler.syntax.ast.expressions import StringEncoding
 from compiler.syntax.ast.operators import (
     And,
     Equal,
@@ -139,6 +140,65 @@ from compiler.types.symbols import (
     ZeroInit,
 )
 from compiler.utils.exceptions import SemanticError
+
+
+def _string_pointer_referenced_type(encoding: StringEncoding) -> type:
+    """Return the expected ``referenced`` type of a pointer initialised from a string with *encoding*.
+
+    On Linux x86-64: ``char *`` for plain/u8, ``int *`` (wchar_t) for ``L"..."``,
+    ``unsigned short *`` (char16_t) for ``u"..."``, ``unsigned int *`` (char32_t) for ``U"..."``.
+
+    Args:
+        encoding: The encoding of the string literal.
+
+    Returns:
+        The ``Type`` subclass (not instance) that the pointer's referenced type must be.
+    """
+    if encoding == StringEncoding.WCHAR:
+        return IntType
+    if encoding == StringEncoding.UTF16:
+        return UShortType
+    if encoding == StringEncoding.UTF32:
+        return UIntType
+    return Char
+
+
+def _string_element_type(encoding: StringEncoding) -> ast.Type:
+    """Return the C element type for a string literal with the given encoding.
+
+    On Linux x86-64: ``wchar_t`` = ``int`` (4 bytes), ``char16_t`` = ``unsigned short``
+    (2 bytes), ``char32_t`` = ``unsigned int`` (4 bytes).
+
+    Args:
+        encoding: The encoding of the string literal.
+
+    Returns:
+        The element type node.
+    """
+    if encoding == StringEncoding.WCHAR:
+        return IntType()
+    if encoding == StringEncoding.UTF16:
+        return UShortType()
+    if encoding == StringEncoding.UTF32:
+        return UIntType()
+    return Char()
+
+
+def _string_element_size(encoding: StringEncoding) -> int:
+    """Return the number of bytes per element for a string literal with the given encoding.
+
+    Args:
+        encoding: The encoding of the string literal.
+
+    Returns:
+        1 for ``CHAR``, 2 for ``UTF16``, 4 for ``WCHAR`` or ``UTF32``.
+    """
+    if encoding == StringEncoding.UTF16:
+        return 2
+    if encoding in (StringEncoding.WCHAR, StringEncoding.UTF32):
+        return 4
+    return 1
+
 
 _TYPE_SIZE: dict[type, int] = {
     BoolType: 1,
@@ -827,29 +887,32 @@ def _append_zero_pad(result: list[StaticInit], n: int) -> None:
         result.append(ZeroInit(n))
 
 
-def _string_array_static_init(s: bytes, array_size: int) -> list[StaticInit]:
+def _string_array_static_init(s: bytes, array_size: int, element_size: int = 1) -> list[StaticInit]:
     """Build the ``StaticInit`` list for a character array initialised from a string literal.
 
-    The list always starts with a ``StringInit``.  When the array is large enough to hold
-    the NUL terminator, ``null_terminated`` is ``True`` and the terminator byte is included
+    The list always starts with a ``StringInit``.  When the array has room for the NUL
+    terminator, ``null_terminated`` is ``True`` and ``element_size`` NUL bytes are included
     in the ``StringInit``; any remaining unused bytes are represented by a trailing
     ``ZeroInit``.  When the array is exactly the length of the string (no room for NUL),
     ``null_terminated`` is ``False`` and the bytes are emitted as-is.
 
     Args:
-        s: Raw byte content of the string literal, NUL terminator NOT included.
-        array_size: Declared size of the target character array.
+        s: Raw encoded byte content of the string literal, NUL terminator NOT included.
+        array_size: Declared number of *elements* in the target array.
+        element_size: Number of bytes per element (1 for ``char``, 2 for ``char16_t``,
+            4 for ``wchar_t`` / ``char32_t``).
 
     Returns:
         A list of one or two ``StaticInit`` elements: ``[StringInit(...), ZeroInit(n)]``
         when padding is needed, or ``[StringInit(...)]`` when the array is exactly full.
     """
-    null_terminated = len(s) + 1 <= array_size
-    result: list[StaticInit] = [StringInit(s, null_terminated)]
-    bytes_used = len(s) + (1 if null_terminated else 0)
-    remaining = array_size - bytes_used
-    if remaining > 0:
-        result.append(ZeroInit(remaining))
+    char_count = len(s) // element_size
+    null_terminated = char_count + 1 <= array_size
+    result: list[StaticInit] = [StringInit(s, null_terminated, element_size)]
+    elements_used = char_count + (1 if null_terminated else 0)
+    remaining_bytes = (array_size - elements_used) * element_size
+    if remaining_bytes > 0:
+        result.append(ZeroInit(remaining_bytes))
     return result
 
 
@@ -1834,10 +1897,11 @@ class SemanticAnalyser:
             if var_decl.init is not None and var_decl.storage_class == StorageClass.Static:
                 if isinstance(var_decl.var_type, Pointer):
                     if isinstance(raw_init_exp, ast.String):
-                        if not isinstance(var_decl.var_type.referenced, Char):
+                        expected = _string_pointer_referenced_type(raw_init_exp.encoding)
+                        if not isinstance(unqualify(var_decl.var_type.referenced), expected):
                             raise SemanticError(
                                 f"Cannot initialize pointer to '{var_decl.var_type.referenced}' with a string "
-                                "literal; string literals have type 'char *'."
+                                f"literal of this encoding; expected pointer to '{expected.__name__}'."
                             )
                     elif not (
                         isinstance(raw_init_exp, ast.Constant)
@@ -1871,9 +1935,13 @@ class SemanticAnalyser:
                     assert raw_init_exp is not None
                     if isinstance(raw_init_exp, ast.String):
                         str_name = self._make_string_name()
+                        _enc = raw_init_exp.encoding
+                        _esz = _string_element_size(_enc)
+                        _elem_t = _string_element_type(_enc)
+                        _char_count = len(raw_init_exp.string) // _esz
                         self._symbol_table[str_name] = SymbolTableEntry(
-                            t=Array(element=Char(), size=len(raw_init_exp.string) + 1),
-                            attrs=ConstantAttr(StringInit(raw_init_exp.string, True)),
+                            t=Array(element=_elem_t, size=_char_count + 1),
+                            attrs=ConstantAttr(StringInit(raw_init_exp.string, True, _esz)),
                         )
                         static_init = PointerInit(str_name)
                     else:
@@ -1881,7 +1949,13 @@ class SemanticAnalyser:
                 elif isinstance(var_decl.var_type, Array):
                     if isinstance(init, ast.SingleInit) and isinstance(init.exp, ast.String):
                         assert var_decl.var_type.size is not None  # string-init arrays have concrete size
-                        static_init = Initial(tuple(_string_array_static_init(init.exp.string, var_decl.var_type.size)))
+                        static_init = Initial(
+                            tuple(
+                                _string_array_static_init(
+                                    init.exp.string, var_decl.var_type.size, _string_element_size(init.exp.encoding)
+                                )
+                            )
+                        )
                     else:
                         assert isinstance(init, ast.CompoundInit)
                         static_init = Initial(tuple(self._flatten_static_init(init)))
@@ -1960,10 +2034,12 @@ class SemanticAnalyser:
         if var_decl.init is not None:
             if isinstance(var_decl.var_type, Pointer):
                 if isinstance(file_raw_exp, ast.String):
-                    if not isinstance(var_decl.var_type.referenced, Char):
+                    expected = _string_pointer_referenced_type(file_raw_exp.encoding)
+                    if not isinstance(unqualify(var_decl.var_type.referenced), expected):
                         raise SemanticError(
-                            f"Cannot initialize pointer to '{var_decl.var_type.referenced}' with a string "
-                            "literal; string literals have type 'char *'."
+                            "Cannot initialize pointer to"
+                            f" '{var_decl.var_type.referenced}' with a string literal of this encoding;"
+                            " expected a pointer to char (or the equivalent wide character type)."
                         )
                 elif not (
                     isinstance(file_raw_exp, ast.Constant)
@@ -2024,9 +2100,13 @@ class SemanticAnalyser:
                 assert file_raw_exp is not None
                 if isinstance(file_raw_exp, ast.String):
                     str_name = self._make_string_name()
+                    _enc = file_raw_exp.encoding
+                    _esz = _string_element_size(_enc)
+                    _elem_t = _string_element_type(_enc)
+                    _char_count = len(file_raw_exp.string) // _esz
                     self._symbol_table[str_name] = SymbolTableEntry(
-                        t=Array(element=Char(), size=len(file_raw_exp.string) + 1),
-                        attrs=ConstantAttr(StringInit(file_raw_exp.string, True)),
+                        t=Array(element=_elem_t, size=_char_count + 1),
+                        attrs=ConstantAttr(StringInit(file_raw_exp.string, True, _esz)),
                     )
                     file_init: InitialValue = PointerInit(str_name)
                 else:
@@ -2036,7 +2116,13 @@ class SemanticAnalyser:
                 if isinstance(file_typed_init, ast.SingleInit) and isinstance(file_typed_init.exp, ast.String):
                     assert var_decl.var_type.size is not None  # string-init arrays have concrete size
                     file_init = Initial(
-                        tuple(_string_array_static_init(file_typed_init.exp.string, var_decl.var_type.size))
+                        tuple(
+                            _string_array_static_init(
+                                file_typed_init.exp.string,
+                                var_decl.var_type.size,
+                                _string_element_size(file_typed_init.exp.encoding),
+                            )
+                        )
                     )
                 else:
                     assert isinstance(file_typed_init, ast.CompoundInit)
@@ -2791,8 +2877,11 @@ class SemanticAnalyser:
                 else:
                     raise SemanticError("Subscript must have integer and pointer operands.")
                 return ast.Subscript(typed_e1, typed_e2, exp_type=subscript_type)
-            case ast.String(string=s):
-                return ast.String(s, exp_type=Array(element=Char(), size=len(s) + 1))
+            case ast.String(string=s, encoding=enc):
+                elem_type = _string_element_type(enc)
+                elem_size = _string_element_size(enc)
+                char_count = len(s) // elem_size
+                return ast.String(s, encoding=enc, exp_type=Array(element=elem_type, size=char_count + 1))
             case ast.SizeOfT(t=t):
                 t = self._resolve_type(t)
                 validate_type_specifier(t, self._struct_type_table)
@@ -3091,11 +3180,14 @@ class SemanticAnalyser:
             SemanticError: If ``e`` is not a recognised constant form.
         """
         match e:
-            case ast.AddrOf(exp=ast.String(string=s)):
+            case ast.AddrOf(exp=ast.String(string=s, encoding=enc)):
                 str_name = self._make_string_name()
+                _esz = _string_element_size(enc)
+                _elem_t = _string_element_type(enc)
+                _char_count = len(s) // _esz
                 self._symbol_table[str_name] = SymbolTableEntry(
-                    t=Array(element=Char(), size=len(s) + 1),
-                    attrs=ConstantAttr(StringInit(s, True)),
+                    t=Array(element=_elem_t, size=_char_count + 1),
+                    attrs=ConstantAttr(StringInit(s, True, _esz)),
                 )
                 return PointerInit(str_name)
             case ast.Cast(target_type=Pointer()):

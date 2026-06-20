@@ -125,6 +125,7 @@ from compiler.syntax.ast import (
     ConstUInt,
     ConstULong,
     ConstULongLong,
+    ConstUShort,
     Continue,
     D,
     Declaration,
@@ -192,6 +193,7 @@ from compiler.syntax.ast import (
     StaticAssert,
     StorageClass,
     String,
+    StringEncoding,
     StructDecl,
     StructDeclaration,
     Structure,
@@ -2228,9 +2230,12 @@ class Parser:
                 | TokenType.FPFLOAT
                 | TokenType.FPLONGDOUBLE
                 | TokenType.CONSTCHAR
+                | TokenType.WCHAR
+                | TokenType.U16CHAR
+                | TokenType.U32CHAR
             ):
                 primary: Exp = self._parse_constant()
-            case TokenType.STRING:
+            case TokenType.STRING | TokenType.WSTRING | TokenType.U16STRING | TokenType.U32STRING | TokenType.U8STRING:
                 primary = self._parse_string_literal()
             case TokenType.IDENTIFIER if token.value in (
                 "__builtin_va_start",
@@ -2602,29 +2607,60 @@ class Parser:
                     f"integer constant {val} is too large for type 'unsigned long' (max 18446744073709551615)", token
                 )
             return Constant(value=ConstULong(val), exp_type=ULongType())
-        if token.type == TokenType.CONSTCHAR:
-            self._consume()
-            inner = token.value[1:-1]  # strip surrounding single quotes
-            if inner.startswith("\\"):
-                char_val = self._ESCAPE_VALUES[inner[1]]
-            else:
-                char_val = ord(inner)
-            return Constant(value=ConstInt(char_val), exp_type=IntType())
+        char_const = self._parse_char_constant(token)
+        if char_const is not None:
+            return char_const
         raise self._token_error(f"expected a constant, got {token.type.name} '{token.value}'", token)
 
-    @staticmethod
-    def _unescape_string(raw: str) -> bytes:
-        """Convert the raw source text of a string literal to a byte sequence.
+    def _parse_char_constant(self, token: Token) -> Constant | None:
+        """Parse a character constant token into a ``Constant`` node, or return ``None``.
+
+        Handles plain char (``'x'``), wide char (``L'x'``), UTF-16 (``u'x'``), and
+        UTF-32 (``U'x'``) character constants.  Consumes the token on a match.
 
         Args:
-            raw: The token value including surrounding double-quote characters,
-                e.g. ``'"hello\\\\n"'``.
+            token: The current lookahead token (not yet consumed).
 
         Returns:
-            A ``bytes`` object containing the unescaped content, without the
-            NUL terminator.
+            A ``Constant`` node (``ConstInt`` for plain/wide, ``ConstUShort`` for UTF-16,
+            ``ConstUInt`` for UTF-32), or ``None`` if the token is not a char constant.
         """
-        _ESC: dict[str, int] = {
+        _CHAR_PREFIX: dict[TokenType, int] = {
+            TokenType.CONSTCHAR: 1,
+            TokenType.WCHAR: 2,
+            TokenType.U16CHAR: 2,
+            TokenType.U32CHAR: 2,
+        }
+        prefix_len = _CHAR_PREFIX.get(token.type)
+        if prefix_len is None:
+            return None
+        self._consume()
+        inner = token.value[prefix_len:-1]
+        char_val, _ = self._unescape_char(inner, 0)
+        if token.type == TokenType.U16CHAR:
+            return Constant(value=ConstUShort(char_val), exp_type=UShortType())
+        if token.type == TokenType.U32CHAR:
+            return Constant(value=ConstUInt(char_val), exp_type=UIntType())
+        return Constant(value=ConstInt(char_val), exp_type=IntType())
+
+    @staticmethod
+    def _unescape_char(content: str, i: int) -> tuple[int, int]:
+        """Decode one character or escape sequence from a string/char literal body.
+
+        Handles simple escapes (``\\n``, ``\\t``, …), hex escapes (``\\xNN``),
+        octal escapes (``\\NNN``), and Unicode escapes (``\\uXXXX`` /
+        ``\\UXXXXXXXX``).
+
+        Args:
+            content: The raw body text of the literal (quotes and prefix already stripped).
+            i: Index of the current character in ``content``.
+
+        Returns:
+            A ``(code_point, new_i)`` tuple where ``code_point`` is the decoded
+            Unicode code point and ``new_i`` is the index of the next character
+            to process.
+        """
+        _SIMPLE_ESC: dict[str, int] = {
             "'": 39,
             '"': 34,
             "?": 63,
@@ -2637,41 +2673,145 @@ class Parser:
             "t": 9,
             "v": 11,
         }
-        content = raw[1:-1]  # strip surrounding double quotes
-        result: list[int] = []
+        ch = content[i]
+        if ch != "\\":
+            return ord(ch), i + 1
+        esc = content[i + 1]
+        if esc in _SIMPLE_ESC:
+            return _SIMPLE_ESC[esc], i + 2
+        if esc == "x":
+            j = i + 2
+            while j < len(content) and content[j] in "0123456789abcdefABCDEF":
+                j += 1
+            return int(content[i + 2 : j], 16), j
+        if esc in "01234567":
+            j = i + 1
+            while j < len(content) and content[j] in "01234567" and j < i + 4:
+                j += 1
+            return int(content[i + 1 : j], 8), j
+        if esc == "u":
+            return int(content[i + 2 : i + 6], 16), i + 6
+        if esc == "U":
+            return int(content[i + 2 : i + 10], 16), i + 10
+        return ord(esc), i + 2
+
+    @staticmethod
+    def _encode_codepoint(cp: int, encoding: StringEncoding) -> bytes:
+        """Encode a single Unicode code point as bytes in the target literal encoding.
+
+        Args:
+            cp: Unicode code point value.
+            encoding: The target encoding (CHAR emits UTF-8, WCHAR/UTF32 emit LE uint32,
+                UTF16 emits LE uint16 with surrogate pairs for code points > U+FFFF).
+
+        Returns:
+            The byte representation of the code point.
+        """
+        if encoding == StringEncoding.CHAR:
+            return chr(cp).encode("utf-8")
+        if encoding == StringEncoding.UTF16:
+            return cp.to_bytes(2, "little")
+        return cp.to_bytes(4, "little")
+
+    @staticmethod
+    def _strip_string_prefix(raw: str) -> tuple[str, StringEncoding]:
+        """Remove the prefix from a string literal token and return (content, encoding).
+
+        Args:
+            raw: Raw token value, e.g. ``'L"hello"'`` or ``'u8"hi"'``.
+
+        Returns:
+            A ``(body, encoding)`` pair where ``body`` is the token without the
+            prefix or surrounding double quotes, and ``encoding`` is the
+            corresponding :class:`StringEncoding`.
+        """
+        if raw.startswith('u8"'):
+            return raw[3:-1], StringEncoding.CHAR
+        if raw.startswith('L"'):
+            return raw[2:-1], StringEncoding.WCHAR
+        if raw.startswith('u"'):
+            return raw[2:-1], StringEncoding.UTF16
+        if raw.startswith('U"'):
+            return raw[2:-1], StringEncoding.UTF32
+        return raw[1:-1], StringEncoding.CHAR
+
+    def _unescape_string(self, raw: str) -> bytes:
+        """Convert the raw source text of a string literal to a byte sequence.
+
+        Handles plain and wide/Unicode prefixes (``L``, ``u``, ``U``, ``u8``).
+        Decodes simple escapes, hex escapes (``\\xNN``), octal escapes
+        (``\\NNN``), and Unicode escapes (``\\uXXXX`` / ``\\UXXXXXXXX``).
+
+        Args:
+            raw: The token value including any prefix and surrounding double-quote
+                characters, e.g. ``'L"hello\\\\n"'`` or ``'"hello"'``.
+
+        Returns:
+            A ``bytes`` object containing the unescaped content in the encoding
+            appropriate for the prefix, without the NUL terminator.
+        """
+        content, encoding = self._strip_string_prefix(raw)
+        result = bytearray()
         i = 0
         while i < len(content):
-            ch = content[i]
-            if ch == "\\":
-                result.append(_ESC[content[i + 1]])
-                i += 2
-            else:
-                result.append(ord(ch))
-                i += 1
+            cp, i = self._unescape_char(content, i)
+            result.extend(self._encode_codepoint(cp, encoding))
         return bytes(result)
+
+    def _unescape_string_with_encoding(self, raw: str) -> tuple[bytes, StringEncoding]:
+        """Unescape a string literal and also return its encoding.
+
+        Args:
+            raw: The token value including any prefix and surrounding double-quote
+                characters.
+
+        Returns:
+            A ``(data, encoding)`` pair.
+        """
+        _, encoding = self._strip_string_prefix(raw)
+        return self._unescape_string(raw), encoding
+
+    _STRING_TOKEN_TYPES: frozenset[TokenType] = frozenset(
+        {
+            TokenType.STRING,
+            TokenType.WSTRING,
+            TokenType.U16STRING,
+            TokenType.U32STRING,
+            TokenType.U8STRING,
+        }
+    )
 
     def _parse_string_literal(self) -> String:
         """Parse one or more adjacent string-literal tokens into a single ``String`` node.
 
-        C allows adjacent string literals to be concatenated at compile time,
-        e.g. ``"hello " "world"`` is equivalent to ``"hello world"``.
+        C allows adjacent string literals of the same encoding to be concatenated at
+        compile time, e.g. ``"hello " "world"`` is equivalent to ``"hello world"``.
+        Wide and Unicode prefixes (``L``, ``u``, ``U``, ``u8``) are supported.
+        Mixing incompatible prefixes (e.g. ``L"..." u"..."``) is a parse error.
 
         Returns:
             A ``String`` node whose ``string`` field holds the concatenated,
-            unescaped byte content of all adjacent tokens (NUL not included).
+            encoded byte content of all adjacent same-encoding tokens (NUL not
+            included).
 
         Raises:
-            ParseError: If the current token is not a ``STRING`` token.
+            ParseError: If the current token is not a string-literal token, or if
+                adjacent string literals have incompatible encodings.
         """
         token = self._peek()
-        if token is None or token.type != TokenType.STRING:
+        if token is None or token.type not in self._STRING_TOKEN_TYPES:
             msg = "expected a string literal"
             raise self._eof_error(msg) if token is None else self._token_error(msg, token)
-        buf = bytearray()
-        while (tok := self._peek()) is not None and tok.type == TokenType.STRING:
+        self._consume()
+        buf, encoding = self._unescape_string_with_encoding(token.value)
+        data = bytearray(buf)
+        while (tok := self._peek()) is not None and tok.type in self._STRING_TOKEN_TYPES:
+            tok_data, tok_enc = self._unescape_string_with_encoding(tok.value)
+            if tok_enc != encoding:
+                raise self._token_error("cannot concatenate string literals with incompatible encodings", tok)
             self._consume()
-            buf.extend(self._unescape_string(tok.value))
-        return String(string=bytes(buf))
+            data.extend(tok_data)
+        return String(string=bytes(data), encoding=encoding)
 
     def _parse_type(self) -> Type:
         """Parse a C type annotation from one or more type-specifier tokens.

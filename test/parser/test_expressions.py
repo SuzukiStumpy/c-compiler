@@ -9,12 +9,15 @@ from compiler.syntax.ast import (
     Constant,
     ConstInt,
     ConstLong,
+    ConstUInt,
+    ConstUShort,
     Dereference,
     FunctionCall,
     IntType,
     LongType,
     Pointer,
     String,
+    StringEncoding,
     Subscript,
     Unary,
 )
@@ -92,6 +95,13 @@ from test.parser.helpers import (
     _number,
     _parsed_exp,
     _string_tok,
+    _u8string_tok,
+    _u16char_tok,
+    _u16string_tok,
+    _u32char_tok,
+    _u32string_tok,
+    _wchar_tok,
+    _wstring_tok,
 )
 
 # ---------------------------------------------------------------------------
@@ -690,6 +700,112 @@ class TestCharConstantAndStringLiterals:
     def test_adjacent_string_literals_are_concatenated(self) -> None:
         """``"foo" "bar"`` -> ``String(b"foobar")``."""
         assert _parsed_exp(_string_tok('"foo"'), _string_tok('"bar"')) == String(b"foobar")
+
+
+class TestWideAndUnicodeStringLiterals:
+    """Parser converts wide/Unicode string and char literal tokens to the correct AST nodes."""
+
+    # Wide string literals: L"..."
+
+    def test_wide_string_parses_to_string_node_with_wchar_encoding(self) -> None:
+        """``L"A"`` -> ``String`` with ``StringEncoding.WCHAR`` and 4-byte LE encoding."""
+        result = _parsed_exp(_wstring_tok('L"A"'))
+        assert isinstance(result, String)
+        assert result.encoding == StringEncoding.WCHAR
+
+    def test_wide_string_ascii_char_encoded_as_four_bytes_le(self) -> None:
+        """``L"A"`` stores ``ord('A') == 65`` as 4 LE bytes: ``b'\\x41\\x00\\x00\\x00'``."""
+        result = _parsed_exp(_wstring_tok('L"A"'))
+        assert isinstance(result, String)
+        assert result.string == b"\x41\x00\x00\x00"
+
+    def test_wide_string_empty_has_empty_bytes(self) -> None:
+        """``L""`` -> ``String(b"", StringEncoding.WCHAR)``."""
+        result = _parsed_exp(_wstring_tok('L""'))
+        assert isinstance(result, String)
+        assert result.string == b""
+        assert result.encoding == StringEncoding.WCHAR
+
+    def test_adjacent_wide_string_literals_are_concatenated(self) -> None:
+        """``L"AB" L"C"`` concatenates to the 12-byte LE encoding of ``ABC``."""
+        result = _parsed_exp(_wstring_tok('L"AB"'), _wstring_tok('L"C"'))
+        assert isinstance(result, String)
+        assert result.string == b"\x41\x00\x00\x00\x42\x00\x00\x00\x43\x00\x00\x00"
+
+    # UTF-16 string literals: u"..."
+
+    def test_u16_string_parses_with_utf16_encoding(self) -> None:
+        """``u"A"`` -> ``String`` with ``StringEncoding.UTF16``."""
+        result = _parsed_exp(_u16string_tok('u"A"'))
+        assert isinstance(result, String)
+        assert result.encoding == StringEncoding.UTF16
+
+    def test_u16_string_ascii_char_encoded_as_two_bytes_le(self) -> None:
+        """``u"A"`` stores ``ord('A') == 65`` as 2 LE bytes: ``b'\\x41\\x00'``."""
+        result = _parsed_exp(_u16string_tok('u"A"'))
+        assert isinstance(result, String)
+        assert result.string == b"\x41\x00"
+
+    # UTF-32 string literals: U"..."
+
+    def test_u32_string_parses_with_utf32_encoding(self) -> None:
+        """``U"A"`` -> ``String`` with ``StringEncoding.UTF32``."""
+        result = _parsed_exp(_u32string_tok('U"A"'))
+        assert isinstance(result, String)
+        assert result.encoding == StringEncoding.UTF32
+
+    def test_u32_string_ascii_char_encoded_as_four_bytes_le(self) -> None:
+        """``U"A"`` stores ``ord('A') == 65`` as 4 LE bytes: ``b'\\x41\\x00\\x00\\x00'``."""
+        result = _parsed_exp(_u32string_tok('U"A"'))
+        assert isinstance(result, String)
+        assert result.string == b"\x41\x00\x00\x00"
+
+    # u8 string literals: u8"..."
+
+    def test_u8_string_parses_with_char_encoding(self) -> None:
+        """``u8"hi"`` -> ``String(b"hi", StringEncoding.CHAR)`` — same element type as plain string."""
+        result = _parsed_exp(_u8string_tok('u8"hi"'))
+        assert isinstance(result, String)
+        assert result.encoding == StringEncoding.CHAR
+        assert result.string == b"hi"
+
+    # Wide char constants
+
+    def test_wide_char_constant_parses_to_constint(self) -> None:
+        """``L'A'`` -> ``Constant(ConstInt(65))`` — wchar_t is int on Linux x86-64."""
+        assert _parsed_exp(_wchar_tok("L'A'")) == Constant(ConstInt(65))
+
+    def test_u16_char_constant_parses_to_constuint16(self) -> None:
+        """``u'B'`` -> ``Constant(ConstUShort(66))`` — char16_t is unsigned short."""
+        assert _parsed_exp(_u16char_tok("u'B'")) == Constant(ConstUShort(66))
+
+    def test_u32_char_constant_parses_to_constuint32(self) -> None:
+        """``U'C'`` -> ``Constant(ConstUInt(67))`` — char32_t is unsigned int."""
+        assert _parsed_exp(_u32char_tok("U'C'")) == Constant(ConstUInt(67))
+
+    # Unicode escape sequences
+
+    def test_wide_string_unicode_escape_u4_is_decoded(self) -> None:
+        r"""``L"A"`` (Unicode escape for 'A') stores the same bytes as ``L"A"``."""
+        result = _parsed_exp(_wstring_tok(r'L"A"'))
+        assert isinstance(result, String)
+        assert result.string == b"\x41\x00\x00\x00"
+
+    def test_wide_string_unicode_escape_U8_is_decoded(self) -> None:
+        r"""``L"\U00000042"`` (Unicode escape for 'B') stores the same bytes as ``L"B"``."""
+        result = _parsed_exp(_wstring_tok(r'L"\U00000042"'))
+        assert isinstance(result, String)
+        assert result.string == b"\x42\x00\x00\x00"
+
+    # Hex escape in plain string
+
+    def test_hex_escape_in_plain_string_is_decoded(self) -> None:
+        r"""``"\x41"`` -> ``String(b"A")``."""
+        assert _parsed_exp(_string_tok(r'"\x41"')) == String(b"A")
+
+    def test_octal_escape_in_plain_string_is_decoded(self) -> None:
+        r"""``"\101"`` (octal 101 = 65 = 'A') -> ``String(b"A")``."""
+        assert _parsed_exp(_string_tok(r'"\101"')) == String(b"A")
 
 
 class TestAlternateIntegerLiteralBases:

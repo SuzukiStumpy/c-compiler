@@ -71,6 +71,13 @@ class TokenType(Enum):
     FPLONGDOUBLE = auto()
     CONSTCHAR = auto()
     STRING = auto()
+    WCHAR = auto()  # L'x'
+    U16CHAR = auto()  # u'x'
+    U32CHAR = auto()  # U'x'
+    WSTRING = auto()  # L"..."
+    U16STRING = auto()  # u"..."
+    U32STRING = auto()  # U"..."
+    U8STRING = auto()  # u8"..."
     # Punctuation
     ELLIPSIS = auto()  # ...
     LPAREN = auto()  # (

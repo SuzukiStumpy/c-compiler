@@ -43,7 +43,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 | Submodule | Contents |
 |---|---|
 | `types.py` | `Type` hierarchy: `IntType`, `LongType`, `UIntType`, `ULongType`, `ShortType`, `UShortType`, `Char`, `SChar`, `UChar`, `BoolType`, `FloatType`, `DoubleType`, `LongDoubleType`, `Int128Type`, `UInt128Type`, `LongLongType`, `ULongLongType`, `VoidType`, `FunType`, `Pointer`, `Array`, `Structure`, `Union`, `EnumType`, `QualifiedType`; `Array.size: int | None` where `None` denotes an incomplete/flexible array |
-| `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `AlignOf`, `AlignOfT`, `Dot`, `Arrow`, `CompoundLiteral`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit`, `VaStart`, `VaArg`, `VaEnd`, `VaCopy`, `BuiltinUnreachable`, `OffsetOf` |
+| `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `AlignOf`, `AlignOfT`, `Dot`, `Arrow`, `CompoundLiteral`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit`, `VaStart`, `VaArg`, `VaEnd`, `VaCopy`, `BuiltinUnreachable`, `OffsetOf`; `StringEncoding` enum (`CHAR`, `WCHAR`, `UTF16`, `UTF32`); `String.encoding: StringEncoding` |
 | `statements.py` | `Statement` hierarchy: `Return`, `Expression`, `If`, `Goto`, `Label`, `Compound`, `Break`, `Continue`, `While`, `DoWhile`, `For`, `Switch`, `Case`, `Default`, `Null` |
 | `declarations.py` | `Declaration` hierarchy + `Program`, `Function`, `Block`, `BlockItem`, `VariableDeclaration`, `FunDecl`, `VarDecl`, `StructDecl`, `UnionDecl`, `EnumDecl`, `TypedefDecl`, `StaticAssert`, `Parameter`; `MemberDeclaration` carries optional `nested_decl: StructDecl | UnionDecl | None` for anonymous struct/union members; `EnumeratorDeclaration.value_exp: Exp | None` (constant expression or `None` for auto-increment) |
 | `constants.py` | `Const` hierarchy: `ConstInt`, `ConstLong`, `ConstUInt`, `ConstULong`, `ConstDouble`, `ConstFloat`, `ConstLongDouble`, `ConstChar`, `ConstUChar`, `ConstShort`, `ConstUShort`, `ConstLongLong`, `ConstULongLong`, `ConstInt128`, `ConstUInt128`, `ConstBool` |
@@ -65,7 +65,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 |---|---|
 | `instructions.py` | Assembly instruction nodes (`Mov`, `Binary`, `Unary`, `Idiv`, `Div`, `Cdq`, `Cmp`, `Jmp`, `JmpCC`, `SetCC`, `Label`, `Ret`, `Call`, `IndirectCall`, `Lea`, `Push`, `Pop`, `Movsx`, `MoveZeroExtend`, `AllocateStack`, `DeallocateStack`, `Cvttsd2si`, `Cvtsi2sd`, `Cvttss2si`, `Cvtsi2ss`, `Cvtss2sd`, `Cvtsd2ss`, `Ud2`) |
 | `operands.py` | `Operand` hierarchy: `Imm`, `Register`, `Pseudo`, `Memory`, `Indexed`, `Data`, `PseudoMem`; `GPRegisters`/`FPRegisters` enums; `Width` enum; `ALLOCATABLE_GP`/`ALLOCATABLE_FP` |
-| `values.py` | `AssemblyType` variants: `Byte`, `Longword`, `Quadword`, `Double` |
+| `values.py` | `AssemblyType` variants: `Byte`, `Word`, `Longword`, `Quadword`, `Double`, `Float`, `LongDouble`, `ByteArray`; `StaticInit` variants include `StringInit(string, null_terminated, element_size)` |
 | `operators.py` | Assembly operator enums |
 | `declarations.py` | `Program`, `Function`, `StaticVariable`, `StaticConstant` |
 
@@ -120,7 +120,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **GCC builtins**: `__builtin_expect(expr, hint)` — folds to `expr` at parse time; `__builtin_unreachable()` — emits `ud2` (SIGILL trap); `__builtin_offsetof(type, member)` — compile-time struct member offset, type `unsigned long`
 - **Alignment specifiers**: `_Alignas(expr)` and `_Alignas(type)` on variable declarations; SA evaluates to `VariableDeclaration.align_as: int`; overrides `.balign` for static variables and stack-slot alignment for locals; `_Alignof(type)` / `_Alignof expr` returns `unsigned long` alignment at compile time
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
-- **String literals** (stored as hidden static objects in `.rodata`)
+- **String literals** (stored as hidden static objects in `.rodata`): plain `"..."`, `u8"..."` (UTF-8, `char *`), `L"..."` (wide, `int *`, 4 bytes/char), `u"..."` (UTF-16, `unsigned short *`, 2 bytes/char), `U"..."` (UTF-32, `unsigned int *`, 4 bytes/char); `StringEncoding` enum controls element type and NUL-terminator width (`element_size`); adjacent literals of the same encoding are concatenated
 - **`__func__` predefined identifier** (C99/C11 §6.4.2.2): resolved by semantic analysis to a `String` node containing the enclosing function's name; behaves like `static const char __func__[] = "fn_name";`
 
 ## Target
