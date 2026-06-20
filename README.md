@@ -312,6 +312,16 @@ VLAs (sec. 6.7.6.2) — arrays whose size is a runtime expression — were manda
 
 No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are recognised. Variadic functions are fully supported, so `<stdarg.h>` parses and links correctly.
 
+System headers such as `<stdio.h>` cannot yet be `#include`d directly. Three parser gaps block them:
+
+| Gap | Notes |
+|---|---|
+| `typedef struct { … } Name;` | `_parse_type()` does not handle inline struct/union body forms; crashes with `expected IDENTIFIER, got '{'` |
+| `__attribute__(( … ))` | GCC attribute decorators (present on nearly every `<stdio.h>` declaration) are not lexed or parsed |
+| Constant expressions in array sizes | `struct _IO_FILE` uses `char field[12 * sizeof(int) - …]`; `_parse_array_dimension()` accepts integer literals only |
+
+All three must be resolved together before system headers become usable. See `C11_ROADMAP.md` for implementation notes.
+
 ---
 
 ## Development

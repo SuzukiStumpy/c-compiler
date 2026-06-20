@@ -171,6 +171,16 @@ Subdirectory test packages use a local `helpers.py`; no `__init__.py` needed (py
 
 `writing-a-c-compiler-tests/` — official acceptance test suite from the *Writing a C Compiler* book, invoked via `test_compiler <path-to-compiler> --chapter N --stage XXXXX`.
 
+## Known parser limitations
+
+Three gaps in `compiler/parser.py` prevent `#include <stdio.h>` (and most system headers) from compiling:
+
+1. **Inline struct/union body in `typedef`** — `typedef struct { … } Name;` and `typedef struct Tag { … } Name;` both fail; `_consume_type_specifiers()` calls `_expect(IDENTIFIER)` after `struct`/`union` and crashes on `{`. Fix: detect the inline-body form in `_parse_declaration`'s typedef branch and return `[StructDecl, TypedefDecl]`, mirroring the existing inline-enum path.
+2. **`__attribute__(( … ))` not recognised** — GCC emits attribute decorators on nearly every system-header declaration; they are not a lexer token and the parser has no skip path for them. Fix: lex `__attribute__` as a dedicated token; add a `_skip_attribute()` balanced-paren skipper; call it wherever a declaration may end.
+3. **Constant expressions in array sizes** — `_parse_array_dimension()` accepts integer literals only; `struct _IO_FILE` contains `char _unused2[12 * sizeof(int) - 5 * sizeof(void *)];`. Fix: parse a full constant expression in the `[…]` position and evaluate it during semantic analysis, the same way `_Alignas` expressions are handled.
+
+All three must be resolved together before any system header becomes usable.
+
 ## Key architectural invariants
 
 - AST/TAC/ASM nodes are **immutable frozen dataclasses** — never mutated after construction.
