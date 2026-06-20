@@ -86,7 +86,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Variadic function definitions — `va_list`, `va_start(ap, last)`, `va_arg(ap, T)`, `va_end(ap)`, `va_copy(dest, src)` via `<stdarg.h>`; the compiler emits the SysV AMD64 register-save area (176 bytes, 16-byte aligned) and handles both the GP register path (`gp_offset < 48`) and the overflow argument area path
 - Struct and union declarations and definitions, including bit-fields (`int x : 3;`, `unsigned int : 5;`, `int : 0;`)
 - `enum` declarations and definitions at file and block scope; inline definitions (`enum Color { RED } x;`); anonymous enums (`enum { A, B };`); enumerator constants are `int`-typed values evaluated at semantic analysis time; enumerator values may be arbitrary constant expressions including binary operators, `sizeof`, and cross-enumerator references
-- Storage classes: `static` and `extern`
+- Storage classes: `static`, `extern`, `auto`, and `register` (`auto` and `register` are silently ignored — C11 §6.7.1 no-ops)
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
 - Function specifiers: `inline` — parsed and stored on the function declaration; no inlining is performed; `_Noreturn` — parsed and stored on the function declaration; no contract enforcement is performed
@@ -269,12 +269,10 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Storage-class specifiers
 
-`static`, `extern`, and `typedef` are fully supported.
+`static`, `extern`, `typedef`, `auto`, and `register` are all parsed. `auto` and `register` are silently ignored (C11 §6.7.1 no-ops).
 
 | Missing specifier | C11 reference | Notes |
 |---|---|---|
-| `auto` | sec. 6.7.1 | Explicit automatic storage; a no-op in C99/C11; not yet parsed |
-| `register` | sec. 6.7.1 | Deprecated in C11; a no-op; not yet parsed; causes a parse error on real code that uses it |
 | `_Thread_local` | sec. 6.7.1 | Per-thread static storage via the TLS segment |
 
 ### Declarations and specifiers

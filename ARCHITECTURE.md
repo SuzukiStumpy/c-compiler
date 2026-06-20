@@ -112,7 +112,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Type qualifiers**: `const`, `volatile`, `restrict` (parsed; restrict has no semantic effect)
 - **Function specifiers**: `inline` (parsed; stored as `Function.is_inline`; no inlining performed — flag is informational only); `_Noreturn` (parsed; stored as `Function.is_noreturn`; no contract enforcement — flag is informational only)
 - **Static assertions**: `_Static_assert(expr, msg)` at file scope and block scope; constant expression is evaluated during semantic analysis; a zero result raises a `SemanticError` with the supplied message; no runtime code is emitted
-- **Storage classes**: `static`, `extern`, `typedef` (`auto` and `register` are not yet recognised)
+- **Storage classes**: `static`, `extern`, `typedef`; `auto` and `register` are lexed and silently ignored (C11 §6.7.1 no-ops)
 - **Control flow**: `if`/`else`, `while`, `do`/`while`, `for`, `switch`/`case`/`default`, `break`, `continue`, `goto`, labels
 - **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, `_Alignof`, member access (`.` and `->`)
 - **Variadic functions**: `va_list`, `va_start`, `va_arg`, `va_end`, `va_copy` via `<stdarg.h>`; SysV AMD64 ABI register-save-area (176 bytes, 16-byte aligned) and overflow argument area; GP and XMM register paths in `va_arg`

@@ -6,7 +6,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 | Feature | Effort | Impact | Notes |
 |---|---|---|---|
-| `register` / `auto` storage-class specifiers | L | L | C89/C11; both are effectively no-ops (register is deprecated in C11); parse and ignore to avoid errors on real C code that uses them |
+| ~~`register` / `auto` storage-class specifiers~~ | ~~L~~ | ~~L~~ | **Done.** Lexed as `AUTO`/`REGISTER` tokens; consumed and silently ignored in `_parse_specifiers` (C11 §6.7.1). |
 | `_Pragma` operator | L | L | C99/C11 §6.10.9 — turns a string into a `#pragma`; mainly used in macros that conditionally emit pragmas; can be lowered to a no-op or forwarded to the preprocessor |
 | Static array parameters `int foo(int a[static 10])` | L | L | C99/C11 §6.7.6.3 — `static` inside array parameter declarator indicates minimum array size; parse + semantic annotation only; used as an optimisation hint by compilers |
 | `__int128` full arithmetic | H | L | Multi-word instruction sequences (`adcq`/`sbbq`), two-register SysV calling convention; niche use outside cryptography/numerics |
@@ -24,7 +24,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 ## Priority grouping
 
-**Quick wins** (L effort, low risk): `register`/`auto`, `_Pragma`, static array params.  
+**Quick wins** (L effort, low risk): `_Pragma`, static array params.  
 Implement these to silence parse errors on common real-world code.
 
 **Medium payoff**: GCC builtins and multi-file compilation have the highest practical impact — they unblock parsing real system headers and building multi-file projects.

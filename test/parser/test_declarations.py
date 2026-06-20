@@ -48,8 +48,10 @@ from compiler.utils.exceptions import ParseError
 from test.parser.helpers import (
     _ASSIGNMENT,
     _ASTERISK,
+    _AUTO,
     _CHAR,
     _COMMA,
+    _CONST,
     _EXTERN,
     _INCREMENT,
     _INT,
@@ -60,6 +62,7 @@ from test.parser.helpers import (
     _PLUS,
     _RBRACE,
     _RBRACKET,
+    _REGISTER,
     _RETURN,
     _RPAREN,
     _SEMICOLON,
@@ -591,6 +594,47 @@ class TestStorageClassSpecifiers:
         tokens = [_STATIC, _ident("x"), _SEMICOLON]
         with pytest.raises(ParseError, match="expected a type"):
             parse(tokens)
+
+    def test_auto_variable_declaration_is_no_op(self) -> None:
+        """``auto int x;`` -> ``VarDecl`` with ``storage_class=None`` (auto is ignored)."""
+        tokens = [_AUTO, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.storage_class is None
+
+    def test_register_local_variable_is_no_op(self) -> None:
+        """``register int x;`` inside a block -> ``VarDecl`` with ``storage_class=None``."""
+        tokens = [
+            _INT,
+            _ident("main"),
+            _LPAREN,
+            _VOID,
+            _RPAREN,
+            _LBRACE,
+            _REGISTER,
+            _INT,
+            _ident("y"),
+            _SEMICOLON,
+            _RBRACE,
+        ]
+        result = parse(tokens)
+        fn = result.declarations[0]
+        assert isinstance(fn, FunDecl)
+        body = fn.function_declaration.body
+        assert body is not None
+        item = body[0]
+        assert isinstance(item, D)
+        assert isinstance(item.declaration, VarDecl)
+        assert item.declaration.variable_declaration.storage_class is None
+
+    def test_auto_combined_with_type_qualifier(self) -> None:
+        """``auto const int x;`` -> parsed without error, ``storage_class=None``."""
+        tokens = [_AUTO, _CONST, _INT, _ident("x"), _SEMICOLON]
+        result = parse(tokens)
+        decl = result.declarations[0]
+        assert isinstance(decl, VarDecl)
+        assert decl.variable_declaration.storage_class is None
 
 
 # ---------------------------------------------------------------------------

@@ -300,6 +300,8 @@ _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | f
     {
         TokenType.STATIC,
         TokenType.EXTERN,
+        TokenType.AUTO,
+        TokenType.REGISTER,
         TokenType.TYPEDEF,
         TokenType.INLINE,
         TokenType.NORETURN,
@@ -851,13 +853,16 @@ class Parser:
                                     | "struct" identifier
             alignment-specifier   ::= "_Alignas" "(" type-name ")"
                                     | "_Alignas" "(" constant-expression ")"
-            specifier             ::= type-specifier | "static" | "extern" | "inline"
-                                    | "_Noreturn" | alignment-specifier
+            specifier             ::= type-specifier | "static" | "extern" | "auto"
+                                    | "register" | "inline" | "_Noreturn"
+                                    | alignment-specifier
 
         Consumes a run of specifier tokens in any order.  At least one type
         specifier must appear; ``unsigned`` or ``signed`` alone are treated as
         shorthand for ``unsigned int`` / ``signed int``; at most one
         storage-class specifier (``static`` or ``extern``) may appear.
+        ``auto`` and ``register`` are consumed and silently ignored (C11 §6.7.1
+        — ``auto`` is redundant for local variables; ``register`` is deprecated).
         When ``struct`` is encountered the following identifier is consumed
         immediately as the tag; ``struct`` cannot be combined with other type
         specifiers (though a storage-class specifier preceding it is fine,
@@ -960,6 +965,8 @@ class Parser:
                 last_type_tok = tag_token
                 break  # enum tag exhausts the type-specifier sequence
             tok = self._consume()
+            if tok.type in {TokenType.AUTO, TokenType.REGISTER}:
+                continue  # C11 §6.7.1: auto/register are no-ops; consume and ignore
             if tok.type in {TokenType.STATIC, TokenType.EXTERN}:
                 if storage is not None:
                     raise self._token_error("conflicting storage class specifiers", tok)

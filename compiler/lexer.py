@@ -29,6 +29,8 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("DEFAULT", r"default\b"),
     ("STATIC", r"static\b"),
     ("EXTERN", r"extern\b"),
+    ("AUTO", r"auto\b"),
+    ("REGISTER", r"register\b"),
     ("LONG", r"long\b"),
     ("SIGNED", r"signed\b"),
     ("UNSIGNED", r"unsigned\b"),

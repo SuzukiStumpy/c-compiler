@@ -369,6 +369,18 @@ def test_identifier_sharing_extern_prefix_is_not_a_keyword(preprocess_c_file: Pr
     assert all(t.type != TokenType.EXTERN for t in tokens)
 
 
+def test_auto_keyword_produces_auto_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/auto_register.c"))
+    auto_token = next(t for t in tokens if t.value == "auto")
+    assert auto_token.type == TokenType.AUTO
+
+
+def test_register_keyword_produces_register_token_not_identifier(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/auto_register.c"))
+    register_token = next(t for t in tokens if t.value == "register")
+    assert register_token.type == TokenType.REGISTER
+
+
 # ---------------------------------------------------------------------------
 # Long type keyword and long integer constants
 # ---------------------------------------------------------------------------

@@ -30,6 +30,8 @@ class TokenType(Enum):
     DEFAULT = auto()
     STATIC = auto()
     EXTERN = auto()
+    AUTO = auto()
+    REGISTER = auto()
     LONG = auto()
     SIGNED = auto()
     UNSIGNED = auto()
