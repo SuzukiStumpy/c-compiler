@@ -6,17 +6,9 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 | Feature | Effort | Impact | Notes |
 |---|---|---|---|
-| ~~`register` / `auto` storage-class specifiers~~ | ~~L~~ | ~~L~~ | **Done.** Lexed as `AUTO`/`REGISTER` tokens; consumed and silently ignored in `_parse_specifiers` (C11 §6.7.1). |
-| ~~`_Pragma` operator~~ | ~~L~~ | ~~L~~ | **N/A.** GCC preprocessor fully consumes `_Pragma` before our compiler sees the source; the operator exists solely for macro-emitted pragmas (§6.10.9) and never appears in preprocessed output. No impl needed. |
-| ~~Static array parameters `int foo(int a[static 10])`~~ | ~~L~~ | ~~L~~ | **Done.** `static` and type-qualifiers (`const`, `restrict`, `volatile`) inside a parameter array declarator are consumed and discarded in `_parse_param_direct_declarator` (C99/C11 §6.7.6.3). |
 | `__int128` full arithmetic | H | L | Multi-word instruction sequences (`adcq`/`sbbq`), two-register SysV calling convention; niche use outside cryptography/numerics |
 | Hex floating-point literals (`0x1.8p10`) | M | L | C99/C11 §6.4.4.2 — exact FP representation via hex mantissa and binary exponent; used in some numerical libraries and standard headers |
-| ~~Wide / Unicode string and char literals~~ | ~~M~~ | ~~L~~ | **Done.** Lexer recognises `L'x'`, `u'x'`, `U'x'`, `u8"..."`, `L"..."`, `u"..."`, `U"..."` tokens. Parser decodes escape sequences and stores pre-encoded bytes with a `StringEncoding` enum. SA assigns the correct element type (`wchar_t`=`int`, `char16_t`=`unsigned short`, `char32_t`=`unsigned int`). Codegen propagates `element_size` through to `StaticConstant`; emitter writes the correct-width NUL terminator. `movzwl` added to the `MoveZeroExtend` instruction for `Word`→`Longword` zero-extension. |
-| ~~`char16_t` / `char32_t` types~~ | ~~M~~ | ~~L~~ | **Done** (as part of Unicode literals). `char16_t` is treated as `unsigned short` (2 bytes) and `char32_t` as `unsigned int` (4 bytes) throughout the pipeline; no separate typedef handling needed. |
-| ~~GCC builtins (`__builtin_expect`, `__builtin_unreachable`, `__builtin_offsetof`)~~ | ~~M~~ | ~~M~~ | **Done.** `__builtin_expect(expr, hint)` folds to `expr` at parse time (hint discarded). `__builtin_unreachable()` is a new `BuiltinUnreachable` AST node; codegen emits `ud2`. `__builtin_offsetof(type, member)` is a new `OffsetOf` AST node; SA resolves to `ULongType` using the struct type table; TAC gen folds to a `ConstULong` constant. |
-| ~~Multi-file compilation (multiple `.c` per invocation)~~ | ~~M~~ | ~~M~~ | **Done.** `compiler a.c b.c` compiles each file independently to a `.o`, then links all objects into a single executable. Stage flags (`--lex` etc.) still require a single source file. |
 | Inline function external linkage rules | M | L | C99/C11 §6.7.4 p6–7 — `inline` without `static` or `extern` has complex one-definition-rule implications; currently `inline` is stored but no linkage enforcement is performed |
-| ~~`_Generic` selection~~ | ~~H~~ | ~~L~~ | **Done.** Lexer recognises `_Generic` as a `GENERIC` token. Parser produces a `Generic(controlling_exp, associations)` AST node. Semantic analysis folds the node to the selected branch expression (after lvalue conversion: qualifier stripping, array-to-pointer, function-to-pointer). `Generic` never reaches TAC generation. Duplicate types and missing default/match raise `SemanticError`. |
 | VLAs | H | L | C99 mandatory, optional in C11 (Annex J.2), removed in C17; requires runtime stack allocation; low priority given C17 trajectory |
 | `_Thread_local` storage-class specifier | H | L | C11 §6.7.1 — per-thread static storage via the TLS segment; requires linker support and thread-local relocation model |
 | `_Atomic` type qualifier / specifier | XH | L | C11 §6.7.2.4 — lock-free atomic reads, writes, and read-modify-write operations; requires instruction-level memory ordering and a full concurrency model |
@@ -24,9 +16,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 ## Priority grouping
 
-**Quick wins** (L effort, low risk): ~~static array params~~, ~~`register`/`auto`~~, ~~`_Pragma`~~ — all done.
-
-**Medium payoff**: ~~GCC builtins~~, ~~Wide/Unicode string literals~~, ~~multi-file compilation~~, ~~`_Generic`~~ — all done. Remaining medium item: `inline` external linkage rules, hex floating-point literals.
+**Medium payoff**: Remaining medium items: `inline` external linkage rules, hex floating-point literals.
 
 **Deferred**: `__int128`, VLAs — self-contained but high effort for niche benefit.
 
