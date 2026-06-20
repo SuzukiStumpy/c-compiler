@@ -8,7 +8,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 |---|---|---|---|
 | ~~`register` / `auto` storage-class specifiers~~ | ~~L~~ | ~~L~~ | **Done.** Lexed as `AUTO`/`REGISTER` tokens; consumed and silently ignored in `_parse_specifiers` (C11 §6.7.1). |
 | ~~`_Pragma` operator~~ | ~~L~~ | ~~L~~ | **N/A.** GCC preprocessor fully consumes `_Pragma` before our compiler sees the source; the operator exists solely for macro-emitted pragmas (§6.10.9) and never appears in preprocessed output. No impl needed. |
-| Static array parameters `int foo(int a[static 10])` | L | L | C99/C11 §6.7.6.3 — `static` inside array parameter declarator indicates minimum array size; parse + semantic annotation only; used as an optimisation hint by compilers |
+| ~~Static array parameters `int foo(int a[static 10])`~~ | ~~L~~ | ~~L~~ | **Done.** `static` and type-qualifiers (`const`, `restrict`, `volatile`) inside a parameter array declarator are consumed and discarded in `_parse_param_direct_declarator` (C99/C11 §6.7.6.3). |
 | `__int128` full arithmetic | H | L | Multi-word instruction sequences (`adcq`/`sbbq`), two-register SysV calling convention; niche use outside cryptography/numerics |
 | Hex floating-point literals (`0x1.8p10`) | M | L | C99/C11 §6.4.4.2 — exact FP representation via hex mantissa and binary exponent; used in some numerical libraries and standard headers |
 | Wide / Unicode string and char literals | M | L | C11 §6.4.4.4, §6.4.5 — `L'x'`, `L"..."`, `u'x'`, `u"..."`, `U'x'`, `U"..."`, `u8"..."` prefixes; needed to parse i18n and platform code without errors |
@@ -24,8 +24,7 @@ Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: 
 
 ## Priority grouping
 
-**Quick wins** (L effort, low risk): static array params.  
-Implement these to silence parse errors on common real-world code.
+**Quick wins** (L effort, low risk): ~~static array params~~ — done.
 
 **Medium payoff**: GCC builtins and multi-file compilation have the highest practical impact — they unblock parsing real system headers and building multi-file projects.
 

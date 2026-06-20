@@ -1125,8 +1125,13 @@ class Parser:
 
         if self._match(TokenType.LBRACKET):
             sizes: list[int | None] = []
+            _PARAM_ARRAY_IGNORED = {TokenType.STATIC, TokenType.CONST, TokenType.VOLATILE, TokenType.RESTRICT}
             while self._match(TokenType.LBRACKET):
                 self._consume()  # consume "["
+                # C99/C11 §6.7.6.3: static + type-qualifiers inside a parameter
+                # array declarator are optimisation hints only — consume and discard.
+                while (tok := self._peek()) is not None and tok.type in _PARAM_ARRAY_IGNORED:
+                    self._consume()
                 sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 

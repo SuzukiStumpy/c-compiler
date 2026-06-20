@@ -87,6 +87,7 @@ Usual arithmetic conversions and integer promotions follow C11 sec. 6.3.1.
 - Struct and union declarations and definitions, including bit-fields (`int x : 3;`, `unsigned int : 5;`, `int : 0;`)
 - `enum` declarations and definitions at file and block scope; inline definitions (`enum Color { RED } x;`); anonymous enums (`enum { A, B };`); enumerator constants are `int`-typed values evaluated at semantic analysis time; enumerator values may be arbitrary constant expressions including binary operators, `sizeof`, and cross-enumerator references
 - Storage classes: `static`, `extern`, `auto`, and `register` (`auto` and `register` are silently ignored — C11 §6.7.1 no-ops)
+- Static array parameters: `int foo(int a[static 10])` — `static` and type-qualifiers inside a parameter array declarator are parsed and discarded (C99/C11 §6.7.6.3 minimum-size hint; no code-generation effect)
 - `typedef` declarations with scope-aware shadowing; typedef names resolve to concrete types at parse time
 - Type qualifiers: `const`, `volatile`, `restrict` — see below for enforcement details
 - Function specifiers: `inline` — parsed and stored on the function declaration; no inlining is performed; `_Noreturn` — parsed and stored on the function declaration; no contract enforcement is performed
@@ -280,7 +281,6 @@ The sections below describe C11 features that are not yet implemented. Reference
 | Missing feature | C11 reference | Notes |
 |---|---|---|
 | `_Generic` selection | sec. 6.5.1.1 | Type-generic macro building block used by `<tgmath.h>` |
-| Static array parameters `int foo(int a[static 10])` | sec. 6.7.6.3 | Minimum-size hint in array parameter declarators; currently causes a parse error |
 
 ### String and character literals
 

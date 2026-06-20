@@ -4,7 +4,7 @@ version         = "0.1.0"
 description     = "A minimal C compiler written in Python"
 readme          = "README.md"
 requires-python = ">=3.13"
-dependencies    = ["click>=8.3.3"]
+dependencies    = ["click>=8.4.1"]
 
 [build-system]
 requires      = ["uv_build"]
@@ -15,9 +15,9 @@ compiler = "compiler.compiler:compiler"
 
 [dependency-groups]
 dev = [
-    "debugpy>=1.8.20",
+    "debugpy>=1.8.21",
     "pre-commit>=4.6.0",
-    "pyrefly>=0.62.0",
+    "pyrefly>=1.0.0",
     "pytest>=9.0.3",
     "pytest-sugar>=1.1.1",
     "ruff>=0.15.11",
@@ -58,7 +58,9 @@ module-root = ""
 module-name = "compiler"
 
 [tool.pytest.ini_options]
-testpaths     = ["test"]
+testpaths = ["test"]
 norecursedirs = ["compiler", ".venv", "**/__pycache__"]
-addopts       = "--ignore=compiler --import-mode=importlib"
-markers       = ["integration: full compile-and-run tests (require a system assembler/linker)"]
+addopts = "--ignore=compiler --import-mode=importlib"
+markers = [
+    "integration: full compile-and-run tests (require a system assembler/linker)",
+]
