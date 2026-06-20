@@ -74,6 +74,7 @@ be replaced by ``Memory`` operands before the assembly is emitted.
 
 from compiler.syntax.asm.declarations import Function, Program, StaticConstant, StaticVariable, TopLevel
 from compiler.syntax.asm.instructions import (
+    Adc,
     AllocateStack,
     Binary,
     Call,
@@ -119,6 +120,7 @@ from compiler.syntax.asm.instructions import (
     Push,
     Ret,
     Sar,
+    Sbb,
     SetCC,
     Shl,
     Shr,
@@ -191,6 +193,7 @@ from compiler.syntax.asm.values import (
 
 __all__ = [
     # instructions
+    "Adc",
     "AllocateStack",
     "Binary",
     "Call",
@@ -235,6 +238,7 @@ __all__ = [
     "Pop",
     "Ret",
     "Sar",
+    "Sbb",
     "SetCC",
     "Shl",
     "Shr",

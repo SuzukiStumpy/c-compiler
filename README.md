@@ -14,7 +14,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `unsigned long` / `unsigned long long` | 64-bit unsigned integer (both are 8 bytes on x86-64 Linux) |
 | `short` / `signed short` / `unsigned short` | 16-bit integer; promotes to `int` for arithmetic (C11 §6.3.1.1) |
 | `char` / `signed char` / `unsigned char` | 8-bit character types |
-| `__int128` / `unsigned __int128` | GCC 128-bit extension; static variables and zero-initialisation supported; see note below |
+| `__int128` / `unsigned __int128` | GCC 128-bit extension; full arithmetic, bitwise, comparisons, function calls, and static initialisers supported |
 | `float` | 32-bit IEEE 754 floating-point; `f`/`F` suffix on literals |
 | `double` | 64-bit IEEE 754 floating-point |
 | `long double` | 80-bit x87 extended precision; `L`/`l` suffix on literals; passed/returned via stack (MEMORY class) |
@@ -39,8 +39,6 @@ Integer literals are accepted in all four C bases:
 | `0b` / `0B` | Binary (GCC extension) | `0b11111111` |
 
 All type suffixes (`u`, `U`, `l`, `L`, `ll`, `LL` and combinations) apply to every base.
-
-> **`__int128` note** — The type is fully recognised through the pipeline (lexer → parser → semantic analysis → TAC → assembly emission). Static variables with constant initialisers are emitted as two consecutive `.quad` directives (little-endian lo/hi). Local-variable arithmetic, multi-word instruction sequences (`adcq`/`sbbq`), and the SysV AMD64 two-register calling convention for 128-bit values are not yet implemented; any expression-level use of `__int128` beyond zero-initialisation will produce incorrect or incomplete code.
 
 ### Expressions
 
@@ -277,10 +275,6 @@ Register allocation runs unconditionally at the assembly level, using graph colo
 ## What is currently missing (C11)
 
 The sections below describe C11 features that are not yet implemented. References are to ISO/IEC 9899:2011.
-
-### Integer types
-
-`int`, `long`, `long long`, `unsigned int`, `unsigned long`, `unsigned long long`, `short`, `unsigned short`, and `char` (all three signed/plain/unsigned variants) are fully supported. `__int128` / `unsigned __int128` (a GCC extension) are partially supported — see the type table note above; full multi-word arithmetic is not implemented.
 
 ### Floating-point types
 

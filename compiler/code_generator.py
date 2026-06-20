@@ -85,6 +85,7 @@ from compiler.syntax.ast.types import (
     DoubleType,
     FloatType,
     FunType,
+    Int128Type,
     IntType,
     LongDoubleType,
     LongLongType,
@@ -189,6 +190,8 @@ def _asm_type(val: tac.Val, symbol_table: SymbolTable | None = None) -> asm.Asse
                     return asm.Byte()
                 case ShortType() | UShortType():
                     return asm.Word()
+                case Int128Type() | UInt128Type():
+                    return asm.Quadword()
                 case _:
                     return asm.Longword()
         case _:
@@ -421,6 +424,8 @@ def classify_parameters(
             result.append(classify_struct(t.tag, struct_type_table))
         elif isinstance(t, LongDoubleType):
             result.append([EightbyteClass.MEMORY])
+        elif isinstance(t, (Int128Type, UInt128Type)):
+            result.append([EightbyteClass.INTEGER, EightbyteClass.INTEGER])
         elif isinstance(t, (DoubleType, FloatType)):
             result.append([EightbyteClass.SSE])
         else:
@@ -481,6 +486,16 @@ def classify_return_value(
             # Long double is returned in ST0 (x87 top-of-stack), not in GP or XMM registers.
             # Handled separately in _translate_funcall by checking ret_type directly.
             return [], [], False
+        case Int128Type() | UInt128Type():
+            # __int128 is returned as [lo, hi] in [rax, rdx] per SysV AMD64 ABI.
+            return (
+                [
+                    asm.Register(_GP_RETURN_REGS[0], asm.Width.QWORD),
+                    asm.Register(_GP_RETURN_REGS[1], asm.Width.QWORD),
+                ],
+                [],
+                False,
+            )
         case DoubleType():
             return [], [asm.Register(asm.FPRegisters.XMM0, asm.Width.QWORD)], False
         case FloatType():
@@ -653,7 +668,7 @@ def _static_alignment(t: Type, struct_type_table: StructTypeTable | None = None)
         for smaller arrays; 8 for ``long``, ``unsigned long``, ``double``, or any
         pointer; the ``StructEntry.alignment`` for struct types; 4 otherwise.
     """
-    if isinstance(t, LongDoubleType):
+    if isinstance(t, (LongDoubleType, Int128Type, UInt128Type)):
         return 16
     if isinstance(t, (LongType, ULongType, LongLongType, ULongLongType, DoubleType, Pointer)):
         return 8
@@ -793,6 +808,9 @@ def _translate_function(
                 xmm_regs_left = max(0, xmm_regs_left - 1)
             elif classes == [EightbyteClass.INTEGER]:
                 int_regs_left = max(0, int_regs_left - 1)
+            elif classes == [EightbyteClass.INTEGER, EightbyteClass.INTEGER]:
+                # __int128: 2 integer eightbytes.
+                int_regs_left = max(0, int_regs_left - 2)
             effective_classes.append(classes)
 
     # When the function returns via hidden pointer, DI (index 0) is already used.
@@ -803,7 +821,15 @@ def _translate_function(
     for param, classes in zip(fn.params, effective_classes):
         param_type = symbol_table[param].t if (symbol_table and param in symbol_table) else None
 
-        if isinstance(param_type, (Structure, Union)):
+        if isinstance(param_type, (Int128Type, UInt128Type)):
+            # __int128: 2 INTEGER eightbytes, each arriving in a GP register.
+            src_lo: asm.Operand = asm.Register(_ABI_REGS[int_reg_idx], asm.Width.QWORD)
+            int_reg_idx += 1
+            src_hi: asm.Operand = asm.Register(_ABI_REGS[int_reg_idx], asm.Width.QWORD)
+            int_reg_idx += 1
+            instructions.append(asm.Mov(src=src_lo, dst=asm.PseudoMem(param, 0), assembly_type=asm.Quadword()))
+            instructions.append(asm.Mov(src=src_hi, dst=asm.PseudoMem(param, 8), assembly_type=asm.Quadword()))
+        elif isinstance(param_type, (Structure, Union)):
             if classes == [EightbyteClass.MEMORY]:
                 # Struct passed entirely on the stack; copy each eightbyte to a local PseudoMem.
                 entry = stt[param_type.tag]
@@ -892,6 +918,15 @@ def _translate_binary(
     Raises:
         CodeGenerationError: If the operator variant is not supported.
     """
+    # Dispatch 128-bit operations before the general integer/float path.
+    if (
+        isinstance(src1, tac.Var)
+        and symbol_table is not None
+        and src1.value in symbol_table
+        and isinstance(symbol_table[src1.value].t, (Int128Type, UInt128Type))
+    ):
+        assert isinstance(dst, tac.Var)
+        return _translate_128bit_binary(op, src1, src2, dst, symbol_table, constants)
     src1_asm = _translate_val(src1, constants, symbol_table)
     src2_asm = _translate_val(src2, constants, symbol_table)
     dst_asm = _translate_val(dst, constants, symbol_table)
@@ -1128,6 +1163,16 @@ def _translate_instruction(
                 return [asm.Ret()]
             if isinstance(val, tac.Var) and symbol_table is not None and val.value in symbol_table:
                 _ret_t = symbol_table[val.value].t
+                if isinstance(_ret_t, (Int128Type, UInt128Type)):
+                    # Return __int128: lo → rax, hi → rdx.
+                    _is_stat = _128bit_is_static(val.value, symbol_table)
+                    rax = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
+                    rdx = asm.Register(asm.GPRegisters.DX, asm.Width.QWORD)
+                    return [
+                        asm.Mov(src=_128bit_lo(val.value, _is_stat), dst=rax, assembly_type=asm.Quadword()),
+                        asm.Mov(src=_128bit_hi(val.value, _is_stat), dst=rdx, assembly_type=asm.Quadword()),
+                        asm.Ret(),
+                    ]
                 if isinstance(_ret_t, (Structure, Union)) and struct_type_table is not None:
                     return _translate_struct_return(val.value, _ret_t, symbol_table, struct_type_table, ret_ptr_name)
             at = _asm_type(val, symbol_table)
@@ -1250,11 +1295,37 @@ def _translate_instruction(
                     )
                     offset += chunk
                 return chunk_instrs
+            # 128-bit copy: two 64-bit moves (lo then hi).
+            if (
+                isinstance(src, tac.Var)
+                and isinstance(dst, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].t, (Int128Type, UInt128Type))
+            ):
+                src_stat = _128bit_is_static(src.value, symbol_table)
+                dst_stat = _128bit_is_static(dst.value, symbol_table)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                return [
+                    asm.Mov(src=_128bit_lo(src.value, src_stat), dst=r10q, assembly_type=asm.Quadword()),
+                    asm.Mov(src=r10q, dst=_128bit_lo(dst.value, dst_stat), assembly_type=asm.Quadword()),
+                    asm.Mov(src=_128bit_hi(src.value, src_stat), dst=r10q, assembly_type=asm.Quadword()),
+                    asm.Mov(src=r10q, dst=_128bit_hi(dst.value, dst_stat), assembly_type=asm.Quadword()),
+                ]
             at = _asm_type(src, symbol_table)
             return [asm.Mov(src=src_asm, dst=dst_asm, assembly_type=at)]
         case tac.Label(name=name):
             return [asm.Label(name)]
         case tac.Unary(operator=op, src=src, dst=dst):
+            # 128-bit unary ops handled specially before the normal integer/float path.
+            if (
+                isinstance(src, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].t, (Int128Type, UInt128Type))
+            ):
+                assert isinstance(src, tac.Var) and isinstance(dst, tac.Var)
+                return _translate_128bit_unary(op, src.value, dst.value, symbol_table)
             at = _asm_type(dst, symbol_table)
             src_asm = _translate_val(src, constants, symbol_table)
             dst_asm = _translate_val(dst, constants, symbol_table)
@@ -1375,6 +1446,30 @@ def _translate_instruction(
             dst_asm = _translate_val(dst, None, symbol_table) if dst is not None else None
             return _translate_funcall(fun_val, list(args), dst_asm, symbol_table, constants, struct_type_table)
         case tac.SignExtend(src=src, dst=dst):
+            # Extending to __int128: sign-extend src to 64-bit r10q, then sar 63 -> hi.
+            if (
+                isinstance(dst, tac.Var)
+                and symbol_table is not None
+                and dst.value in symbol_table
+                and isinstance(symbol_table[dst.value].t, (Int128Type, UInt128Type))
+            ):
+                assert isinstance(dst, tac.Var)
+                dst_stat = _128bit_is_static(dst.value, symbol_table)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                src_at = _asm_type(src, symbol_table)
+                src_asm = _translate_val(src, None, symbol_table)
+                if src_at == asm.Quadword():
+                    load_lo: list[asm.Instruction] = [asm.Mov(src=src_asm, dst=r10q, assembly_type=asm.Quadword())]
+                else:
+                    load_lo = [asm.Movsx(src_type=src_at, dst_type=asm.Quadword(), src=src_asm, dst=r10q)]
+                rax = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
+                rdx = asm.Register(asm.GPRegisters.DX, asm.Width.QWORD)
+                return load_lo + [
+                    asm.Mov(src=r10q, dst=rax, assembly_type=asm.Quadword()),
+                    asm.Cdq(assembly_type=asm.Quadword()),
+                    asm.Mov(src=rax, dst=_128bit_lo(dst.value, dst_stat), assembly_type=asm.Quadword()),
+                    asm.Mov(src=rdx, dst=_128bit_hi(dst.value, dst_stat), assembly_type=asm.Quadword()),
+                ]
             return [
                 asm.Movsx(
                     src_type=_asm_type(src, symbol_table),
@@ -1384,6 +1479,26 @@ def _translate_instruction(
                 )
             ]
         case tac.ZeroExtend(src=src, dst=dst):
+            # Extending to __int128: zero-extend src to 64-bit r10q, hi = 0.
+            if (
+                isinstance(dst, tac.Var)
+                and symbol_table is not None
+                and dst.value in symbol_table
+                and isinstance(symbol_table[dst.value].t, (Int128Type, UInt128Type))
+            ):
+                assert isinstance(dst, tac.Var)
+                dst_stat = _128bit_is_static(dst.value, symbol_table)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                src_at = _asm_type(src, symbol_table)
+                src_asm = _translate_val(src, None, symbol_table)
+                if src_at == asm.Quadword():
+                    load_lo_z: list[asm.Instruction] = [asm.Mov(src=src_asm, dst=r10q, assembly_type=asm.Quadword())]
+                else:
+                    load_lo_z = [asm.MoveZeroExtend(src_type=src_at, dst_type=asm.Quadword(), src=src_asm, dst=r10q)]
+                return load_lo_z + [
+                    asm.Mov(src=r10q, dst=_128bit_lo(dst.value, dst_stat), assembly_type=asm.Quadword()),
+                    asm.Mov(src=asm.Imm(0), dst=_128bit_hi(dst.value, dst_stat), assembly_type=asm.Quadword()),
+                ]
             return [
                 asm.MoveZeroExtend(
                     src_type=_asm_type(src, symbol_table),
@@ -1393,6 +1508,23 @@ def _translate_instruction(
                 )
             ]
         case tac.Truncate(src=src, dst=dst):
+            # Truncating from __int128: low 64 bits are at offset 0 (PseudoMem/Data).
+            if (
+                isinstance(src, tac.Var)
+                and symbol_table is not None
+                and src.value in symbol_table
+                and isinstance(symbol_table[src.value].t, (Int128Type, UInt128Type))
+            ):
+                assert isinstance(src, tac.Var)
+                src_stat = _128bit_is_static(src.value, symbol_table)
+                dst_asm = _translate_val(dst, None, symbol_table)
+                dst_at = _asm_type(dst, symbol_table)
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                r10_dst = asm.Register(asm.GPRegisters.R10, _at_to_width(dst_at))
+                return [
+                    asm.Mov(src=_128bit_lo(src.value, src_stat), dst=r10q, assembly_type=asm.Quadword()),
+                    asm.Mov(src=r10_dst, dst=dst_asm, assembly_type=dst_at),
+                ]
             # movb/movl truncates by discarding upper bits; assembly_type matches the destination width.
             return [
                 asm.Mov(
@@ -2349,6 +2481,480 @@ def _struct_src_operand(name: str, offset: int, is_static: bool) -> asm.Operand:
     return asm.Data(name, offset=offset) if is_static else asm.PseudoMem(name, offset)
 
 
+def _128bit_lo(name: str, is_static: bool) -> asm.Operand:
+    """Return a memory operand for the low 64 bits of a 128-bit variable.
+
+    Args:
+        name: The variable name.
+        is_static: ``True`` for global/file-scope variables (uses ``Data`` with RIP-relative addressing).
+
+    Returns:
+        ``Data(name, offset=0)`` for statics; ``PseudoMem(name, 0)`` for locals.
+    """
+    return asm.Data(name, offset=0) if is_static else asm.PseudoMem(name, 0)
+
+
+def _128bit_hi(name: str, is_static: bool) -> asm.Operand:
+    """Return a memory operand for the high 64 bits of a 128-bit variable.
+
+    Args:
+        name: The variable name.
+        is_static: ``True`` for global/file-scope variables.
+
+    Returns:
+        ``Data(name, offset=8)`` for statics; ``PseudoMem(name, 8)`` for locals.
+    """
+    return asm.Data(name, offset=8) if is_static else asm.PseudoMem(name, 8)
+
+
+def _is_128bit_var(val: tac.Val, symbol_table: SymbolTable | None) -> bool:
+    """Return ``True`` when ``val`` is a ``tac.Var`` with ``Int128Type`` or ``UInt128Type``.
+
+    Args:
+        val: The TAC value to inspect.
+        symbol_table: The program-wide symbol table.
+
+    Returns:
+        ``True`` iff ``val`` is a variable with a 128-bit integer type.
+    """
+    return (
+        isinstance(val, tac.Var)
+        and symbol_table is not None
+        and val.value in symbol_table
+        and isinstance(symbol_table[val.value].t, (Int128Type, UInt128Type))
+    )
+
+
+def _128bit_is_static(name: str, symbol_table: SymbolTable) -> bool:
+    """Return ``True`` when ``name`` has static storage duration.
+
+    Args:
+        name: The variable name to look up.
+        symbol_table: The program-wide symbol table.
+
+    Returns:
+        ``True`` iff the named entry has ``StaticAttr`` or ``FunAttr``.
+    """
+    return isinstance(symbol_table[name].attrs, (StaticAttr, FunAttr))
+
+
+def _translate_128bit_binary(
+    op: tac.BinaryOperator,
+    src1: tac.Val,
+    src2: tac.Val,
+    dst: tac.Val,
+    symbol_table: SymbolTable,
+    constants: list[asm.TopLevel] | None,
+) -> list[asm.Instruction]:
+    """Lower a 128-bit binary operation to a two-quadword instruction sequence.
+
+    Arithmetic and bitwise operations on ``__int128`` / ``unsigned __int128`` are split
+    into lo (bits 0-63) and hi (bits 64-127) halves:
+
+    - Add: ``addq lo`` sets CF; ``adcq hi`` adds with carry.
+    - Subtract: ``subq lo`` sets CF; ``sbbq hi`` subtracts with borrow.
+    - And/Or/Xor: identical operation applied to each half independently.
+    - Multiply/Divide/Remainder/Shifts: delegated to GCC ``libgcc`` runtime helpers
+      (``__multi3``, ``__divti3``, ``__udivti3``, ``__modti3``, ``__umodti3``,
+      ``__ashlti3``, ``__ashrti3``, ``__lshrti3``).
+    - Comparisons: forwarded to :func:`_translate_128bit_comparison`.
+
+    Args:
+        op: The TAC binary operator.
+        src1: Left source operand (must be a ``tac.Var`` of 128-bit type).
+        src2: Right source operand (``tac.Var`` or ``tac.Constant``).
+        dst: Destination variable (``tac.Var`` of 128-bit type).
+        symbol_table: Used to resolve variable types and storage classes.
+        constants: Accumulator for ``StaticConstant`` entries.
+
+    Returns:
+        A list of assembly instructions implementing the 128-bit operation.
+
+    Raises:
+        CodeGenerationError: For unsupported operator variants.
+    """
+    assert isinstance(src1, tac.Var) and isinstance(dst, tac.Var)
+    src1_name = src1.value
+    dst_name = dst.value
+    src1_is_static = _128bit_is_static(src1_name, symbol_table)
+    dst_is_static = _128bit_is_static(dst_name, symbol_table)
+
+    lo_s1 = _128bit_lo(src1_name, src1_is_static)
+    hi_s1 = _128bit_hi(src1_name, src1_is_static)
+
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
+
+    unsigned = isinstance(symbol_table[src1_name].t, UInt128Type)
+
+    # Comparisons only need src1 halves (comparison resolves src2 name separately).
+    match op:
+        case (
+            tac.Equal() | tac.NotEqual() | tac.LessThan() | tac.LessOrEqual() | tac.GreaterThan() | tac.GreaterOrEqual()
+        ):
+            assert isinstance(src2, tac.Var)
+            src2_name = src2.value
+            src2_is_static = _128bit_is_static(src2_name, symbol_table)
+            return _translate_128bit_comparison(
+                op, src1_name, src1_is_static, src2_name, src2_is_static, dst, symbol_table
+            )
+        case tac.Multiply() | tac.Divide() | tac.Remainder():
+            pass
+        case tac.LeftShift():
+            return _translate_128bit_shift("__ashlti3", src1, src2, dst, symbol_table, constants)
+        case tac.RightShift():
+            helper_shift = "__lshrti3" if unsigned else "__ashrti3"
+            return _translate_128bit_shift(helper_shift, src1, src2, dst, symbol_table, constants)
+        case _:
+            pass
+
+    # Paired arithmetic / bitwise ops and libgcc helpers need src2 as a 128-bit var.
+    if not isinstance(src2, tac.Var) or src2.value not in symbol_table:
+        raise CodeGenerationError(f"128-bit binary src2 must be a 128-bit Var, got {type(src2).__name__}")
+    src2_name = src2.value
+    src2_is_static = _128bit_is_static(src2_name, symbol_table)
+    lo_s2: asm.Operand = _128bit_lo(src2_name, src2_is_static)
+    hi_s2: asm.Operand = _128bit_hi(src2_name, src2_is_static)
+
+    match op:
+        case tac.Add():
+            return [
+                asm.Binary(operator=asm.Add(), src1=lo_s1, src2=lo_s2, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=_128bit_lo(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+                asm.Mov(src=hi_s1, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Adc(src=hi_s2, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=_128bit_hi(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+            ]
+        case tac.Subtract():
+            return [
+                asm.Binary(operator=asm.Sub(), src1=lo_s1, src2=lo_s2, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=_128bit_lo(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+                asm.Mov(src=hi_s1, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Sbb(src=hi_s2, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=_128bit_hi(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+            ]
+        case tac.BitwiseAnd():
+            return [
+                asm.Binary(operator=asm.And(), src1=lo_s1, src2=lo_s2, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=_128bit_lo(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+                asm.Binary(operator=asm.And(), src1=hi_s1, src2=hi_s2, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=_128bit_hi(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+            ]
+        case tac.BitwiseOr():
+            return [
+                asm.Binary(operator=asm.Or(), src1=lo_s1, src2=lo_s2, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=_128bit_lo(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+                asm.Binary(operator=asm.Or(), src1=hi_s1, src2=hi_s2, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=_128bit_hi(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+            ]
+        case tac.BitwiseXor():
+            return [
+                asm.Binary(operator=asm.Xor(), src1=lo_s1, src2=lo_s2, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=_128bit_lo(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+                asm.Binary(operator=asm.Xor(), src1=hi_s1, src2=hi_s2, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=_128bit_hi(dst_name, dst_is_static), assembly_type=asm.Quadword()),
+            ]
+        case tac.Multiply():
+            return _translate_128bit_libgcc_binop("__multi3", src1, src2, dst, symbol_table, constants)
+        case tac.Divide():
+            helper = "__udivti3" if unsigned else "__divti3"
+            return _translate_128bit_libgcc_binop(helper, src1, src2, dst, symbol_table, constants)
+        case tac.Remainder():
+            helper = "__umodti3" if unsigned else "__modti3"
+            return _translate_128bit_libgcc_binop(helper, src1, src2, dst, symbol_table, constants)
+        case _:
+            raise CodeGenerationError(f"unsupported 128-bit binary operator: {type(op).__name__}")
+
+
+def _translate_128bit_libgcc_binop(
+    helper: str,
+    src1: tac.Val,
+    src2: tac.Val,
+    dst: tac.Val,
+    symbol_table: SymbolTable,
+    constants: list[asm.TopLevel] | None,
+) -> list[asm.Instruction]:
+    """Emit a call to a GCC ``libgcc`` 128-bit binary helper (multiply, divide, remainder).
+
+    The helper follows the SysV AMD64 calling convention for ``__int128`` arguments:
+    src1.lo → rdi, src1.hi → rsi, src2.lo → rdx, src2.hi → rcx.
+    The result is returned as lo in rax, hi in rdx.
+
+    Args:
+        helper: The ``libgcc`` symbol name (e.g. ``"__multi3"``).
+        src1: First 128-bit source (``tac.Var``).
+        src2: Second 128-bit source (``tac.Var``).
+        dst: Destination 128-bit variable (``tac.Var``).
+        symbol_table: Program-wide symbol table.
+        constants: Unused; kept for signature uniformity.
+
+    Returns:
+        Assembly instructions for the libgcc helper call.
+    """
+    assert isinstance(src1, tac.Var) and isinstance(src2, tac.Var) and isinstance(dst, tac.Var)
+    s1_stat = _128bit_is_static(src1.value, symbol_table)
+    s2_stat = _128bit_is_static(src2.value, symbol_table)
+    dst_stat = _128bit_is_static(dst.value, symbol_table)
+    rdi = asm.Register(asm.GPRegisters.DI, asm.Width.QWORD)
+    rsi = asm.Register(asm.GPRegisters.SI, asm.Width.QWORD)
+    rdx = asm.Register(asm.GPRegisters.DX, asm.Width.QWORD)
+    rcx = asm.Register(asm.GPRegisters.CX, asm.Width.QWORD)
+    rax = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
+    return [
+        asm.Mov(src=_128bit_lo(src1.value, s1_stat), dst=rdi, assembly_type=asm.Quadword()),
+        asm.Mov(src=_128bit_hi(src1.value, s1_stat), dst=rsi, assembly_type=asm.Quadword()),
+        asm.Mov(src=_128bit_lo(src2.value, s2_stat), dst=rdx, assembly_type=asm.Quadword()),
+        asm.Mov(src=_128bit_hi(src2.value, s2_stat), dst=rcx, assembly_type=asm.Quadword()),
+        asm.Call(helper),
+        asm.Mov(src=rax, dst=_128bit_lo(dst.value, dst_stat), assembly_type=asm.Quadword()),
+        asm.Mov(src=rdx, dst=_128bit_hi(dst.value, dst_stat), assembly_type=asm.Quadword()),
+    ]
+
+
+def _translate_128bit_shift(
+    helper: str,
+    src1: tac.Val,
+    src2: tac.Val,
+    dst: tac.Val,
+    symbol_table: SymbolTable,
+    constants: list[asm.TopLevel] | None,
+) -> list[asm.Instruction]:
+    """Emit a call to a GCC ``libgcc`` 128-bit shift helper.
+
+    Shift helpers take the 128-bit value in (rdi=lo, rsi=hi) and the shift count
+    in rdx (as a 32-bit int).  The result is returned as lo in rax, hi in rdx.
+
+    Args:
+        helper: The ``libgcc`` symbol name (``__ashlti3``, ``__ashrti3``, or ``__lshrti3``).
+        src1: The 128-bit value to shift (``tac.Var``).
+        src2: The shift count (``tac.Var`` or ``tac.Constant`` with an integer type).
+        dst: Destination 128-bit variable (``tac.Var``).
+        symbol_table: Program-wide symbol table.
+        constants: Accumulator for ``StaticConstant`` entries.
+
+    Returns:
+        Assembly instructions for the libgcc shift helper call.
+    """
+    assert isinstance(src1, tac.Var) and isinstance(dst, tac.Var)
+    s1_stat = _128bit_is_static(src1.value, symbol_table)
+    dst_stat = _128bit_is_static(dst.value, symbol_table)
+    rdi = asm.Register(asm.GPRegisters.DI, asm.Width.QWORD)
+    rsi = asm.Register(asm.GPRegisters.SI, asm.Width.QWORD)
+    rdx = asm.Register(asm.GPRegisters.DX, asm.Width.QWORD)
+    edx = asm.Register(asm.GPRegisters.DX, asm.Width.DWORD)
+    rax = asm.Register(asm.GPRegisters.AX, asm.Width.QWORD)
+    count_asm = _translate_val(src2, constants, symbol_table)
+    return [
+        asm.Mov(src=_128bit_lo(src1.value, s1_stat), dst=rdi, assembly_type=asm.Quadword()),
+        asm.Mov(src=_128bit_hi(src1.value, s1_stat), dst=rsi, assembly_type=asm.Quadword()),
+        asm.Mov(src=count_asm, dst=edx, assembly_type=asm.Longword()),
+        asm.Call(helper),
+        asm.Mov(src=rax, dst=_128bit_lo(dst.value, dst_stat), assembly_type=asm.Quadword()),
+        asm.Mov(src=rdx, dst=_128bit_hi(dst.value, dst_stat), assembly_type=asm.Quadword()),
+    ]
+
+
+def _translate_128bit_comparison(
+    op: tac.BinaryOperator,
+    src1_name: str,
+    src1_is_static: bool,
+    src2_name: str,
+    src2_is_static: bool,
+    dst: tac.Val,
+    symbol_table: SymbolTable,
+) -> list[asm.Instruction]:
+    """Lower a 128-bit relational comparison to a branch-based instruction sequence.
+
+    Comparisons are implemented by first comparing the high halves; if they differ the
+    result follows from that comparison alone.  When the high halves are equal the low
+    halves are compared (always unsigned for the lo half).
+
+    Equal/NotEqual use a branchless ``xorq``/``orq``/``set`` sequence.
+    All other operators use labelled branches.
+
+    Args:
+        op: The TAC relational operator.
+        src1_name: Name of the left 128-bit operand.
+        src1_is_static: ``True`` when ``src1`` has static storage.
+        src2_name: Name of the right 128-bit operand.
+        src2_is_static: ``True`` when ``src2`` has static storage.
+        dst: The destination (integer) variable for the boolean result.
+        symbol_table: Program-wide symbol table.
+
+    Returns:
+        A list of assembly instructions producing the comparison result (0 or 1) in ``dst``.
+
+    Raises:
+        CodeGenerationError: If the operator is not a supported relational variant.
+    """
+    unsigned = isinstance(symbol_table[src1_name].t, UInt128Type)
+
+    lo_a = _128bit_lo(src1_name, src1_is_static)
+    hi_a = _128bit_hi(src1_name, src1_is_static)
+    lo_b = _128bit_lo(src2_name, src2_is_static)
+    hi_b = _128bit_hi(src2_name, src2_is_static)
+
+    dst_asm = _translate_val(dst, None, symbol_table)
+    r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
+    r11b = asm.Register(asm.GPRegisters.R11, asm.Width.BYTE)
+
+    # Use Cmp(op1=src2_half, op2=src1_half) so the flags encode (src1 - src2).
+    # Both halves are passed as PseudoMem/Data; _fix_instructions routes op1 through r10
+    # when both are memory, avoiding the r10q clobber that occurs when we pre-load.
+    match op:
+        case tac.Equal():
+            return [
+                asm.Cmp(op1=lo_b, op2=lo_a, assembly_type=asm.Quadword()),
+                asm.SetCC(asm.CondCodes.E, r10b),
+                asm.Cmp(op1=hi_b, op2=hi_a, assembly_type=asm.Quadword()),
+                asm.SetCC(asm.CondCodes.E, r11b),
+                asm.Binary(operator=asm.And(), src1=r11b, src2=r10b, dst=r10b, assembly_type=asm.Byte()),
+                asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=r10b, dst=dst_asm),
+            ]
+        case tac.NotEqual():
+            return [
+                asm.Cmp(op1=lo_b, op2=lo_a, assembly_type=asm.Quadword()),
+                asm.SetCC(asm.CondCodes.NE, r10b),
+                asm.Cmp(op1=hi_b, op2=hi_a, assembly_type=asm.Quadword()),
+                asm.SetCC(asm.CondCodes.NE, r11b),
+                asm.Binary(operator=asm.Or(), src1=r11b, src2=r10b, dst=r10b, assembly_type=asm.Byte()),
+                asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=r10b, dst=dst_asm),
+            ]
+        case _:
+            pass
+
+    uid = _fresh_uid()
+    true_label = f"cmp128_true.{uid}"
+    false_label = f"cmp128_false.{uid}"
+    done_label = f"cmp128_done.{uid}"
+
+    match op:
+        case tac.LessThan():
+            hi_true_cc = asm.CondCodes.B if unsigned else asm.CondCodes.L
+            lo_true_cc = asm.CondCodes.B
+        case tac.LessOrEqual():
+            hi_true_cc = asm.CondCodes.B if unsigned else asm.CondCodes.L
+            lo_true_cc = asm.CondCodes.BE
+        case tac.GreaterThan():
+            hi_true_cc = asm.CondCodes.A if unsigned else asm.CondCodes.G
+            lo_true_cc = asm.CondCodes.A
+        case tac.GreaterOrEqual():
+            hi_true_cc = asm.CondCodes.A if unsigned else asm.CondCodes.G
+            lo_true_cc = asm.CondCodes.AE
+        case _:
+            raise CodeGenerationError(f"unsupported 128-bit comparison: {type(op).__name__}")
+
+    return [
+        asm.Cmp(op1=hi_b, op2=hi_a, assembly_type=asm.Quadword()),
+        asm.JmpCC(hi_true_cc, true_label),
+        asm.JmpCC(asm.CondCodes.NE, false_label),
+        asm.Cmp(op1=lo_b, op2=lo_a, assembly_type=asm.Quadword()),
+        asm.JmpCC(lo_true_cc, true_label),
+        asm.Label(false_label),
+        asm.Mov(src=asm.Imm(0), dst=dst_asm, assembly_type=asm.Longword()),
+        asm.Jmp(done_label),
+        asm.Label(true_label),
+        asm.Mov(src=asm.Imm(1), dst=dst_asm, assembly_type=asm.Longword()),
+        asm.Label(done_label),
+    ]
+
+
+def _translate_128bit_unary(
+    op: tac.UnaryOperator,
+    src_name: str,
+    dst_name: str,
+    symbol_table: SymbolTable,
+) -> list[asm.Instruction]:
+    """Lower a 128-bit unary operation to a two-quadword instruction sequence.
+
+    Supported operators:
+
+    - ``Negate`` (2's complement): ``notq lo; notq hi; addq $1, lo; adcq $0, hi``
+    - ``Complement`` (bitwise NOT): ``notq lo; notq hi``
+    - ``Not`` (logical NOT): compares both halves to zero; result is 1 iff value == 0.
+
+    Args:
+        op: The TAC unary operator.
+        src_name: Name of the source 128-bit variable.
+        dst_name: Name of the destination variable.
+        symbol_table: Program-wide symbol table for storage class lookups.
+
+    Returns:
+        Assembly instructions implementing the unary operation.
+
+    Raises:
+        CodeGenerationError: If ``op`` is not supported for 128-bit operands.
+    """
+    src_stat = _128bit_is_static(src_name, symbol_table)
+    dst_stat = _128bit_is_static(dst_name, symbol_table)
+
+    lo_s = _128bit_lo(src_name, src_stat)
+    hi_s = _128bit_hi(src_name, src_stat)
+    lo_d = _128bit_lo(dst_name, dst_stat)
+    hi_d = _128bit_hi(dst_name, dst_stat)
+
+    r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+    r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)
+
+    match op:
+        case tac.Negate():
+            return [
+                asm.Mov(src=lo_s, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Unary(operator=asm.Not(), operand=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=hi_s, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Unary(operator=asm.Not(), operand=r11q, assembly_type=asm.Quadword()),
+                asm.Binary(operator=asm.Add(), src1=asm.Imm(1), src2=r10q, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Adc(src=asm.Imm(0), dst=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=lo_d, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=hi_d, assembly_type=asm.Quadword()),
+            ]
+        case tac.Complement():
+            return [
+                asm.Mov(src=lo_s, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Unary(operator=asm.Not(), operand=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r10q, dst=lo_d, assembly_type=asm.Quadword()),
+                asm.Mov(src=hi_s, dst=r11q, assembly_type=asm.Quadword()),
+                asm.Unary(operator=asm.Not(), operand=r11q, assembly_type=asm.Quadword()),
+                asm.Mov(src=r11q, dst=hi_d, assembly_type=asm.Quadword()),
+            ]
+        case tac.Not():
+            # dst = (src == 0): OR lo and hi; if zero then result is 1 else 0.
+            # dst is always a non-128-bit integer (result of logical NOT is int).
+            dst_operand: asm.Operand = asm.Pseudo(dst_name)
+            r10b = asm.Register(asm.GPRegisters.R10, asm.Width.BYTE)
+            return [
+                asm.Mov(src=lo_s, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Binary(operator=asm.Or(), src1=hi_s, src2=r10q, dst=r10q, assembly_type=asm.Quadword()),
+                asm.Cmp(op1=asm.Imm(0), op2=r10q, assembly_type=asm.Quadword()),
+                asm.Mov(src=asm.Imm(0), dst=dst_operand, assembly_type=asm.Longword()),
+                asm.SetCC(asm.CondCodes.E, r10b),
+                asm.MoveZeroExtend(src_type=asm.Byte(), dst_type=asm.Longword(), src=r10b, dst=dst_operand),
+            ]
+        case _:
+            raise CodeGenerationError(f"unsupported 128-bit unary operator: {type(op).__name__}")
+
+
+def _at_to_width(at: asm.AssemblyType) -> asm.Width:
+    """Map an ``AssemblyType`` to the corresponding register ``Width``.
+
+    Args:
+        at: The assembly type to convert.
+
+    Returns:
+        The ``Width`` value matching the type's natural register size.
+
+    Raises:
+        CodeGenerationError: If ``at`` has no corresponding register width (e.g. ``ByteArray``).
+    """
+    if at == asm.Byte():
+        return asm.Width.BYTE
+    if at == asm.Longword():
+        return asm.Width.DWORD
+    if at == asm.Quadword():
+        return asm.Width.QWORD
+    raise CodeGenerationError(f"no register width for assembly type {at!r}")
+
+
 def _bf_asm_type(unit_size: int) -> asm.AssemblyType:
     """Return the assembly type that matches a bit-field storage unit size.
 
@@ -2810,7 +3416,25 @@ def _translate_funcall(
             if (symbol_table and isinstance(arg, tac.Var) and arg.value in symbol_table)
             else None
         )  # type: ignore[union-attr]
-        if isinstance(arg_type, (Structure, Union)) and isinstance(arg, tac.Var):
+        if isinstance(arg_type, (Int128Type, UInt128Type)) and isinstance(arg, tac.Var):
+            # __int128 is [INTEGER, INTEGER]; 2 GP registers for lo and hi.
+            is_static_128 = bool(
+                symbol_table
+                and arg.value in symbol_table
+                and isinstance(symbol_table[arg.value].attrs, (StaticAttr, FunAttr))
+            )
+            if 2 <= len(_ABI_REGS) - int_reg_idx:
+                src_lo = ("struct", arg.value, 0, 8, is_static_128, EightbyteClass.INTEGER)
+                src_hi = ("struct", arg.value, 8, 8, is_static_128, EightbyteClass.INTEGER)
+                int_reg_args.append((src_lo, int_reg_idx))
+                int_reg_idx += 1
+                int_reg_args.append((src_hi, int_reg_idx))
+                int_reg_idx += 1
+            else:
+                # Not enough registers; pass on stack (lo first, then hi).
+                stack_args.append(("struct", arg.value, 0, 8, is_static_128, EightbyteClass.MEMORY))
+                stack_args.append(("struct", arg.value, 8, 8, is_static_128, EightbyteClass.MEMORY))
+        elif isinstance(arg_type, (Structure, Union)) and isinstance(arg, tac.Var):
             entry = stt.get(arg_type.tag)
             if entry is None:
                 raise CodeGenerationError(f"struct/union type '{arg_type.tag}' not in struct_type_table")
@@ -3041,7 +3665,15 @@ def _translate_funcall(
                 and dst_name in symbol_table
                 and isinstance(symbol_table[dst_name].attrs, (StaticAttr, FunAttr))
             )
-            if isinstance(ret_type, (Structure, Union)):
+            if isinstance(ret_type, (Int128Type, UInt128Type)) and dst_name:
+                # __int128 returned as lo in rax, hi in rdx.
+                instrs.append(
+                    asm.Mov(src=gp_ret[0], dst=_128bit_lo(dst_name, is_dst_static), assembly_type=asm.Quadword())
+                )
+                instrs.append(
+                    asm.Mov(src=gp_ret[1], dst=_128bit_hi(dst_name, is_dst_static), assembly_type=asm.Quadword())
+                )
+            elif isinstance(ret_type, (Structure, Union)):
                 entry = stt[ret_type.tag]
                 struct_size = entry.size
                 classes = classify_struct(ret_type.tag, stt)
@@ -3166,7 +3798,10 @@ def _translate_val(
             if (
                 symbol_table is not None
                 and name in symbol_table
-                and isinstance(symbol_table[name].t, (ArrayType, Structure, Union, LongDoubleType))
+                and isinstance(
+                    symbol_table[name].t,
+                    (ArrayType, Structure, Union, LongDoubleType, Int128Type, UInt128Type),
+                )
             ):
                 return asm.PseudoMem(name, 0)
             return asm.Pseudo(name=name)
@@ -3698,6 +4333,10 @@ def _replace_pseudos(
                 new_instructions.append(asm.Flds(src=resolve(src)))
             case asm.Fstps(dst=dst):
                 new_instructions.append(asm.Fstps(dst=resolve(dst)))
+            case asm.Adc(assembly_type=at, src=src, dst=dst):
+                new_instructions.append(asm.Adc(src=resolve(src), dst=resolve(dst), assembly_type=at))
+            case asm.Sbb(assembly_type=at, src=src, dst=dst):
+                new_instructions.append(asm.Sbb(src=resolve(src), dst=resolve(dst), assembly_type=at))
             case _:
                 new_instructions.append(instr)
 
@@ -4067,6 +4706,16 @@ def _fix_instructions(fn: asm.Function) -> asm.Function:
                 r10 = asm.Register(asm.GPRegisters.R10, _reg_width(at))
                 fixed.append(asm.Mov(src=operand, dst=r10, assembly_type=at))
                 fixed.append(asm.Push(operand=asm.Register(asm.GPRegisters.R10, asm.Width.QWORD), assembly_type=at))
+            case asm.Adc(assembly_type=at, src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
+                # adcq cannot have both src and dst in memory; route src through %r10.
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=src, dst=r10q, assembly_type=at))
+                fixed.append(asm.Adc(src=r10q, dst=dst, assembly_type=at))
+            case asm.Sbb(assembly_type=at, src=src, dst=dst) if _is_mem(src) and _is_mem(dst):
+                # sbbq cannot have both src and dst in memory; route src through %r10.
+                r10q = asm.Register(asm.GPRegisters.R10, asm.Width.QWORD)
+                fixed.append(asm.Mov(src=src, dst=r10q, assembly_type=at))
+                fixed.append(asm.Sbb(src=r10q, dst=dst, assembly_type=at))
             case asm.Lea(src=src, dst=dst) if _is_mem(dst):
                 # leaq destination must be a register; route through %r11 then store.
                 r11q = asm.Register(asm.GPRegisters.R11, asm.Width.QWORD)

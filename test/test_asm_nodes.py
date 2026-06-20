@@ -10,6 +10,7 @@ import struct
 import pytest
 
 from compiler.syntax.asm import (
+    Adc,
     AddFloat,
     AllocateStack,
     Binary,
@@ -59,6 +60,7 @@ from compiler.syntax.asm import (
     Quadword,
     Register,
     Ret,
+    Sbb,
     SetCC,
     ShortInit,
     StaticConstant,
@@ -567,6 +569,38 @@ class TestCmpByteEmit:
     def test_cmp_longword_regression(self) -> None:
         """``Cmp(Longword)`` still emits ``cmpl``."""
         assert Cmp(op1=_R10_DWORD, op2=_AX_DWORD, assembly_type=Longword()).emit() == "      cmpl  %r10d, %eax"
+
+
+class TestAdcEmit:
+    """``Adc`` emits add-with-carry instructions for 128-bit arithmetic."""
+
+    def test_adc_quadword_emits_adcq(self) -> None:
+        """``Adc(Quadword, src, dst)`` emits ``adcq src, dst``."""
+        assert Adc(src=_R10_QWORD, dst=_AX_QWORD, assembly_type=Quadword()).emit() == "      adcq  %r10, %rax"
+
+    def test_adc_longword_emits_adcl(self) -> None:
+        """``Adc(Longword, src, dst)`` emits ``adcl src, dst``."""
+        assert Adc(src=_R10_DWORD, dst=_AX_DWORD, assembly_type=Longword()).emit() == "      adcl  %r10d, %eax"
+
+    def test_adc_imm_src(self) -> None:
+        """``Adc`` accepts an immediate source (used for carry-propagation with $0)."""
+        assert Adc(src=Imm(0), dst=_AX_QWORD, assembly_type=Quadword()).emit() == "      adcq  $0, %rax"
+
+
+class TestSbbEmit:
+    """``Sbb`` emits subtract-with-borrow instructions for 128-bit arithmetic."""
+
+    def test_sbb_quadword_emits_sbbq(self) -> None:
+        """``Sbb(Quadword, src, dst)`` emits ``sbbq src, dst``."""
+        assert Sbb(src=_R10_QWORD, dst=_AX_QWORD, assembly_type=Quadword()).emit() == "      sbbq  %r10, %rax"
+
+    def test_sbb_longword_emits_sbbl(self) -> None:
+        """``Sbb(Longword, src, dst)`` emits ``sbbl src, dst``."""
+        assert Sbb(src=_R10_DWORD, dst=_AX_DWORD, assembly_type=Longword()).emit() == "      sbbl  %r10d, %eax"
+
+    def test_sbb_imm_src(self) -> None:
+        """``Sbb`` accepts an immediate source."""
+        assert Sbb(src=Imm(0), dst=_AX_QWORD, assembly_type=Quadword()).emit() == "      sbbq  $0, %rax"
 
 
 class TestMovsxEmit:

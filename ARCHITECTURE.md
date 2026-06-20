@@ -63,7 +63,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 
 | Submodule | Contents |
 |---|---|
-| `instructions.py` | Assembly instruction nodes (`Mov`, `Binary`, `Unary`, `Idiv`, `Div`, `Cdq`, `Cmp`, `Jmp`, `JmpCC`, `SetCC`, `Label`, `Ret`, `Call`, `IndirectCall`, `Lea`, `Push`, `Pop`, `Movsx`, `MoveZeroExtend`, `AllocateStack`, `DeallocateStack`, `Cvttsd2si`, `Cvtsi2sd`, `Cvttss2si`, `Cvtsi2ss`, `Cvtss2sd`, `Cvtsd2ss`, `Ud2`) |
+| `instructions.py` | Assembly instruction nodes (`Mov`, `Binary`, `Unary`, `Idiv`, `Div`, `Cdq`, `Adc`, `Sbb`, `Cmp`, `Jmp`, `JmpCC`, `SetCC`, `Label`, `Ret`, `Call`, `IndirectCall`, `Lea`, `Push`, `Pop`, `Movsx`, `MoveZeroExtend`, `AllocateStack`, `DeallocateStack`, `Cvttsd2si`, `Cvtsi2sd`, `Cvttss2si`, `Cvtsi2ss`, `Cvtss2sd`, `Cvtsd2ss`, `Ud2`) |
 | `operands.py` | `Operand` hierarchy: `Imm`, `Register`, `Pseudo`, `Memory`, `Indexed`, `Data`, `PseudoMem`; `GPRegisters`/`FPRegisters` enums; `Width` enum; `ALLOCATABLE_GP`/`ALLOCATABLE_FP` |
 | `values.py` | `AssemblyType` variants: `Byte`, `Word`, `Longword`, `Quadword`, `Double`, `Float`, `LongDouble`, `ByteArray`; `StaticInit` variants include `StringInit(string, null_terminated, element_size)` |
 | `operators.py` | Assembly operator enums |
@@ -122,6 +122,22 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
 - **String literals** (stored as hidden static objects in `.rodata`): plain `"..."`, `u8"..."` (UTF-8, `char *`), `L"..."` (wide, `int *`, 4 bytes/char), `u"..."` (UTF-16, `unsigned short *`, 2 bytes/char), `U"..."` (UTF-32, `unsigned int *`, 4 bytes/char); `StringEncoding` enum controls element type and NUL-terminator width (`element_size`); adjacent literals of the same encoding are concatenated
 - **`__func__` predefined identifier** (C99/C11 §6.4.2.2): resolved by semantic analysis to a `String` node containing the enclosing function's name; behaves like `static const char __func__[] = "fn_name";`
+
+## `__int128` code generation
+
+`__int128` and `unsigned __int128` are memory-resident (stored as `PseudoMem`) at 16-byte alignment with 8 bytes of low half followed by 8 bytes of high half.
+
+- **Add/Subtract**: `addq`/`subq` for the low half (sets CF), then `adcq`/`sbbq` for the high half (uses CF).
+- **Bitwise And/Or/Xor**: two independent paired 64-bit operations.
+- **Multiply/Divide/Remainder/Shifts**: delegated to GCC `libgcc` runtime helpers (`__multi3`, `__divti3`/`__udivti3`, `__modti3`/`__umodti3`, `__ashlti3`, `__ashrti3`/`__lshrti3`).
+- **Negate**: `notq lo; notq hi; addq $1, lo; adcq $0, hi`.
+- **Complement**: `notq lo; notq hi`.
+- **Comparisons**: branch-based hi-then-lo comparison (signed uses `jl`/`jg`; unsigned uses `jb`/`ja`). Equal/NotEqual use branchless `sete`/`setne` + AND/OR.
+- **Sign-extend to 128-bit**: sign-extend source to `%rax`, then `cqo` fills `%rdx` with the sign.
+- **Zero-extend to 128-bit**: zero-extend source to low half, store 0 to high half.
+- **Truncate from 128-bit**: load low half, write target width.
+
+**SysV AMD64 calling convention**: `__int128` is classified as `[INTEGER, INTEGER]` (two eightbytes). Function parameters arrive in two consecutive GP registers (e.g. `rdi`/`rsi` for the first `__int128` arg, `rdx`/`rcx` for the second). Return values use `rax` (lo) and `rdx` (hi).
 
 ## Target
 

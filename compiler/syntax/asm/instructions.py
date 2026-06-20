@@ -466,6 +466,76 @@ class Div(Instruction):
 
 
 @dataclass(frozen=True, slots=True)
+class Adc(Instruction):
+    """An ``adcb``/``adcl``/``adcq`` instruction: ``dst = dst + src + CF``.
+
+    Used as the high-half step in 128-bit addition, where the carry flag from the
+    low-half ``addq`` propagates into the high-half sum.
+
+    Attributes:
+        src: The source operand (register, memory, or immediate).
+        dst: The destination operand (register or memory; cannot be an immediate).
+        assembly_type: Selects the 8-bit, 32-bit, or 64-bit form; defaults to ``Quadword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = Longword()
+
+    def emit(self) -> str:
+        """Return an ``adcb``, ``adcl``, or ``adcq`` instruction in AT&T syntax.
+
+        Args:
+            None
+
+        Returns:
+            A string of the form ``"  adc<suffix> <src>, <dst>"``.
+        """
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
+        return _asm_line(f"adc{suffix}", self.src.emit(), self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
+class Sbb(Instruction):
+    """An ``sbbb``/``sbbl``/``sbbq`` instruction: ``dst = dst - src - CF``.
+
+    Used as the high-half step in 128-bit subtraction, where the borrow flag from
+    the low-half ``subq`` propagates into the high-half difference.
+
+    Attributes:
+        src: The source operand (register, memory, or immediate).
+        dst: The destination operand (register or memory; cannot be an immediate).
+        assembly_type: Selects the 8-bit, 32-bit, or 64-bit form; defaults to ``Quadword``.
+    """
+
+    src: Operand
+    dst: Operand
+    assembly_type: AssemblyType = Longword()
+
+    def emit(self) -> str:
+        """Return an ``sbbb``, ``sbbl``, or ``sbbq`` instruction in AT&T syntax.
+
+        Args:
+            None
+
+        Returns:
+            A string of the form ``"  sbb<suffix> <src>, <dst>"``.
+        """
+        if self.assembly_type == Byte():
+            suffix = "b"
+        elif self.assembly_type == Longword():
+            suffix = "l"
+        else:
+            suffix = "q"
+        return _asm_line(f"sbb{suffix}", self.src.emit(), self.dst.emit())
+
+
+@dataclass(frozen=True, slots=True)
 class Shl(Instruction):
     """A ``shll``/``shlq`` instruction that shifts ``operand`` left by the count in ``%cl``.
 

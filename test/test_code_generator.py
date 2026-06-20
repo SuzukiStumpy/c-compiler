@@ -10,12 +10,15 @@ import pytest
 import compiler.syntax.asm as asm
 import compiler.syntax.tac as tac
 from compiler.code_generator import (
+    EightbyteClass,
     _asm_type,
     _is_unsigned,
     _reg_width,
     _static_alignment,
     _translate_static_init,
     _type_size,
+    classify_parameters,
+    classify_return_value,
     generate,
 )
 from compiler.syntax.ast.constants import (
@@ -36,6 +39,7 @@ from compiler.syntax.ast.types import (
     DoubleType,
     FloatType,
     FunType,
+    Int128Type,
     IntType,
     LongDoubleType,
     LongLongType,
@@ -44,6 +48,7 @@ from compiler.syntax.ast.types import (
     SChar,
     ShortType,
     UChar,
+    UInt128Type,
     UIntType,
     ULongLongType,
     ULongType,
@@ -3620,3 +3625,371 @@ class TestTranslateStaticInitElementSize:
         result = _translate_static_init(tac.StringInit(string=b"h\x00", null_terminated=True, element_size=2))
         assert isinstance(result, asm.StringInit)
         assert result.element_size == 2
+
+
+# ---------------------------------------------------------------------------
+# __int128 / unsigned __int128 code generation
+# ---------------------------------------------------------------------------
+
+
+def _i128_st(*extra_names: str, signed: bool = True) -> SymbolTable:
+    """Build a symbol table with ``a``, ``b``, ``dst`` as ``Int128Type`` (or ``UInt128Type``).
+
+    Args:
+        *extra_names: Additional names to add with the same type.
+        signed: When True uses Int128Type; when False uses UInt128Type.
+
+    Returns:
+        A SymbolTable keyed by variable name.
+    """
+    t = Int128Type() if signed else UInt128Type()
+    names = ("a", "b", "dst") + extra_names
+    return {n: SymbolTableEntry(t=t, attrs=LocalAttr()) for n in names}
+
+
+def _i128_program(op: tac.BinaryOperator, signed: bool = True) -> tac.Program:
+    """Return a minimal TAC program that applies ``op`` to two __int128 locals.
+
+    Args:
+        op: The binary operator to apply.
+        signed: When True the operands have Int128Type; False for UInt128Type.
+
+    Returns:
+        A TAC program with a single ``main`` function.
+    """
+    return tac.Program(
+        top_level=(
+            tac.Function(
+                name="main",
+                globl=True,
+                params=(),
+                body=(
+                    tac.Binary(operator=op, src1=tac.Var("a"), src2=tac.Var("b"), dst=tac.Var("dst")),
+                    tac.Return(val=tac.Constant(ConstInt(0))),
+                ),
+                source_file=None,
+                source_line=None,
+            ),
+        )
+    )
+
+
+class TestInt128StaticAlignment:
+    """``_static_alignment`` returns 16 for 128-bit integer types."""
+
+    def test_int128_static_alignment_is_16(self) -> None:
+        """``Int128Type`` aligns to 16 bytes in static data."""
+        assert _static_alignment(Int128Type()) == 16
+
+    def test_uint128_static_alignment_is_16(self) -> None:
+        """``UInt128Type`` aligns to 16 bytes in static data."""
+        assert _static_alignment(UInt128Type()) == 16
+
+
+class TestInt128ClassifyParameters:
+    """``classify_parameters`` assigns two INTEGER eightbytes to ``__int128`` parameters."""
+
+    def test_int128_param_classified_as_two_integer_eightbytes(self) -> None:
+        """An ``__int128`` parameter produces ``[INTEGER, INTEGER]``."""
+        st: SymbolTable = {"p": SymbolTableEntry(t=Int128Type(), attrs=LocalAttr())}
+        result = classify_parameters(("p",), st, {})
+        assert result == [[EightbyteClass.INTEGER, EightbyteClass.INTEGER]]
+
+    def test_uint128_param_classified_as_two_integer_eightbytes(self) -> None:
+        """An ``unsigned __int128`` parameter produces ``[INTEGER, INTEGER]``."""
+        st: SymbolTable = {"p": SymbolTableEntry(t=UInt128Type(), attrs=LocalAttr())}
+        result = classify_parameters(("p",), st, {})
+        assert result == [[EightbyteClass.INTEGER, EightbyteClass.INTEGER]]
+
+
+class TestInt128ClassifyReturnValue:
+    """``classify_return_value`` assigns two GP registers to an ``__int128`` return."""
+
+    def test_int128_return_uses_rax_rdx(self) -> None:
+        """``Int128Type`` returns via ``rax`` (lo) and ``rdx`` (hi)."""
+        gp, xmm, in_mem = classify_return_value(Int128Type(), {})
+        assert len(gp) == 2
+        assert not xmm
+        assert not in_mem
+
+    def test_uint128_return_uses_rax_rdx(self) -> None:
+        """``UInt128Type`` returns via ``rax`` (lo) and ``rdx`` (hi)."""
+        gp, xmm, in_mem = classify_return_value(UInt128Type(), {})
+        assert len(gp) == 2
+        assert not xmm
+        assert not in_mem
+
+
+class TestInt128Copy:
+    """Copying a 128-bit value emits two 64-bit ``Mov`` instructions."""
+
+    def test_int128_copy_emits_two_quadword_movs(self) -> None:
+        """``tac.Copy`` of ``__int128`` produces two ``Mov(Quadword)`` instructions."""
+        st = _i128_st()
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.Copy(src=tac.Var("a"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        qword_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.assembly_type == asm.Quadword()]
+        assert len(qword_movs) >= 2
+
+
+class TestInt128SignExtend:
+    """``tac.SignExtend`` to ``__int128`` emits a sign-extend + sar sequence."""
+
+    def test_sign_extend_to_int128_stores_lo_and_hi(self) -> None:
+        """Sign-extending an ``int`` to ``__int128`` writes both lo and hi halves."""
+        st: SymbolTable = {
+            "src": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+            "dst": SymbolTableEntry(t=Int128Type(), attrs=LocalAttr()),
+        }
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.SignExtend(src=tac.Var("src"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        # Must contain at least one Movsx (sign-extend) and a Cdq(Quadword) (cqo) to fill hi half
+        assert any(isinstance(i, asm.Movsx) for i in instrs)
+        assert any(isinstance(i, asm.Cdq) and i.assembly_type == asm.Quadword() for i in instrs)
+
+
+class TestInt128ZeroExtend:
+    """``tac.ZeroExtend`` to ``unsigned __int128`` emits zero-extend + zero-hi sequence."""
+
+    def test_zero_extend_to_uint128_stores_lo_and_zero_hi(self) -> None:
+        """Zero-extending an ``unsigned int`` to ``unsigned __int128`` writes lo and 0 hi."""
+        st: SymbolTable = {
+            "src": SymbolTableEntry(t=UIntType(), attrs=LocalAttr()),
+            "dst": SymbolTableEntry(t=UInt128Type(), attrs=LocalAttr()),
+        }
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.ZeroExtend(src=tac.Var("src"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        # hi half must be zeroed: a Mov writing $0 somewhere
+        imm_zero_movs = [
+            i for i in instrs if isinstance(i, asm.Mov) and isinstance(i.src, asm.Imm) and i.src.value == 0
+        ]
+        assert len(imm_zero_movs) >= 1
+
+
+class TestInt128Truncate:
+    """``tac.Truncate`` from ``__int128`` takes the low half."""
+
+    def test_truncate_from_int128_to_int_emits_longword_mov(self) -> None:
+        """Truncating ``__int128`` to ``int`` emits a ``Mov(Longword)`` from lo half."""
+        st: SymbolTable = {
+            "src": SymbolTableEntry(t=Int128Type(), attrs=LocalAttr()),
+            "dst": SymbolTableEntry(t=IntType(), attrs=LocalAttr()),
+        }
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.Truncate(src=tac.Var("src"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        lw_movs = [i for i in instrs if isinstance(i, asm.Mov) and i.assembly_type == asm.Longword()]
+        assert len(lw_movs) >= 1
+
+
+class TestInt128Add:
+    """128-bit addition uses ``addq`` (lo) + ``adcq`` (hi)."""
+
+    def test_int128_add_emits_adc_instruction(self) -> None:
+        """``tac.Binary(Add)`` on ``__int128`` produces an ``asm.Adc`` instruction."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.Add()), st)
+        assert any(isinstance(i, asm.Adc) for i in instrs)
+
+    def test_int128_add_emits_binary_add_instruction(self) -> None:
+        """``tac.Binary(Add)`` on ``__int128`` also produces an ``asm.Binary(Add)`` for lo half."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.Add()), st)
+        assert any(isinstance(i, asm.Binary) and isinstance(i.operator, asm.Add) for i in instrs)
+
+
+class TestInt128Subtract:
+    """128-bit subtraction uses ``subq`` (lo) + ``sbbq`` (hi)."""
+
+    def test_int128_sub_emits_sbb_instruction(self) -> None:
+        """``tac.Binary(Subtract)`` on ``__int128`` produces an ``asm.Sbb`` instruction."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.Subtract()), st)
+        assert any(isinstance(i, asm.Sbb) for i in instrs)
+
+    def test_int128_sub_emits_binary_sub_instruction(self) -> None:
+        """``tac.Binary(Subtract)`` on ``__int128`` also emits a ``Binary(Sub)`` for lo half."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.Subtract()), st)
+        assert any(isinstance(i, asm.Binary) and isinstance(i.operator, asm.Sub) for i in instrs)
+
+
+class TestInt128BitwiseAnd:
+    """128-bit bitwise AND emits two ``andq`` instructions."""
+
+    def test_int128_and_emits_two_and_instructions(self) -> None:
+        """``tac.Binary(BitwiseAnd)`` on ``__int128`` emits two ``Binary(And)`` instructions."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.BitwiseAnd()), st)
+        and_instrs = [i for i in instrs if isinstance(i, asm.Binary) and isinstance(i.operator, asm.And)]
+        assert len(and_instrs) == 2
+
+
+class TestInt128BitwiseOr:
+    """128-bit bitwise OR emits two ``orq`` instructions."""
+
+    def test_int128_or_emits_two_or_instructions(self) -> None:
+        """``tac.Binary(BitwiseOr)`` on ``__int128`` emits two ``Binary(Or)`` instructions."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.BitwiseOr()), st)
+        or_instrs = [i for i in instrs if isinstance(i, asm.Binary) and isinstance(i.operator, asm.Or)]
+        assert len(or_instrs) == 2
+
+
+class TestInt128BitwiseXor:
+    """128-bit bitwise XOR emits two ``xorq`` instructions."""
+
+    def test_int128_xor_emits_two_xor_instructions(self) -> None:
+        """``tac.Binary(BitwiseXor)`` on ``__int128`` emits two ``Binary(Xor)`` instructions."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.BitwiseXor()), st)
+        xor_instrs = [i for i in instrs if isinstance(i, asm.Binary) and isinstance(i.operator, asm.Xor)]
+        assert len(xor_instrs) == 2
+
+
+class TestInt128Negate:
+    """128-bit negation uses two ``notq`` + ``addq $1`` + ``adcq $0`` sequence."""
+
+    def test_int128_negate_emits_not_instructions(self) -> None:
+        """``tac.Unary(Negate)`` on ``__int128`` emits at least two ``Unary(Not)`` instructions."""
+        st = _i128_st()
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.Unary(operator=tac.Negate(), src=tac.Var("a"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        not_instrs = [i for i in instrs if isinstance(i, asm.Unary) and isinstance(i.operator, asm.Not)]
+        assert len(not_instrs) == 2
+
+    def test_int128_negate_emits_adc_for_carry(self) -> None:
+        """``tac.Unary(Negate)`` on ``__int128`` emits ``Adc`` to propagate carry into hi."""
+        st = _i128_st()
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.Unary(operator=tac.Negate(), src=tac.Var("a"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        assert any(isinstance(i, asm.Adc) for i in instrs)
+
+
+class TestInt128Complement:
+    """128-bit bitwise complement uses two ``notq`` instructions."""
+
+    def test_int128_complement_emits_two_not_instructions(self) -> None:
+        """``tac.Unary(Complement)`` on ``__int128`` emits two ``Unary(Not)`` instructions."""
+        st = _i128_st()
+        program = tac.Program(
+            top_level=(
+                tac.Function(
+                    name="main",
+                    globl=True,
+                    params=(),
+                    body=(
+                        tac.Unary(operator=tac.Complement(), src=tac.Var("a"), dst=tac.Var("dst")),
+                        tac.Return(val=tac.Constant(ConstInt(0))),
+                    ),
+                    source_file=None,
+                    source_line=None,
+                ),
+            )
+        )
+        instrs = _fn_instructions_with_table(program, st)
+        not_instrs = [i for i in instrs if isinstance(i, asm.Unary) and isinstance(i.operator, asm.Not)]
+        assert len(not_instrs) == 2
+
+
+class TestInt128Equal:
+    """128-bit equality comparison uses bitwise XOR + OR + sete pattern."""
+
+    def test_int128_equal_emits_setcc_e(self) -> None:
+        """``tac.Binary(Equal)`` on ``__int128`` emits a ``SetCC(E)`` instruction."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.Equal()), st)
+        assert any(isinstance(i, asm.SetCC) and i.cond_code == asm.CondCodes.E for i in instrs)
+
+
+class TestInt128LessThan:
+    """128-bit signed less-than comparison uses branch-based logic."""
+
+    def test_int128_less_than_emits_jmpcc(self) -> None:
+        """``tac.Binary(LessThan)`` on ``__int128`` emits conditional jump instructions."""
+        st = _i128_st()
+        instrs = _fn_instructions_with_table(_i128_program(tac.LessThan()), st)
+        assert any(isinstance(i, asm.JmpCC) for i in instrs)
