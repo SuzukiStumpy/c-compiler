@@ -15,9 +15,9 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `short` / `signed short` / `unsigned short` | 16-bit integer; promotes to `int` for arithmetic (C11 §6.3.1.1) |
 | `char` / `signed char` / `unsigned char` | 8-bit character types |
 | `__int128` / `unsigned __int128` | GCC 128-bit extension; full arithmetic, bitwise, comparisons, function calls, and static initialisers supported |
-| `float` | 32-bit IEEE 754 floating-point; `f`/`F` suffix on literals |
-| `double` | 64-bit IEEE 754 floating-point |
-| `long double` | 80-bit x87 extended precision; `L`/`l` suffix on literals; passed/returned via stack (MEMORY class) |
+| `float` | 32-bit IEEE 754 floating-point; decimal (`1.5f`) and hex (`0x1.8p10f`) literals |
+| `double` | 64-bit IEEE 754 floating-point; decimal (`1.5`) and hex (`0x1.8p10`) literals |
+| `long double` | 80-bit x87 extended precision; decimal (`1.5L`) and hex (`0x1.8p10L`) literals; passed/returned via stack (MEMORY class) |
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
 | Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; designated initialisers (`{[n] = val}`); array decay; `(T[]){...}` compound literals with inferred size |
@@ -27,7 +27,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `_Bool` | 1-byte unsigned integer; any nonzero value converts to 1 (C11 §6.3.1.2); `true`/`false` via `<stdbool.h>` |
 | Function pointers | `int (*fp)(int, int)` style; call via `fp(args)` or `(*fp)(args)`; pass/return by value |
 
-Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant.
+Type specifiers `signed` and `unsigned` may be combined with `int`, `long`, `long long`, `short`, and `char` in all standard permutations. The `LL`/`ll` suffix produces a `long long` constant; `ULL`/`LLU`/`ull`/`llu` produces an `unsigned long long` constant; `f`/`F` produces a `float` constant; `L`/`l` produces a `long double` constant. Both decimal (`1.5`, `1.5e10`) and hexadecimal (`0x1.8p10`, `0xAp-1f`) FP literals are accepted.
 
 Integer literals are accepted in all four C bases:
 
@@ -278,11 +278,13 @@ The sections below describe C11 features that are not yet implemented. Reference
 
 ### Floating-point types
 
-`float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported. The following are missing:
+`float` (32-bit), `double` (64-bit), and `long double` (80-bit x87 extended precision) are all supported.
+Decimal and hexadecimal FP literals are supported for all three types (C99/C11 §6.4.4.2): `0x1.8p10`, `0x.8p1f`, `0xAp-1L`.
+
+The following are missing:
 
 | Missing feature | C11 reference | Notes |
 |---|---|---|
-| Hex floating-point literals (`0x1.8p10`) | sec. 6.4.4.2 | Exact FP representation via hex mantissa and binary exponent; used in numerical libraries |
 | `_Complex` / `_Imaginary` | sec. 6.2.5 p11 | Complex and imaginary arithmetic; full ABI support required |
 
 ### Storage-class specifiers

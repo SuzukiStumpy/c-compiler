@@ -2233,6 +2233,9 @@ class Parser:
                 | TokenType.FPDOUBLE
                 | TokenType.FPFLOAT
                 | TokenType.FPLONGDOUBLE
+                | TokenType.HEXFPDOUBLE
+                | TokenType.HEXFPFLOAT
+                | TokenType.HEXFPLONGDOUBLE
                 | TokenType.CONSTCHAR
                 | TokenType.WCHAR
                 | TokenType.U16CHAR
@@ -2554,8 +2557,9 @@ class Parser:
     def _parse_fp_constant(self, token: Token) -> Constant | None:
         """Parse a floating-point constant token, or return ``None`` if it is not one.
 
-        Handles ``FPFLOAT`` (``f``/``F`` suffix), ``FPDOUBLE`` (no suffix),
-        and ``FPLONGDOUBLE`` (``L``/``l`` suffix) token kinds.
+        Handles decimal FP tokens (``FPFLOAT``, ``FPDOUBLE``, ``FPLONGDOUBLE``) and
+        hexadecimal FP tokens (``HEXFPFLOAT``, ``HEXFPDOUBLE``, ``HEXFPLONGDOUBLE``).
+        Hex FP literals use ``float.fromhex`` for parsing; decimal literals use ``float``.
 
         Args:
             token: The lookahead token to inspect.
@@ -2574,6 +2578,15 @@ class Parser:
         if token.type == TokenType.FPLONGDOUBLE:
             self._consume()
             return Constant(value=ConstLongDouble(float(token.value.rstrip("lL"))), exp_type=LongDoubleType())
+        if token.type == TokenType.HEXFPFLOAT:
+            self._consume()
+            return Constant(value=ConstFloat(float.fromhex(token.value.rstrip("fF"))), exp_type=FloatType())
+        if token.type == TokenType.HEXFPDOUBLE:
+            self._consume()
+            return Constant(value=ConstDouble(float.fromhex(token.value)), exp_type=DoubleType())
+        if token.type == TokenType.HEXFPLONGDOUBLE:
+            self._consume()
+            return Constant(value=ConstLongDouble(float.fromhex(token.value.rstrip("lL"))), exp_type=LongDoubleType())
         return None
 
     def _parse_constant(self) -> Constant:

@@ -107,7 +107,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 ## Supported C subset
 
 - **Integer types**: `char`, `signed char`, `unsigned char`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `unsigned long`, `long long`, `unsigned long long`, `__int128`, `unsigned __int128`, `_Bool`
-- **Floating-point**: `float`, `double`, `long double` (x87 80-bit, stored as 16 bytes on Linux)
+- **Floating-point**: `float`, `double`, `long double` (x87 80-bit, stored as 16 bytes on Linux); decimal and hexadecimal FP literals (C99/C11 §6.4.4.2: `0x1.8p10`, `0x.8p1f`, `0xAp-1L`)
 - **Derived types**: pointers, arrays (fixed-size), structs, unions (including anonymous struct/union members with field promotion, C11 §6.7.2.1), enums (named, anonymous `enum { … }`, inline `enum E { … } var`), function pointers, bitfields
 - **Type qualifiers**: `const`, `volatile`, `restrict` (parsed; restrict has no semantic effect)
 - **Function specifiers**: `inline` — C11 §6.7.4 p7 external-linkage rules enforced: a function whose every file-scope declaration uses `inline` without `extern` is an *inline definition* (`FunctionBinding.all_inline_no_extern=True`), compiled locally but not exported (`FunAttr.globl=False`); `extern inline` or any non-inline declaration in the same TU forces an external definition (`globl=True`); no actual inlining of bodies is performed; `_Noreturn` (parsed; stored as `Function.is_noreturn`; no contract enforcement — flag is informational only)

@@ -29,11 +29,12 @@ from compiler.syntax.ast import (
     VarDecl,
     VariableDeclaration,
 )
-from compiler.syntax.ast.constants import ConstFloat, ConstLongDouble, ConstLongLong, ConstULongLong
+from compiler.syntax.ast.constants import ConstDouble, ConstFloat, ConstLongDouble, ConstLongLong, ConstULongLong
 from compiler.syntax.ast.expressions import Binary, Var  # noqa: F401
 from compiler.syntax.ast.operators import Add, PostIncrement
 from compiler.syntax.ast.types import (
     BoolType,
+    DoubleType,
     FloatType,
     Int128Type,
     LongDoubleType,
@@ -1520,6 +1521,66 @@ class TestLongDoubleType:
         """``long double long`` is a parse error."""
         with pytest.raises(Exception):
             parse([_LONG, _DOUBLE_TOK, _LONG, _ident("x"), _SEMICOLON])
+
+
+class TestHexFloatLiterals:
+    """Parser converts hex FP tokens to the correct Constant nodes."""
+
+    def test_hexfpdouble_parses_to_const_double(self) -> None:
+        """``0x1.8p10`` parses as ``ConstDouble(1536.0)`` with ``DoubleType``."""
+        tok = _tok(TokenType.HEXFPDOUBLE, "0x1.8p10")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstDouble(float.fromhex("0x1.8p10"))
+        assert exp.exp_type == DoubleType()
+
+    def test_hexfpdouble_uppercase_prefix_parses(self) -> None:
+        """``0X1p0`` parses as ``ConstDouble(1.0)`` with ``DoubleType``."""
+        tok = _tok(TokenType.HEXFPDOUBLE, "0X1p0")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstDouble(1.0)
+        assert exp.exp_type == DoubleType()
+
+    def test_hexfpdouble_negative_exponent_parses(self) -> None:
+        """``0xAp-1`` parses as ``ConstDouble(5.0)`` with ``DoubleType``."""
+        tok = _tok(TokenType.HEXFPDOUBLE, "0xAp-1")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstDouble(5.0)
+        assert exp.exp_type == DoubleType()
+
+    def test_hexfpfloat_suffix_f_parses_to_const_float(self) -> None:
+        """``0x1.8p10f`` parses as ``ConstFloat(1536.0)`` with ``FloatType``."""
+        tok = _tok(TokenType.HEXFPFLOAT, "0x1.8p10f")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstFloat(float.fromhex("0x1.8p10"))
+        assert exp.exp_type == FloatType()
+
+    def test_hexfpfloat_suffix_uppercase_f_parses_to_const_float(self) -> None:
+        """``0x1p0F`` parses as ``ConstFloat(1.0)`` with ``FloatType``."""
+        tok = _tok(TokenType.HEXFPFLOAT, "0x1p0F")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstFloat(1.0)
+        assert exp.exp_type == FloatType()
+
+    def test_hexfplongdouble_suffix_l_parses_to_const_long_double(self) -> None:
+        """``0x1.8p10L`` parses as ``ConstLongDouble(1536.0)`` with ``LongDoubleType``."""
+        tok = _tok(TokenType.HEXFPLONGDOUBLE, "0x1.8p10L")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstLongDouble(float.fromhex("0x1.8p10"))
+        assert exp.exp_type == LongDoubleType()
+
+    def test_hexfplongdouble_suffix_lowercase_l_parses_to_const_long_double(self) -> None:
+        """``0x1p0l`` parses as ``ConstLongDouble(1.0)`` with ``LongDoubleType``."""
+        tok = _tok(TokenType.HEXFPLONGDOUBLE, "0x1p0l")
+        exp = _parsed_exp(tok)
+        assert isinstance(exp, Constant)
+        assert exp.value == ConstLongDouble(1.0)
+        assert exp.exp_type == LongDoubleType()
 
 
 class TestVariadicDeclarations:

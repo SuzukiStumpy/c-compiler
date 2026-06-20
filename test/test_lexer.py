@@ -648,6 +648,63 @@ def test_hex_ulonglong_lexed(preprocess_c_file: Preprocessor) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Hexadecimal floating-point literals
+# ---------------------------------------------------------------------------
+
+
+def test_hex_fp_double_lexed_as_hexfpdouble(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPDOUBLE and t.value == "0x1.8p10" for t in tokens)
+
+
+def test_hex_fp_double_no_integer_part_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPDOUBLE and t.value == "0x.8p1" for t in tokens)
+
+
+def test_hex_fp_double_trailing_dot_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPDOUBLE and t.value == "0x1.p4" for t in tokens)
+
+
+def test_hex_fp_double_uppercase_hex_negative_exp_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPDOUBLE and t.value == "0xAp-1" for t in tokens)
+
+
+def test_hex_fp_double_uppercase_prefix_lexed(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPDOUBLE and t.value == "0X1p0" for t in tokens)
+
+
+def test_hex_fp_float_suffix_f_lexed_as_hexfpfloat(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPFLOAT and t.value == "0x1.8p10f" for t in tokens)
+
+
+def test_hex_fp_float_suffix_uppercase_f_lexed_as_hexfpfloat(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPFLOAT and t.value == "0x1p0F" for t in tokens)
+
+
+def test_hex_fp_longdouble_suffix_l_lexed_as_hexfplongdouble(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPLONGDOUBLE and t.value == "0x1.8p10L" for t in tokens)
+
+
+def test_hex_fp_longdouble_suffix_lowercase_l_lexed_as_hexfplongdouble(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    assert any(t.type == TokenType.HEXFPLONGDOUBLE and t.value == "0x1p0l" for t in tokens)
+
+
+def test_hex_fp_not_classified_as_number(preprocess_c_file: Preprocessor) -> None:
+    tokens = lexer(preprocess_c_file("valid/hex_float_literals.c"))
+    hex_fp_values = {"0x1.8p10", "0x.8p1", "0x1.p4", "0xAp-1", "0X1p0"}
+    number_values = {t.value for t in tokens if t.type == TokenType.NUMBER}
+    assert hex_fp_values.isdisjoint(number_values)
+
+
+# ---------------------------------------------------------------------------
 # Octal integer literals
 # ---------------------------------------------------------------------------
 

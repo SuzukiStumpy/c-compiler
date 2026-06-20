@@ -70,6 +70,9 @@ class TokenType(Enum):
     FPDOUBLE = auto()
     FPFLOAT = auto()
     FPLONGDOUBLE = auto()
+    HEXFPDOUBLE = auto()
+    HEXFPFLOAT = auto()
+    HEXFPLONGDOUBLE = auto()
     CONSTCHAR = auto()
     STRING = auto()
     WCHAR = auto()  # L'x'
