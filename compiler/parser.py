@@ -1345,6 +1345,44 @@ class Parser:
             return [self._parse_static_assert()]
 
         if self._match(TokenType.TYPEDEF):
+            # peek(0)=typedef, peek(1)=struct/union/..., peek(2)='{'/ident, peek(3)='{'
+            next1 = self._peek(1)
+            next2 = self._peek(2)
+            next3 = self._peek(3)
+            _is_struct_kw = next1 is not None and next1.type == TokenType.STRUCT
+            _is_union_kw = next1 is not None and next1.type == TokenType.UNION
+            _anon_body = next2 is not None and next2.type == TokenType.LBRACE
+            _named_body = (
+                next2 is not None
+                and next2.type == TokenType.IDENTIFIER
+                and next3 is not None
+                and next3.type == TokenType.LBRACE
+            )
+            if (_is_struct_kw or _is_union_kw) and (_anon_body or _named_body):
+                # typedef struct/union [Tag] { ... } Alias;
+                self._consume()  # consume 'typedef'
+                kw_tok = self._consume()  # consume 'struct' or 'union'
+                is_struct = kw_tok.type == TokenType.STRUCT
+                tag: str
+                if _named_body:
+                    tag = self._consume().value  # consume explicit tag
+                else:
+                    kind = "struct" if is_struct else "union"
+                    tag = f"(anon_{kind}_{next(self._anon_tag_counter)})"
+                body_members = self._parse_member_body("struct" if is_struct else "union")
+                if is_struct:
+                    agg_decl: StructDecl | UnionDecl = StructDecl(
+                        struct_declaration=StructDeclaration(tag=tag, members=body_members)
+                    )
+                    base_type_td: Type = Structure(tag=tag)
+                else:
+                    agg_decl = UnionDecl(union_declaration=UnionDeclaration(tag=tag, members=body_members))
+                    base_type_td = Union(tag=tag)
+                alias_name, transform_td, _ = self._parse_declarator()
+                self._expect(TokenType.SEMICOLON)
+                full_typedef_type = transform_td(base_type_td)
+                self._register_typedef(alias_name, full_typedef_type)
+                return [agg_decl, TypedefDecl(name=alias_name, aliased_type=full_typedef_type)]
             self._consume()  # consume 'typedef'
             base_type_td = self._parse_type()
             alias_name, transform_td, _ = self._parse_declarator()
