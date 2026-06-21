@@ -1078,7 +1078,7 @@ class TestCharTypeDeclarations:
         item = body[0]
         assert isinstance(item, D)
         assert isinstance(item.declaration, VarDecl)
-        assert item.declaration.variable_declaration.var_type == Array(Char(), 5)
+        assert item.declaration.variable_declaration.var_type == Array(Char(), Constant(ConstInt(5)))
 
     def test_char_array_with_string_literal_initializer(self) -> None:
         """``char arr[6] = "hello";`` -> ``SingleInit(String(b"hello"))``."""
@@ -1096,7 +1096,7 @@ class TestCharTypeDeclarations:
         assert isinstance(item, D)
         assert isinstance(item.declaration, VarDecl)
         vd = item.declaration.variable_declaration
-        assert vd.var_type == Array(Char(), 6)
+        assert vd.var_type == Array(Char(), Constant(ConstInt(6)))
         assert vd.init == SingleInit(String(b"hello"))
 
     def test_char_pointer_with_string_literal_initializer(self) -> None:

@@ -2,17 +2,7 @@
 
 Features remaining to implement. Effort: L/M/H/XH. Impact on C11 compatibility: H/M/L.
 
-## Unimplemented features
-
-### Standard-library header compatibility (`<stdio.h>` et al.)
-
-Three parser gaps prevent compiling files that `#include <stdio.h>` (or most other system headers). They must all be fixed together before system headers become usable.
-
-| Gap | Effort | Impact | Notes |
-|---|---|---|---|
-| Constant expressions in array sizes | M | H | `struct _IO_FILE` contains `char _unused2[12 * sizeof(int) - 5 * sizeof(void *)];` — `_parse_array_dimension()` accepts only integer literals; fix: parse a full constant expression and evaluate it in semantic analysis (same approach as `_Alignas`) |
-
-### Other missing features
+## Unimplemented / missing features
 
 | Feature | Effort | Impact | Notes |
 |---|---|---|---|
@@ -25,8 +15,6 @@ Three parser gaps prevent compiling files that `#include <stdio.h>` (or most oth
 | `_Complex` / `_Imaginary` | XH | L | C11 §6.2.5 p11 — complex and imaginary arithmetic; full ABI support; near-zero real-world demand outside scientific computing |
 
 ## Priority grouping
-
-**Blocking**: Constant-expression array sizes — required before any system header can be `#include`d.
 
 **Deferred**: VLAs, `_Alignas` on struct/union members, `inline` body inlining — self-contained but high effort or niche benefit.
 

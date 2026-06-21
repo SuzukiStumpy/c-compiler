@@ -8,6 +8,8 @@ volatile) in the same position are also consumed without effect.
 from compiler.parser import parse
 from compiler.syntax.ast import (
     Array,
+    Constant,
+    ConstInt,
     FunDecl,
     FunType,
     IntType,
@@ -59,35 +61,35 @@ def test_static_array_param_basic() -> None:
     # int foo(int a[static 10]);
     tokens = [_INT, _ident("a"), _LBRACKET, _STATIC, _number("10"), _RBRACKET]
     decl = _parse_fn(_INT, *tokens[1:])
-    assert _param_type(decl) == Array(IntType(), 10)
+    assert _param_type(decl) == Array(IntType(), Constant(ConstInt(10)))
 
 
 def test_static_array_param_qualifier_before_static() -> None:
     """``int a[const static 10]`` — qualifier + static both consumed."""
     tokens = [_INT, _ident("a"), _LBRACKET, _CONST, _STATIC, _number("10"), _RBRACKET]
     decl = _parse_fn(_INT, *tokens[1:])
-    assert _param_type(decl) == Array(IntType(), 10)
+    assert _param_type(decl) == Array(IntType(), Constant(ConstInt(10)))
 
 
 def test_static_array_param_static_before_qualifier() -> None:
     """``int a[static const 10]`` — static + qualifier both consumed."""
     tokens = [_INT, _ident("a"), _LBRACKET, _STATIC, _CONST, _number("10"), _RBRACKET]
     decl = _parse_fn(_INT, *tokens[1:])
-    assert _param_type(decl) == Array(IntType(), 10)
+    assert _param_type(decl) == Array(IntType(), Constant(ConstInt(10)))
 
 
 def test_static_array_param_restrict() -> None:
     """``int a[static restrict 10]`` — static + restrict both consumed."""
     tokens = [_INT, _ident("a"), _LBRACKET, _STATIC, _RESTRICT, _number("10"), _RBRACKET]
     decl = _parse_fn(_INT, *tokens[1:])
-    assert _param_type(decl) == Array(IntType(), 10)
+    assert _param_type(decl) == Array(IntType(), Constant(ConstInt(10)))
 
 
 def test_static_array_param_qualifier_only() -> None:
     """``int a[const 10]`` — qualifier without static also consumed."""
     tokens = [_INT, _ident("a"), _LBRACKET, _CONST, _number("10"), _RBRACKET]
     decl = _parse_fn(_INT, *tokens[1:])
-    assert _param_type(decl) == Array(IntType(), 10)
+    assert _param_type(decl) == Array(IntType(), Constant(ConstInt(10)))
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +116,8 @@ def test_static_array_multiple_params() -> None:
         _RBRACKET,
     ]
     decl = _parse_fn(*tokens)
-    assert _param_type(decl, 0) == Array(IntType(), 10)
-    assert _param_type(decl, 1) == Array(IntType(), 5)
+    assert _param_type(decl, 0) == Array(IntType(), Constant(ConstInt(10)))
+    assert _param_type(decl, 1) == Array(IntType(), Constant(ConstInt(5)))
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ def test_plain_array_param_unaffected() -> None:
     """``int a[10]`` — ordinary array param still parses correctly."""
     tokens = [_INT, _ident("a"), _LBRACKET, _number("10"), _RBRACKET]
     decl = _parse_fn(_INT, *tokens[1:])
-    assert _param_type(decl) == Array(IntType(), 10)
+    assert _param_type(decl) == Array(IntType(), Constant(ConstInt(10)))
 
 
 def test_incomplete_array_param_unaffected() -> None:

@@ -8,9 +8,15 @@ language support is extended.
 Also defines ``Linkage``, the linkage classification for declared C identifiers.
 """
 
+from __future__ import annotations
+
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from compiler.syntax.ast.expressions import Exp
 
 
 class Type(ABC):
@@ -227,12 +233,13 @@ class Array(Type):
 
     Attributes:
         element: The type of element within the array.
-        size: The number of elements, or ``None`` for an incomplete array
-            (flexible array member or ``T[]`` before size inference).
+        size: The number of elements as a concrete ``int`` (after semantic analysis),
+            an unevaluated constant ``Exp`` (as produced by the parser), or ``None``
+            for an incomplete array (flexible array member or ``T[]`` before size inference).
     """
 
     element: Type
-    size: int | None
+    size: int | Exp | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,7 +20,7 @@ A homegrown C compiler written in Python, supporting a substantial subset of the
 | `long double` | 80-bit x87 extended precision; decimal (`1.5L`) and hex (`0x1.8p10L`) literals; passed/returned via stack (MEMORY class) |
 | `void` | Return type and pointer target |
 | Pointers (`T *`) | Pointer arithmetic; null pointer constants |
-| Arrays (`T[N]`) | Fixed-size arrays; compound initialisers; designated initialisers (`{[n] = val}`); array decay; `(T[]){...}` compound literals with inferred size |
+| Arrays (`T[N]`) | Fixed-size arrays; dimension may be any integer constant expression (arithmetic, `sizeof`, `_Alignof`, ternary); compound initialisers; designated initialisers (`{[n] = val}`); array decay; `(T[]){...}` compound literals with inferred size |
 | `struct` | Named/anonymous structs; nested structs; anonymous struct/union members (field promotion, C11 §6.7.2.1); compound initialisers; designated initialisers (`{.field = val}`); bit-fields (`int x : 3`); flexible array members (`T arr[]` as last member) |
 | `union` | Named/anonymous unions; anonymous struct/union members (field promotion); bit-field members |
 | `enum` | Enumeration types; enumerator constants are `int`-typed compile-time values; values may be full constant expressions (binary ops, `sizeof`, cross-enumerator refs) |
@@ -310,15 +310,7 @@ VLAs (sec. 6.7.6.2) — arrays whose size is a runtime expression — were manda
 
 ### Standard library
 
-No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI. `typedef` names in preprocessed headers (e.g. `size_t`, `ptrdiff_t`, `uint32_t`) are recognised. Variadic functions are fully supported, so `<stdarg.h>` parses and links correctly.
-
-System headers such as `<stdio.h>` cannot yet be `#include`d directly. Three parser gaps block them:
-
-| Gap | Notes |
-|---|---|
-| Constant expressions in array sizes | `struct _IO_FILE` uses `char field[12 * sizeof(int) - …]`; `_parse_array_dimension()` accepts integer literals only |
-
-This must be resolved before system headers become usable. See `C11_ROADMAP.md` for implementation notes.
+No standard library is bundled. External libraries can be linked via the `-l` flag, but only if they were compiled with a compatible ABI.
 
 ---
 

@@ -12,6 +12,7 @@ from test.parser.helpers import (
     _RPAREN,
     _SEMICOLON,
     CompoundInit,
+    Constant,
     IntType,
     SingleInit,
     _ident,
@@ -98,7 +99,7 @@ class TestArrayCompoundLiteral:
         )
         assert isinstance(exp, CompoundLiteral)
         assert isinstance(exp.target_type, Array)
-        assert exp.target_type.size == 3
+        assert isinstance(exp.target_type.size, Constant)
         assert isinstance(exp.init, CompoundInit)
 
 

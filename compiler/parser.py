@@ -1166,7 +1166,7 @@ class Parser:
         name, simple_transform, simple_params = self._parse_param_simple_declarator()
 
         if self._match(TokenType.LBRACKET):
-            sizes: list[int | None] = []
+            sizes: list[Exp | None] = []
             _PARAM_ARRAY_IGNORED = {TokenType.STATIC, TokenType.CONST, TokenType.VOLATILE, TokenType.RESTRICT}
             while self._match(TokenType.LBRACKET):
                 self._consume()  # consume "["
@@ -1177,7 +1177,7 @@ class Parser:
                 sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 
-            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int | None] = sizes) -> Type:
+            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[Exp | None] = sizes) -> Type:
                 for size in reversed(_sizes):
                     t = Array(t, size)
                 return _st(t)
@@ -3060,14 +3060,14 @@ class Parser:
             self._expect(TokenType.RPAREN)
             if not self._match(TokenType.LBRACKET):
                 return inner
-            suffix_sizes: list[int | None] = []
+            suffix_sizes: list[Exp | None] = []
             while self._match(TokenType.LBRACKET):
                 self._consume()
                 suffix_sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 
             def _parens_arr(
-                t: Type, _i: Callable[[Type], Type] = inner, _sizes: list[int | None] = suffix_sizes
+                t: Type, _i: Callable[[Type], Type] = inner, _sizes: list[Exp | None] = suffix_sizes
             ) -> Type:
                 for size in reversed(_sizes):
                     t = Array(t, size)
@@ -3075,7 +3075,7 @@ class Parser:
 
             return _parens_arr
 
-        bare_sizes: list[int | None] = []
+        bare_sizes: list[Exp | None] = []
         while self._match(TokenType.LBRACKET):
             self._consume()
             bare_sizes.append(self._parse_array_dimension())
@@ -3086,7 +3086,7 @@ class Parser:
             msg = "expected abstract declarator ('*', '(', or '[')"
             raise self._token_error(msg, tok) if tok is not None else self._eof_error(msg)
 
-        def _bare_arr(t: Type, _sizes: list[int | None] = bare_sizes) -> Type:
+        def _bare_arr(t: Type, _sizes: list[Exp | None] = bare_sizes) -> Type:
             for size in reversed(_sizes):
                 t = Array(t, size)
             return t
@@ -3119,44 +3119,29 @@ class Parser:
         name_token = self._expect(TokenType.IDENTIFIER)
         return name_token.value, lambda t: t, None
 
-    def _parse_array_dimension(self) -> int | None:
+    def _parse_array_dimension(self) -> Exp | None:
         """Parse a single array dimension from a ``[`` ``]`` declarator suffix.
 
         Expects the opening ``[`` to have been consumed already.  If the next
         token is ``]`` the dimension is absent (flexible array member or
         ``(T[])`` compound-literal type); returns ``None`` in that case.
-        Otherwise reads an integer constant (plain, ``l``/``L``, ``u``/``U``,
-        ``ul``/``UL`` suffix, or a character literal) and leaves the stream
+        Otherwise parses a full integer constant expression (which may include
+        arithmetic operators, ``sizeof``, casts, etc.) and leaves the stream
         positioned at the closing ``]``.
 
         Returns:
-            The dimension size as a Python ``int``, or ``None`` for an empty
-            ``[]`` (incomplete array type).
+            The dimension as an unevaluated ``Exp`` node (to be folded by semantic
+            analysis), or ``None`` for an empty ``[]`` (incomplete array type).
 
         Raises:
-            ParseError: If the dimension token is present but not an integer constant.
+            ParseError: If the stream is exhausted before the dimension.
         """
         tok = self._peek()
         if tok is None:
             raise self._eof_error("Expected array size or ']'")
         if tok.type == TokenType.RBRACKET:
             return None  # empty [] — incomplete/flexible array
-        match tok.type:
-            case TokenType.NUMBER:
-                val: int = int(tok.value)
-            case TokenType.LONGINT:
-                val = int(tok.value.rstrip("lL"))
-            case TokenType.UINT:
-                val = int(tok.value.rstrip("uU"))
-            case TokenType.ULONG:
-                val = int(tok.value.rstrip("uUlL"))
-            case TokenType.CONSTCHAR:
-                inner = tok.value[1:-1]
-                val = self._ESCAPE_VALUES[inner[1]] if inner.startswith("\\") else ord(inner)
-            case _:
-                raise self._token_error("Array size must be an integer constant", tok)
-        self._consume()
-        return val
+        return self._parse_exp()
 
     def _parse_direct_declarator(self) -> tuple[str, Callable[[Type], Type], tuple[Parameter, ...] | None]:
         """Parse a direct-declarator.
@@ -3182,13 +3167,13 @@ class Parser:
         name, simple_transform, simple_params = self._parse_simple_declarator()
 
         if self._match(TokenType.LBRACKET):
-            sizes: list[int | None] = []
+            sizes: list[Exp | None] = []
             while self._match(TokenType.LBRACKET):
                 self._consume()  # consume "["
                 sizes.append(self._parse_array_dimension())
                 self._expect(TokenType.RBRACKET)
 
-            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[int | None] = sizes) -> Type:
+            def _arr(t: Type, _st: Callable[[Type], Type] = simple_transform, _sizes: list[Exp | None] = sizes) -> Type:
                 for size in reversed(_sizes):
                     t = Array(t, size)
                 return _st(t)

@@ -42,7 +42,7 @@ All node types are immutable frozen dataclasses. Sum types use ABC base classes.
 
 | Submodule | Contents |
 |---|---|
-| `types.py` | `Type` hierarchy: `IntType`, `LongType`, `UIntType`, `ULongType`, `ShortType`, `UShortType`, `Char`, `SChar`, `UChar`, `BoolType`, `FloatType`, `DoubleType`, `LongDoubleType`, `Int128Type`, `UInt128Type`, `LongLongType`, `ULongLongType`, `VoidType`, `FunType`, `Pointer`, `Array`, `Structure`, `Union`, `EnumType`, `QualifiedType`; `Array.size: int | None` where `None` denotes an incomplete/flexible array |
+| `types.py` | `Type` hierarchy: `IntType`, `LongType`, `UIntType`, `ULongType`, `ShortType`, `UShortType`, `Char`, `SChar`, `UChar`, `BoolType`, `FloatType`, `DoubleType`, `LongDoubleType`, `Int128Type`, `UInt128Type`, `LongLongType`, `ULongLongType`, `VoidType`, `FunType`, `Pointer`, `Array`, `Structure`, `Union`, `EnumType`, `QualifiedType`; `Array.size: int | Exp | None` — `None` = incomplete/flexible array; `Exp` = unevaluated constant expression (parser output, folded to `int` by `_resolve_type` in semantic analysis) |
 | `expressions.py` | `Exp` hierarchy: `Constant`, `String`, `Var`, `Cast`, `Unary`, `Binary`, `Assignment`, `CompoundAssignment`, `Conditional`, `FunctionCall`, `Dereference`, `AddrOf`, `Subscript`, `SizeOf`, `SizeOfT`, `AlignOf`, `AlignOfT`, `Dot`, `Arrow`, `CompoundLiteral`, `Initializer`, `SingleInit`, `CompoundInit`, `MemberDesignatorInit`, `IndexDesignatorInit`, `VaStart`, `VaArg`, `VaEnd`, `VaCopy`, `BuiltinUnreachable`, `OffsetOf`, `Generic`; `StringEncoding` enum (`CHAR`, `WCHAR`, `UTF16`, `UTF32`); `String.encoding: StringEncoding`; `Generic.associations: tuple[tuple[Type | None, Exp], ...]` (`None` type = `default`) |
 | `statements.py` | `Statement` hierarchy: `Return`, `Expression`, `If`, `Goto`, `Label`, `Compound`, `Break`, `Continue`, `While`, `DoWhile`, `For`, `Switch`, `Case`, `Default`, `Null` |
 | `declarations.py` | `Declaration` hierarchy + `Program`, `Function`, `Block`, `BlockItem`, `VariableDeclaration`, `FunDecl`, `VarDecl`, `StructDecl`, `UnionDecl`, `EnumDecl`, `TypedefDecl`, `StaticAssert`, `Parameter`; `MemberDeclaration` carries optional `nested_decl: StructDecl | UnionDecl | None` for anonymous struct/union members; `EnumeratorDeclaration.value_exp: Exp | None` (constant expression or `None` for auto-increment) |
@@ -120,6 +120,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **GCC builtins**: `__builtin_expect(expr, hint)` — folds to `expr` at parse time; `__builtin_unreachable()` — emits `ud2` (SIGILL trap); `__builtin_offsetof(type, member)` — compile-time struct member offset, type `unsigned long`
 - **`__attribute__(( … ))`**: GCC attribute specifiers are lexed as a dedicated `ATTRIBUTE` token and silently skipped by `_skip_attribute()` / `_skip_attributes()`; recognised in all standard positions (before specifiers, between specifiers and declarator, after declarator, on struct members, on typedef aliases)
 - **Alignment specifiers**: `_Alignas(expr)` and `_Alignas(type)` on variable declarations; SA evaluates to `VariableDeclaration.align_as: int`; overrides `.balign` for static variables and stack-slot alignment for locals; `_Alignof(type)` / `_Alignof expr` returns `unsigned long` alignment at compile time
+- **Constant-expression array dimensions**: array sizes may be any integer constant expression (arithmetic, `sizeof`, `_Alignof`, ternary); the parser stores the raw `Exp` in `Array.size`; `_resolve_type` in semantic analysis evaluates it to a concrete `int` via `_eval_const_expr`, rejecting non-constant or non-positive results
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
 - **String literals** (stored as hidden static objects in `.rodata`): plain `"..."`, `u8"..."` (UTF-8, `char *`), `L"..."` (wide, `int *`, 4 bytes/char), `u"..."` (UTF-16, `unsigned short *`, 2 bytes/char), `U"..."` (UTF-32, `unsigned int *`, 4 bytes/char); `StringEncoding` enum controls element type and NUL-terminator width (`element_size`); adjacent literals of the same encoding are concatenated
 - **`__func__` predefined identifier** (C99/C11 §6.4.2.2): resolved by semantic analysis to a `String` node containing the enclosing function's name; behaves like `static const char __func__[] = "fn_name";`
@@ -171,12 +172,6 @@ test/
 Subdirectory test packages use a local `helpers.py`; no `__init__.py` needed (pytest auto-discovers).
 
 `writing-a-c-compiler-tests/` — official acceptance test suite from the *Writing a C Compiler* book, invoked via `test_compiler <path-to-compiler> --chapter N --stage XXXXX`.
-
-## Known parser limitations
-
-One remaining gap in `compiler/parser.py` prevents `#include <stdio.h>` (and most system headers) from compiling:
-
-1. **Constant expressions in array sizes** — `_parse_array_dimension()` accepts integer literals only; `struct _IO_FILE` contains `char _unused2[12 * sizeof(int) - 5 * sizeof(void *)];`. Fix: parse a full constant expression in the `[…]` position and evaluate it during semantic analysis, the same way `_Alignas` expressions are handled.
 
 ## Key architectural invariants
 

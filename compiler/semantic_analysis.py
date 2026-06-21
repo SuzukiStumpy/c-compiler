@@ -1326,7 +1326,9 @@ class SemanticAnalyser:
             case Pointer(referenced=ref_t):
                 return Pointer(self._resolve_type(ref_t))
             case Array(element=elem_t, size=size):
-                return Array(self._resolve_type(elem_t), size)
+                resolved_elem = self._resolve_type(elem_t)
+                resolved_size = self._eval_array_dimension(size) if isinstance(size, ast.Exp) else size
+                return Array(resolved_elem, resolved_size)
             case FunType(params=param_ts, ret=ret_t, variadic=variadic):
                 return FunType(
                     tuple(self._resolve_type(pt) for pt in param_ts),
@@ -1789,6 +1791,30 @@ class SemanticAnalyser:
             raise SemanticError("_Alignas requires a constant integer expression")
         if val <= 0 or (val & (val - 1)) != 0:
             raise SemanticError(f"_Alignas value {val} is not a positive power of two")
+        return val
+
+    def _eval_array_dimension(self, exp: ast.Exp) -> int:
+        """Evaluate a constant-expression array dimension to a concrete positive integer.
+
+        Resolves and type-checks the expression, then constant-folds it.  Used by
+        ``_resolve_type`` when ``Array.size`` is an unevaluated ``Exp`` node (as
+        produced by the parser for non-literal array dimensions such as
+        ``char buf[12 * sizeof(int) - 5 * sizeof(void *)]``).
+
+        Args:
+            exp: The raw size expression from ``Array.size``.
+
+        Returns:
+            The array dimension as a positive ``int``.
+
+        Raises:
+            SemanticError: If the expression is not a compile-time constant integer,
+                or if the resulting value is zero or negative.
+        """
+        typed_exp = self.resolve_exp(exp)
+        val = self._eval_const_expr(typed_exp)
+        if not isinstance(val, int) or val <= 0:
+            raise SemanticError("Array dimension must be a positive constant integer expression")
         return val
 
     def resolve_variable_declaration(self, var_decl: ast.VariableDeclaration) -> ast.VariableDeclaration:  # noqa: C901
