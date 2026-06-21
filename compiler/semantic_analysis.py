@@ -1149,6 +1149,7 @@ class SemanticAnalyser:
         self._current_block_funs: set[str] = set()
         self._current_return_type: Type | None = None
         self._current_function_name: str | None = None
+        self._current_noreturn: bool = False
         self._label_set: set[str] = set()
         self._loop_stack: list[str] = []
         self._break_stack: list[str] = []
@@ -2296,8 +2297,9 @@ class SemanticAnalyser:
                 ``extern`` variable at any scope level (conflicting entity kind on
                 the same external name).
         """
-        # Save before the first reconstruction drops is_inline from the node.
+        # Save before the first reconstruction drops is_inline/is_noreturn from the node.
         orig_is_inline = fun.is_inline
+        orig_is_noreturn = fun.is_noreturn
         orig_storage_class = fun.storage_class
         fun = ast.Function(
             name=fun.name,
@@ -2308,6 +2310,8 @@ class SemanticAnalyser:
             storage_class=fun.storage_class,
             source_file=fun.source_file,
             source_line=fun.source_line,
+            is_inline=orig_is_inline,
+            is_noreturn=orig_is_noreturn,
         )
         if isinstance(fun.fun_type, FunType) and isinstance(fun.fun_type.ret, Array):
             raise SemanticError(f"Function '{fun.name}' cannot return an array type.")
@@ -2336,6 +2340,8 @@ class SemanticAnalyser:
                 storage_class=fun.storage_class,
                 source_file=fun.source_file,
                 source_line=fun.source_line,
+                is_inline=orig_is_inline,
+                is_noreturn=orig_is_noreturn,
             )
         for param in fun.params:
             if isinstance(param.param_type, VoidType):
@@ -3676,6 +3682,8 @@ class SemanticAnalyser:
             case ast.Compound(body=block):
                 return ast.Compound(self._resolve_block(block))
             case ast.Return(exp=exp):
+                if self._current_noreturn:
+                    raise SemanticError("'_Noreturn' function must not contain a return statement.")
                 return_type = self._current_return_type
                 if isinstance(return_type, VoidType):
                     if exp is not None:
@@ -4224,6 +4232,7 @@ class SemanticAnalyser:
 
         self._current_return_type = function.fun_type.ret if isinstance(function.fun_type, FunType) else IntType()
         self._current_function_name = function.name
+        self._current_noreturn = function.is_noreturn
         self._collect_labels(function.body)
         binding = self._function_map.get(function.name)
         globl = (
