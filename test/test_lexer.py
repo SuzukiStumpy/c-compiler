@@ -1099,3 +1099,32 @@ def test_generic_keyword_produces_generic_token_not_identifier(preprocess_c_file
     tokens = lexer(preprocess_c_file("valid/generic_basic.c"))
     generic_token = next(t for t in tokens if t.value == "_Generic")
     assert generic_token.type == TokenType.GENERIC
+
+
+# ---------------------------------------------------------------------------
+# GCC extension keywords: __restrict / __restrict__ / __asm__
+# ---------------------------------------------------------------------------
+
+
+def test_restrict_dunder_produces_restrict_token(preprocess_c_file: Preprocessor) -> None:
+    """``__restrict`` (GCC extension) must lex as ``RESTRICT``, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/restrict_variants.c"))
+    restrict_toks = [t for t in tokens if t.value == "__restrict"]
+    assert restrict_toks, "expected at least one __restrict token"
+    assert all(t.type == TokenType.RESTRICT for t in restrict_toks)
+
+
+def test_restrict_dunder_dunder_produces_restrict_token(preprocess_c_file: Preprocessor) -> None:
+    """``__restrict__`` (GCC extension) must lex as ``RESTRICT``, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/restrict_variants.c"))
+    restrict_toks = [t for t in tokens if t.value == "__restrict__"]
+    assert restrict_toks, "expected at least one __restrict__ token"
+    assert all(t.type == TokenType.RESTRICT for t in restrict_toks)
+
+
+def test_asm_dunder_produces_asm_token(preprocess_c_file: Preprocessor) -> None:
+    """``__asm__`` must lex as ``ASM``, not ``IDENTIFIER``."""
+    tokens = lexer(preprocess_c_file("valid/asm_symbol_rename.c"))
+    asm_toks = [t for t in tokens if t.value == "__asm__"]
+    assert asm_toks, "expected at least one __asm__ token"
+    assert all(t.type == TokenType.ASM for t in asm_toks)

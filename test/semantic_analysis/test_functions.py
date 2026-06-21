@@ -302,6 +302,30 @@ class TestFunctionParameters:
         with pytest.raises(SemanticError, match="Duplicate parameter name 'a'"):
             resolve(_program(body))
 
+    def test_multiple_unnamed_params_do_not_raise_duplicate_error(self) -> None:
+        """Multiple unnamed parameters (empty-string names) must not trigger the duplicate-name check.
+
+        Corresponds to system-header declarations such as ``extern int __overflow(FILE *, int);``
+        where both parameters are unnamed and both carry an empty-string name ``""``.
+        """
+        foo_decl = ast.Function(
+            name="__overflow",
+            params=(
+                ast.Parameter(param_type=ast.IntType(), name=""),
+                ast.Parameter(param_type=ast.IntType(), name=""),
+            ),
+            body=None,
+            fun_type=ast.FunType(params=(ast.IntType(), ast.IntType()), ret=ast.IntType()),
+        )
+        main_def = ast.Function(
+            name="main",
+            params=(),
+            body=(ast.S(ast.Return(ast.Constant(0))),),
+            fun_type=ast.FunType(params=(), ret=ast.IntType()),
+        )
+        resolved = resolve(_make_prog(foo_decl, main_def))
+        assert len(resolved.declarations) == 2
+
     def test_distinct_params_in_top_level_declaration_are_valid(self) -> None:
         """A forward declaration whose parameter names are all distinct resolves without error."""
         foo_decl = ast.Function(

@@ -874,14 +874,42 @@ class Parser:
             elif tok.type == TokenType.RPAREN:
                 depth -= 1
 
-    def _skip_attributes(self) -> None:
-        """Skip zero or more consecutive ``__attribute__(( … ))`` specifiers.
+    def _skip_asm(self) -> None:
+        """Skip a GCC ``__asm__("..." "...")`` symbol-renaming specifier.
 
-        Calls ``_skip_attribute`` in a loop as long as the next token is
-        ``ATTRIBUTE``.  No-op when no attribute is present.
+        Consumes the ``__asm__`` keyword and the parenthesised string
+        argument(s) that follow.  Nesting is handled correctly.
+
+        Raises:
+            ParseError: If ``__asm__`` is not followed by ``(``, or if the
+                paren group is never closed.
         """
-        while self._match(TokenType.ATTRIBUTE):
-            self._skip_attribute()
+        self._expect(TokenType.ASM)
+        self._expect(TokenType.LPAREN)
+        depth = 1
+        while depth > 0:
+            tok = self._peek()
+            if tok is None:
+                raise self._eof_error("unterminated __asm__()")
+            self._consume()
+            if tok.type == TokenType.LPAREN:
+                depth += 1
+            elif tok.type == TokenType.RPAREN:
+                depth -= 1
+
+    def _skip_attributes(self) -> None:
+        """Skip zero or more consecutive ``__attribute__(( … ))`` and ``__asm__(…)`` specifiers.
+
+        Calls the appropriate skip helper in a loop as long as the next token
+        is ``ATTRIBUTE`` or ``ASM``.  No-op when neither is present.
+        """
+        while True:
+            if self._match(TokenType.ATTRIBUTE):
+                self._skip_attribute()
+            elif self._match(TokenType.ASM):
+                self._skip_asm()
+            else:
+                break
 
     def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool, bool, Exp | None]:  # noqa: C901
         """Parse one or more declaration specifiers.
@@ -2992,6 +3020,19 @@ class Parser:
                 self._consume()
                 return resolved
         seen, last_tok, struct_tag, union_tag, enum_tag, qualifiers = self._consume_type_specifiers()
+        # After consuming only qualifiers (const/volatile/restrict), check for a trailing typedef name.
+        if not seen and struct_tag is None and union_tag is None and enum_tag is None and qualifiers:
+            peek2 = self._peek()
+            if peek2 is not None and peek2.type == TokenType.IDENTIFIER:
+                resolved2 = self._lookup_typedef(peek2.value)
+                if resolved2 is not None:
+                    self._consume()
+                    return QualifiedType(
+                        base=resolved2,
+                        const=TokenType.CONST in qualifiers,
+                        volatile=TokenType.VOLATILE in qualifiers,
+                        restrict=TokenType.RESTRICT in qualifiers,
+                    )
         base = self._resolve_type(seen, last_tok, struct_tag, union_tag, enum_tag)
         if qualifiers:
             return QualifiedType(

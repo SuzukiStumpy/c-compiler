@@ -62,7 +62,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     ("BOOL", r"_Bool\b"),
     ("CONST", r"const\b"),
     ("VOLATILE", r"volatile\b"),
-    ("RESTRICT", r"restrict\b"),
+    ("RESTRICT", r"__restrict__\b|__restrict\b|restrict\b"),
     ("INLINE", r"inline\b"),
     ("NORETURN", r"_Noreturn\b"),
     ("STATIC_ASSERT", r"_Static_assert\b"),
@@ -72,6 +72,7 @@ _TOKEN_PATTERNS: list[tuple[str, str]] = [
     # Identifiers and literals — wide/unicode string/char prefixes must precede IDENTIFIER,
     # and INT128 / ATTRIBUTE must precede IDENTIFIER so they are not classified as IDENTIFIER.
     ("ATTRIBUTE", r"__attribute__\b"),
+    ("ASM", r"__asm__\b|__asm\b"),
     ("INT128", r"__int128\b"),
     # Wide / Unicode char constants — must precede IDENTIFIER so L/u/U before ' is not an ident.
     ("WCHAR", rf"L'{_CHAR_BODY}'"),

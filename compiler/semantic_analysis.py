@@ -2212,6 +2212,8 @@ class SemanticAnalyser:
         """
         seen: set[str] = set()
         for param in fun.params:
+            if param.name == "":
+                continue
             if param.name in seen:
                 raise SemanticError(f"Duplicate parameter name '{param.name}' in declaration of '{fun.name}'.")
             seen.add(param.name)

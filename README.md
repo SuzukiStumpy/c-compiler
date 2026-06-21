@@ -112,7 +112,8 @@ The semantic analysis phase performs full name resolution and type checking:
 ### Type qualifiers
 
 All three C11 type qualifiers (`const`, `volatile`, `restrict`) are fully supported.
-Qualifiers may appear in any position where C11 allows them: before or after a type specifier, and after a `*` in a pointer declarator.
+Qualifiers may appear in any position where C11 allows them: before or after a type specifier, after a `*` in a pointer declarator, and before a typedef name (e.g. `const fpos_t *`).
+The GCC extension spellings `__restrict` and `__restrict__` are also recognised as synonyms for `restrict`.
 Qualified types are preserved in the AST as `QualifiedType` wrapper nodes and enforced throughout the pipeline.
 
 | Qualifier | C11 reference | Compiler behaviour |
@@ -121,7 +122,7 @@ Qualified types are preserved in the AST as `QualifiedType` wrapper nodes and en
 | `volatile` | sec. 6.7.3 | Reads and writes to `volatile`-qualified variables are never eliminated or reordered by the copy-propagation or dead-store-elimination optimisation passes. |
 | `restrict` | sec. 6.7.3 | Applying `restrict` to a non-pointer type is a `SemanticError`. The aliasing hint is tracked in the type system; no alias-based optimisations are performed beyond what the standard aliasing rules already permit. |
 
-Standard library headers that use these qualifiers (e.g. `const char *` in `<string.h>`) parse and type-check without error.
+Standard system headers such as `<stdio.h>` and `<string.h>` can be `#include`d; the GCC preprocessor expands them and the resulting declarations (including GCC extensions like `__restrict`, `__restrict__`, and `__asm__(…)` symbol aliases) are parsed without error.
 
 ## Prerequisites
 

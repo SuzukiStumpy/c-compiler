@@ -138,6 +138,7 @@ definitions and is ready for the assembly code generation stage.
 
 from dataclasses import dataclass
 from itertools import count
+from typing import cast
 
 import compiler.syntax.ast as ast
 import compiler.syntax.tac as tac
@@ -536,7 +537,7 @@ def _type_size(t: ast.Type, struct_type_table: StructTypeTable | None = None) ->
     if isinstance(t, (ast.Int128Type, ast.UInt128Type, ast.LongDoubleType)):
         return 16
     if isinstance(t, ast.Array) and t.size is not None:
-        return t.size * _type_size(t.element, struct_type_table)
+        return cast(int, t.size) * _type_size(t.element, struct_type_table)
     if isinstance(t, (ast.Structure, ast.Union)):
         if struct_type_table is None:
             raise CodeGenerationError(f"struct/union type table required to size aggregate '{t.tag}'")
@@ -1447,8 +1448,7 @@ class _TacGenerator:
                     return []
                 match init:
                     case ast.SingleInit(exp=ast.String(string=s, exp_type=ast.Array(size=array_size))):
-                        assert array_size is not None  # string-init arrays always have concrete size
-                        return self._translate_string_init(name, s, array_size)
+                        return self._translate_string_init(name, s, cast(int, array_size))
                     case ast.SingleInit(exp=e):
                         val, instrs = self.translate_exp(e)
                         return [*instrs, tac.Copy(src=val, dst=tac.Var(value=name))]
@@ -1522,8 +1522,9 @@ class _TacGenerator:
         """
         match init:
             case ast.SingleInit(exp=ast.String(string=s, exp_type=ast.Array(size=array_size))):
-                assert array_size is not None  # string-init arrays always have concrete size
-                instructions.extend(self._translate_string_init(var_name, s, array_size, base_offset=byte_offset))
+                instructions.extend(
+                    self._translate_string_init(var_name, s, cast(int, array_size), base_offset=byte_offset)
+                )
             case ast.SingleInit(exp=e):
                 val, elem_instrs = self.translate_exp(e)
                 instructions.extend(elem_instrs)
