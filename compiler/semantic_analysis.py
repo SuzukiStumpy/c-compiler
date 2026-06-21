@@ -778,7 +778,7 @@ def _zero_initializer(t: Type, struct_type_table: StructTypeTable) -> ast.Initia
         case Pointer():
             null = ast.Constant(ast.ConstULong(0), exp_type=ULongType())
             return ast.SingleInit(ast.Cast(t, null, exp_type=t))
-        case Array(element=elem_t, size=size) if size is not None:
+        case Array(element=elem_t, size=size) if isinstance(size, int):
             return ast.CompoundInit([_zero_initializer(elem_t, struct_type_table) for _ in range(size)])
         case Structure(tag=tag):
             struct_def = struct_type_table[tag]
@@ -1980,7 +1980,7 @@ class SemanticAnalyser:
                         static_init = _static_pointer_init(raw_init_exp, self._variable_map)
                 elif isinstance(var_decl.var_type, Array):
                     if isinstance(init, ast.SingleInit) and isinstance(init.exp, ast.String):
-                        assert var_decl.var_type.size is not None  # string-init arrays have concrete size
+                        assert isinstance(var_decl.var_type.size, int)  # string-init arrays have concrete size
                         static_init = Initial(
                             tuple(
                                 _string_array_static_init(
@@ -2146,7 +2146,7 @@ class SemanticAnalyser:
             elif isinstance(var_decl.var_type, Array):
                 file_typed_init = self._typecheck_init(var_decl.var_type, var_decl.init)
                 if isinstance(file_typed_init, ast.SingleInit) and isinstance(file_typed_init.exp, ast.String):
-                    assert var_decl.var_type.size is not None  # string-init arrays have concrete size
+                    assert isinstance(var_decl.var_type.size, int)  # string-init arrays have concrete size
                     file_init = Initial(
                         tuple(
                             _string_array_static_init(
@@ -3224,7 +3224,7 @@ class SemanticAnalyser:
                 resolved_idx = self._typecheck_and_convert(self.resolve_exp(item.index))
                 if not isinstance(resolved_idx, ast.Constant) or not isinstance(resolved_idx.value.val, int):
                     raise SemanticError("Array designator index must be an integer constant expression.")
-                idx_val = int(resolved_idx.value.val)
+                idx_val = resolved_idx.value.val
                 if idx_val < 0 or idx_val >= size:
                     raise SemanticError(f"Array designator index {idx_val} is out of bounds for array of size {size}.")
                 current_idx = idx_val
@@ -3348,7 +3348,7 @@ class SemanticAnalyser:
             result: Accumulator list modified in place.
         """
         match init:
-            case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))) if size is not None:
+            case ast.SingleInit(exp=ast.String(string=s, exp_type=Array(size=size))) if isinstance(size, int):
                 for elem in _string_array_static_init(s, size):
                     if isinstance(elem, ZeroInit) and result and isinstance(result[-1], ZeroInit):
                         result[-1:] = [ZeroInit(result[-1].bytes + elem.bytes)]
@@ -3412,7 +3412,7 @@ class SemanticAnalyser:
                 sub-expression fails type-checking or assignment conversion.
         """
         match target_type, init:
-            case Array(element=elem_t, size=size), ast.SingleInit(exp=ast.String(string=s)) if size is not None:
+            case Array(element=elem_t, size=size), ast.SingleInit(exp=ast.String(string=s)) if isinstance(size, int):
                 if not isinstance(elem_t, _CHAR_TYPES):
                     raise SemanticError("Cannot initialize a non-character array with a string literal.")
                 if len(s) > size:
@@ -3428,7 +3428,7 @@ class SemanticAnalyser:
                 # Incomplete array type — infer size from initializer count (C11 §6.7.9p22).
                 inferred_size = len(init_list)
                 return self._typecheck_init(Array(elem_t, inferred_size), init)
-            case Array(element=elem_t, size=size), ast.CompoundInit(initializers=init_list) if size is not None:
+            case Array(element=elem_t, size=size), ast.CompoundInit(initializers=init_list) if isinstance(size, int):
                 has_designators = any(
                     isinstance(i, (ast.IndexDesignatorInit, ast.MemberDesignatorInit)) for i in init_list
                 )
