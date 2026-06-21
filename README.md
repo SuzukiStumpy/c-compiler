@@ -20,6 +20,12 @@ Each pipeline stage can be inspected independently via a CLI flag (`--lex`, `--p
 `--tacky`, `--codegen`), making it a useful vehicle for exploring how C source is progressively
 transformed into machine code.
 
+This project was also undertaken as an experiment in using LLMs (specifically Claude Code) as an
+assistant.  The initial project was scaffolded entirely by hand with repetitive code creation - such
+as the AST objects and creation of all the docstrings - being pushed off to the agent.  As code
+complexity increased, I found more of the coding tasks were being offloaded to the agent with my role
+now more in a design, project management and architectural oversight arena.  An interesting dynamic.
+
 ## Supported C subset
 
 ### Types
