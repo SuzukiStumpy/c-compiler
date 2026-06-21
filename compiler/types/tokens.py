@@ -55,6 +55,7 @@ class TokenType(Enum):
     ALIGNOF = auto()
     ALIGNAS = auto()
     GENERIC = auto()
+    ATTRIBUTE = auto()  # __attribute__((...)) GCC extension
     # Synthetic type-specifier sentinel – not produced by the lexer; used internally
     # by the parser to represent the two-token ``long long`` specifier as a single
     # entry in the type-specifier frozenset.

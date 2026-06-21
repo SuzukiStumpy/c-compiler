@@ -10,7 +10,6 @@ Three parser gaps prevent compiling files that `#include <stdio.h>` (or most oth
 
 | Gap | Effort | Impact | Notes |
 |---|---|---|---|
-| `__attribute__(( … ))` ignored | M | H | GCC emits attribute decorators on virtually every `<stdio.h>` declaration (87 occurrences in the preprocessed output); they are not lexed or parsed at all; fix: add `__attribute__` as a lexer token and a `_skip_attribute()` balanced-paren skipper called wherever a declaration can end |
 | Constant expressions in array sizes | M | H | `struct _IO_FILE` contains `char _unused2[12 * sizeof(int) - 5 * sizeof(void *)];` — `_parse_array_dimension()` accepts only integer literals; fix: parse a full constant expression and evaluate it in semantic analysis (same approach as `_Alignas`) |
 
 ### Other missing features
@@ -27,7 +26,7 @@ Three parser gaps prevent compiling files that `#include <stdio.h>` (or most oth
 
 ## Priority grouping
 
-**Blocking (implement together)**: `__attribute__` skipping and constant-expression array sizes — both are required before any system header can be `#include`d.
+**Blocking**: Constant-expression array sizes — required before any system header can be `#include`d.
 
 **Deferred**: VLAs, `_Alignas` on struct/union members, `inline` body inlining — self-contained but high effort or niche benefit.
 

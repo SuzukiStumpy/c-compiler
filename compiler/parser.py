@@ -312,6 +312,7 @@ _DECLARATION_SPECIFIER_TOKENS: frozenset[TokenType] = _TYPE_SPECIFIER_TOKENS | f
         TokenType.NORETURN,
         TokenType.STATIC_ASSERT,
         TokenType.ALIGNAS,
+        TokenType.ATTRIBUTE,
     }
 )
 
@@ -849,6 +850,39 @@ class Parser:
             raise self._eof_error("expected a declaration, got empty input")
         return Program(declarations=tuple(declarations))
 
+    def _skip_attribute(self) -> None:
+        """Skip one GCC ``__attribute__(( … ))`` specifier.
+
+        Consumes the ``__attribute__`` keyword and then a balanced paren group
+        starting with ``(``.  Nesting is handled correctly so that
+        ``__attribute__((format(__printf__, 1, 2)))`` is consumed in full.
+
+        Raises:
+            ParseError: If ``__attribute__`` is not followed by ``(``, or if
+                the paren group is never closed.
+        """
+        self._expect(TokenType.ATTRIBUTE)
+        self._expect(TokenType.LPAREN)  # first (
+        depth = 1
+        while depth > 0:
+            tok = self._peek()
+            if tok is None:
+                raise self._eof_error("unterminated __attribute__()")
+            self._consume()
+            if tok.type == TokenType.LPAREN:
+                depth += 1
+            elif tok.type == TokenType.RPAREN:
+                depth -= 1
+
+    def _skip_attributes(self) -> None:
+        """Skip zero or more consecutive ``__attribute__(( … ))`` specifiers.
+
+        Calls ``_skip_attribute`` in a loop as long as the next token is
+        ``ATTRIBUTE``.  No-op when no attribute is present.
+        """
+        while self._match(TokenType.ATTRIBUTE):
+            self._skip_attribute()
+
     def _parse_specifiers(self) -> tuple[Type, StorageClass | None, bool, bool, Exp | None]:  # noqa: C901
         """Parse one or more declaration specifiers.
 
@@ -922,6 +956,9 @@ class Parser:
             if peek.type == TokenType.NORETURN:
                 self._consume()
                 is_noreturn = True
+                continue
+            if peek.type == TokenType.ATTRIBUTE:
+                self._skip_attribute()
                 continue
             if peek.type == TokenType.ALIGNAS:
                 self._consume()  # consume '_Alignas'
@@ -1378,14 +1415,18 @@ class Parser:
                 else:
                     agg_decl = UnionDecl(union_declaration=UnionDeclaration(tag=tag, members=body_members))
                     base_type_td = Union(tag=tag)
+                self._skip_attributes()
                 alias_name, transform_td, _ = self._parse_declarator()
+                self._skip_attributes()
                 self._expect(TokenType.SEMICOLON)
                 full_typedef_type = transform_td(base_type_td)
                 self._register_typedef(alias_name, full_typedef_type)
                 return [agg_decl, TypedefDecl(name=alias_name, aliased_type=full_typedef_type)]
             self._consume()  # consume 'typedef'
             base_type_td = self._parse_type()
+            self._skip_attributes()
             alias_name, transform_td, _ = self._parse_declarator()
+            self._skip_attributes()
             self._expect(TokenType.SEMICOLON)
             full_typedef_type = transform_td(base_type_td)
             self._register_typedef(alias_name, full_typedef_type)
@@ -1394,6 +1435,7 @@ class Parser:
         first_token = self._peek()
         base_type, storage, is_inline, is_noreturn, align_as_exp = self._parse_specifiers()
         name, transform, params = self._parse_declarator()
+        self._skip_attributes()
         full_type = transform(base_type)
 
         # A FunType result means the declared entity is itself a function.
@@ -1689,6 +1731,7 @@ class Parser:
         if next_tok is not None and next_tok.type in _DECLARATOR_STARTERS:
             name: str | None
             name, transform, _params = self._parse_declarator()
+            self._skip_attributes()
             full_type = transform(base_type)
         else:
             name = None

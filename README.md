@@ -316,10 +316,9 @@ System headers such as `<stdio.h>` cannot yet be `#include`d directly. Three par
 
 | Gap | Notes |
 |---|---|
-| `__attribute__(( … ))` | GCC attribute decorators (present on nearly every `<stdio.h>` declaration) are not lexed or parsed |
 | Constant expressions in array sizes | `struct _IO_FILE` uses `char field[12 * sizeof(int) - …]`; `_parse_array_dimension()` accepts integer literals only |
 
-Both must be resolved together before system headers become usable. See `C11_ROADMAP.md` for implementation notes.
+This must be resolved before system headers become usable. See `C11_ROADMAP.md` for implementation notes.
 
 ---
 

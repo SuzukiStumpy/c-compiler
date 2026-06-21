@@ -118,6 +118,7 @@ Two independent passes (GP registers, FP/XMM registers), each running:
 - **Operators**: full arithmetic, bitwise, logical, comparison, pre/post increment/decrement, address-of, dereference, subscript, `sizeof`, `_Alignof`, member access (`.` and `->`), `__builtin_offsetof`
 - **Variadic functions**: `va_list`, `va_start`, `va_arg`, `va_end`, `va_copy` via `<stdarg.h>`; SysV AMD64 ABI register-save-area (176 bytes, 16-byte aligned) and overflow argument area; GP and XMM register paths in `va_arg`
 - **GCC builtins**: `__builtin_expect(expr, hint)` — folds to `expr` at parse time; `__builtin_unreachable()` — emits `ud2` (SIGILL trap); `__builtin_offsetof(type, member)` — compile-time struct member offset, type `unsigned long`
+- **`__attribute__(( … ))`**: GCC attribute specifiers are lexed as a dedicated `ATTRIBUTE` token and silently skipped by `_skip_attribute()` / `_skip_attributes()`; recognised in all standard positions (before specifiers, between specifiers and declarator, after declarator, on struct members, on typedef aliases)
 - **Alignment specifiers**: `_Alignas(expr)` and `_Alignas(type)` on variable declarations; SA evaluates to `VariableDeclaration.align_as: int`; overrides `.balign` for static variables and stack-slot alignment for locals; `_Alignof(type)` / `_Alignof expr` returns `unsigned long` alignment at compile time
 - **Initializers**: scalar and compound (aggregate) with `static` constant evaluation; designated initialisers (`{.member = val}` for structs/unions, `{[n] = val}` for arrays)
 - **String literals** (stored as hidden static objects in `.rodata`): plain `"..."`, `u8"..."` (UTF-8, `char *`), `L"..."` (wide, `int *`, 4 bytes/char), `u"..."` (UTF-16, `unsigned short *`, 2 bytes/char), `U"..."` (UTF-32, `unsigned int *`, 4 bytes/char); `StringEncoding` enum controls element type and NUL-terminator width (`element_size`); adjacent literals of the same encoding are concatenated
@@ -173,12 +174,9 @@ Subdirectory test packages use a local `helpers.py`; no `__init__.py` needed (py
 
 ## Known parser limitations
 
-Two gaps in `compiler/parser.py` prevent `#include <stdio.h>` (and most system headers) from compiling:
+One remaining gap in `compiler/parser.py` prevents `#include <stdio.h>` (and most system headers) from compiling:
 
-1. **`__attribute__(( … ))` not recognised** — GCC emits attribute decorators on nearly every system-header declaration; they are not a lexer token and the parser has no skip path for them. Fix: lex `__attribute__` as a dedicated token; add a `_skip_attribute()` balanced-paren skipper; call it wherever a declaration may end.
-2. **Constant expressions in array sizes** — `_parse_array_dimension()` accepts integer literals only; `struct _IO_FILE` contains `char _unused2[12 * sizeof(int) - 5 * sizeof(void *)];`. Fix: parse a full constant expression in the `[…]` position and evaluate it during semantic analysis, the same way `_Alignas` expressions are handled.
-
-Both must be resolved together before any system header becomes usable.
+1. **Constant expressions in array sizes** — `_parse_array_dimension()` accepts integer literals only; `struct _IO_FILE` contains `char _unused2[12 * sizeof(int) - 5 * sizeof(void *)];`. Fix: parse a full constant expression in the `[…]` position and evaluate it during semantic analysis, the same way `_Alignas` expressions are handled.
 
 ## Key architectural invariants
 
