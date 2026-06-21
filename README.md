@@ -1,6 +1,24 @@
 # c-compiler
 
-A homegrown C compiler written in Python, supporting a substantial subset of the C11 language. The compiler takes a `.c` source file through the full pipeline from preprocessing to a native x86-64 executable.
+A C compiler written in Python, built as a personal learning project inspired by Nora Sandler's
+*Writing a C Compiler* - and subsequently extended well beyond the book's scope.
+
+It implements a substantial subset of C11 and compiles to native x86-64 executables via a full
+eight-stage pipeline: GCC preprocessing, lexing, parsing, semantic analysis, TAC generation,
+optimisation, code generation, and final assembly and linking.
+
+The compiler targets x86-64 Linux (SysV AMD64 ABI). It supports the full range of C integer and
+floating-point types (including the GCC `__int128` extension and 80-bit `long double`), pointers,
+arrays, structs, unions, enums, function pointers, variadic functions, and the majority of C11
+control-flow and declaration constructs.
+
+Optional TAC-level optimisation passes are included - constant folding, copy propagation, dead
+store elimination, and unreachable code elimination - alongside graph-colouring register allocation
+with Briggs conservative coalescing.
+
+Each pipeline stage can be inspected independently via a CLI flag (`--lex`, `--parse`, `--validate`,
+`--tacky`, `--codegen`), making it a useful vehicle for exploring how C source is progressively
+transformed into machine code.
 
 ## Supported C subset
 
