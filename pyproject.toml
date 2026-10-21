@@ -20,7 +20,7 @@ dev = [
     "pyrefly>=1.0.0",
     "pytest>=9.0.3",
     "pytest-sugar>=1.1.1",
-    "ruff>=0.15.11",
+    "ruff>=0.15.20",
 ]
 
 [tool]
